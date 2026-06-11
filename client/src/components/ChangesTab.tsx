@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { useDeck } from '../store';
-import type { StashEntry, StatusFile } from '../types';
+import type { StatusFile } from '../types';
 import DiffPane from './DiffPane';
 
 const POLL_MS = 5000;
@@ -10,8 +10,6 @@ export default function ChangesTab({ dir }: { dir: string }) {
   const refreshDeck = useDeck((s) => s.refresh);
   const [files, setFiles] = useState<StatusFile[]>([]);
   const [merging, setMerging] = useState(false);
-  const [stashes, setStashes] = useState<StashEntry[]>([]);
-  const [showStash, setShowStash] = useState(false);
   const [selected, setSelected] = useState<{ path: string; staged: boolean } | null>(null);
   const [commitMsg, setCommitMsg] = useState('');
   const [amend, setAmend] = useState(false);
@@ -20,10 +18,9 @@ export default function ChangesTab({ dir }: { dir: string }) {
 
   const load = useCallback(async () => {
     try {
-      const [status, stashList] = await Promise.all([api.gitStatus(dir), api.stashList(dir)]);
+      const status = await api.gitStatus(dir);
       setFiles(status.files);
       setMerging(status.merging);
-      setStashes(stashList);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -152,64 +149,6 @@ export default function ChangesTab({ dir }: { dir: string }) {
           {unstagedFiles.map((f) => fileRow(f, false))}
         </div>
         {files.length === 0 && !merging && <div className="placeholder">変更はありません</div>}
-        <div className="stash-section">
-          <div className="changes-section-head stash-head" onClick={() => setShowStash((v) => !v)}>
-            <span>
-              <span className={`codicon codicon-chevron-${showStash ? 'down' : 'right'}`} /> スタッシュ (
-              {stashes.length})
-            </span>
-            <button
-              className="icon-btn"
-              disabled={busy || files.length === 0}
-              title="現在の変更をスタッシュ (未追跡ファイル含む)"
-              onClick={(e) => {
-                e.stopPropagation();
-                const message = prompt('スタッシュのメッセージ (省略可):');
-                if (message === null) return;
-                void act(() => api.stashPush(dir, message || undefined));
-              }}
-            >
-              <span className="codicon codicon-archive" />
-            </button>
-          </div>
-          {showStash &&
-            stashes.map((s) => (
-              <div key={s.ref} className="stash-row" title={`${s.ref}: ${s.message}`}>
-                <span className="stash-ref">{s.ref}</span>
-                <span className="stash-msg">{s.message}</span>
-                <span className="change-actions">
-                  <button
-                    className="icon-btn"
-                    disabled={busy}
-                    title="適用して削除 (pop)"
-                    onClick={() => void act(() => api.stashApply(dir, s.ref, true))}
-                  >
-                    <span className="codicon codicon-debug-step-out" />
-                  </button>
-                  <button
-                    className="icon-btn"
-                    disabled={busy}
-                    title="適用 (スタッシュは残す)"
-                    onClick={() => void act(() => api.stashApply(dir, s.ref, false))}
-                  >
-                    <span className="codicon codicon-desktop-download" />
-                  </button>
-                  <button
-                    className="icon-btn"
-                    disabled={busy}
-                    title="削除"
-                    onClick={() => {
-                      if (confirm(`${s.ref} を削除しますか?\n${s.message}`)) {
-                        void act(() => api.stashDrop(dir, s.ref));
-                      }
-                    }}
-                  >
-                    <span className="codicon codicon-trash" />
-                  </button>
-                </span>
-              </div>
-            ))}
-        </div>
         <div className="commit-box">
           <textarea
             placeholder="コミットメッセージ"

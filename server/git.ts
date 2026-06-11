@@ -178,16 +178,23 @@ export async function getStatusFiles(dir: string): Promise<StatusFile[]> {
 export interface LogEntry {
   hash: string;
   shortHash: string;
+  parents: string[];
   author: string;
   date: string;
   subject: string;
   refs: string;
 }
 
-export async function getLog(dir: string, limit = 100, ref?: string): Promise<LogEntry[]> {
-  const format = ['%H', '%h', '%an', '%aI', '%s', '%D'].join(US);
-  const args = ['log', `--pretty=format:${format}`, `-n`, String(limit)];
-  if (ref) args.push(ref);
+export async function getLog(
+  dir: string,
+  limit = 100,
+  opts: { ref?: string; all?: boolean } = {},
+): Promise<LogEntry[]> {
+  const format = ['%H', '%h', '%P', '%an', '%aI', '%s', '%D'].join(US);
+  // topo-order keeps children above parents, which the graph layout relies on
+  const args = ['log', '--topo-order', `--pretty=format:${format}`, '-n', String(limit)];
+  if (opts.all) args.push('--all');
+  if (opts.ref) args.push(opts.ref);
   let out: string;
   try {
     out = await runGit(dir, args);
@@ -200,8 +207,16 @@ export async function getLog(dir: string, limit = 100, ref?: string): Promise<Lo
     .split('\n')
     .filter(Boolean)
     .map((line) => {
-      const [hash, shortHash, author, date, subject, refs] = line.split(US);
-      return { hash, shortHash, author, date, subject, refs: refs ?? '' };
+      const [hash, shortHash, parents, author, date, subject, refs] = line.split(US);
+      return {
+        hash,
+        shortHash,
+        parents: parents ? parents.split(' ') : [],
+        author,
+        date,
+        subject,
+        refs: refs ?? '',
+      };
     });
 }
 
@@ -216,7 +231,9 @@ export interface CommitFile {
 }
 
 export async function getCommitFiles(dir: string, hash: string): Promise<CommitFile[]> {
-  const out = await runGit(dir, ['show', '--name-status', '--format=', '-M', hash]);
+  // -m --first-parent: for merge commits, list changes against the first parent
+  // (matches the diff-pair endpoint, which compares hash^ .. hash)
+  const out = await runGit(dir, ['show', '--name-status', '--format=', '-M', '-m', '--first-parent', hash]);
   const files: CommitFile[] = [];
   for (const line of out.split('\n')) {
     if (!line.trim()) continue;

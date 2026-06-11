@@ -41,6 +41,7 @@ export interface StatusFile {
 export interface LogEntry {
   hash: string;
   shortHash: string;
+  parents: string[];
   author: string;
   date: string;
   subject: string;

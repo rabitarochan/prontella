@@ -42,7 +42,8 @@ export const api = {
       method: 'DELETE',
     }),
 
-  log: (dir: string, limit = 100) => request<LogEntry[]>(`/api/git/log?dir=${q(dir)}&limit=${limit}`),
+  log: (dir: string, limit = 100, all = false) =>
+    request<LogEntry[]>(`/api/git/log?dir=${q(dir)}&limit=${limit}${all ? '&all=1' : ''}`),
   commitDetail: (dir: string, hash: string) =>
     request<{ text: string }>(`/api/git/commit?dir=${q(dir)}&hash=${q(hash)}`),
   gitStatus: (dir: string) =>

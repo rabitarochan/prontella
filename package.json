@@ -1,6 +1,6 @@
 {
   "name": "@rabitarochan/claude-deck",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Deck for managing git repos, worktrees, and Claude Code agents in terminals",
   "license": "MIT",

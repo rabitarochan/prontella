@@ -4,12 +4,10 @@ import { useDeck } from '../store';
 import type { Repo, Worktree } from '../types';
 import StatusBadge from './StatusBadge';
 import FilesTab from './FilesTab';
-import ChangesTab from './ChangesTab';
-import HistoryTab from './HistoryTab';
-import BranchesTab from './BranchesTab';
+import GitTab from './GitTab';
 import TerminalPanel from './TerminalPanel';
 
-type Tab = 'files' | 'changes' | 'history' | 'branches';
+type Tab = 'files' | 'git';
 
 export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree: Worktree }) {
   const { refresh, setError } = useDeck();
@@ -81,14 +79,8 @@ export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree:
           <button className={tab === 'files' ? 'active' : ''} onClick={() => setTab('files')}>
             ファイル
           </button>
-          <button className={tab === 'changes' ? 'active' : ''} onClick={() => setTab('changes')}>
-            変更{dirty > 0 ? ` (${dirty})` : ''}
-          </button>
-          <button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}>
-            履歴
-          </button>
-          <button className={tab === 'branches' ? 'active' : ''} onClick={() => setTab('branches')}>
-            ブランチ
+          <button className={tab === 'git' ? 'active' : ''} onClick={() => setTab('git')}>
+            Git{dirty > 0 ? ` (${dirty})` : ''}
           </button>
           <button
             className={`terminal-toggle ${showTerminal ? 'active' : ''}`}
@@ -102,9 +94,7 @@ export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree:
       <div className="wt-body">
         <div className="wt-content">
           {tab === 'files' && <FilesTab root={worktree.path} />}
-          {tab === 'changes' && <ChangesTab dir={worktree.path} />}
-          {tab === 'history' && <HistoryTab dir={worktree.path} />}
-          {tab === 'branches' && <BranchesTab repoId={repo.id} worktree={worktree} />}
+          {tab === 'git' && <GitTab repo={repo} worktree={worktree} />}
         </div>
         {showTerminal && <TerminalPanel cwd={worktree.path} />}
       </div>

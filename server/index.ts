@@ -120,7 +120,12 @@ function requireKnownDir(req: express.Request): string {
 app.get('/api/git/log', asyncHandler(async (req, res) => {
   const dir = requireKnownDir(req);
   const limit = Math.min(Number(req.query.limit) || 100, 500);
-  res.json(await git.getLog(dir, limit, typeof req.query.ref === 'string' ? req.query.ref : undefined));
+  res.json(
+    await git.getLog(dir, limit, {
+      ref: typeof req.query.ref === 'string' ? req.query.ref : undefined,
+      all: req.query.all === '1',
+    }),
+  );
 }));
 
 app.get('/api/git/commit', asyncHandler(async (req, res) => {

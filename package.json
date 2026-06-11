@@ -1,0 +1,58 @@
+{
+  "name": "@rabitarochan/claude-deck",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Deck for managing git repos, worktrees, and Claude Code agents in terminals",
+  "license": "MIT",
+  "bin": {
+    "claude-deck": "bin/claude-deck.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "client/dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,green \"tsx watch server/index.ts\" \"vite\"",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:client": "vite",
+    "build": "vite build && tsc -p server/tsconfig.build.json",
+    "start": "node bin/claude-deck.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p server/tsconfig.json",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "node-pty": "^1.1.0",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/ws": "^8.5.13",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@vscode/codicons": "^0.0.44",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "monaco-editor": "^0.55.1",
+    "react": "^18.3.1",
+    "react-arborist": "^3.4.3",
+    "react-dom": "^18.3.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "zustand": "^5.0.10"
+  }
+}

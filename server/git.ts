@@ -8,7 +8,9 @@ export function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise
   return new Promise((resolve, reject) => {
     execFile(
       'git',
-      args,
+      // quotepath=false: output non-ASCII paths (日本語ファイル名 etc.) as raw
+      // UTF-8 instead of octal escapes like "\346\227\245"
+      ['-c', 'core.quotepath=false', ...args],
       {
         cwd,
         maxBuffer: 64 * 1024 * 1024,
@@ -26,6 +28,36 @@ export function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise
 }
 
 const NETWORK_TIMEOUT = 120_000;
+
+/**
+ * Decode a git C-quoted path ("\346\227\245..." with surrounding quotes).
+ * Even with core.quotepath=false, git still quotes paths containing
+ * double quotes, backslashes, or control characters.
+ */
+function unquoteGitPath(quoted: string): string {
+  if (quoted.length < 2 || !quoted.startsWith('"') || !quoted.endsWith('"')) return quoted;
+  const inner = quoted.slice(1, -1);
+  const bytes: number[] = [];
+  const SIMPLE: Record<string, string> = {
+    n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', f: '\f', v: '\v', '"': '"', '\\': '\\',
+  };
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === '\\' && i + 1 < inner.length) {
+      const next = inner[i + 1];
+      if (next >= '0' && next <= '7') {
+        bytes.push(parseInt(inner.slice(i + 1, i + 4), 8));
+        i += 3;
+      } else {
+        for (const b of Buffer.from(SIMPLE[next] ?? next, 'utf8')) bytes.push(b);
+        i += 1;
+      }
+    } else {
+      for (const b of Buffer.from(ch, 'utf8')) bytes.push(b);
+    }
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
 
 export interface WorktreeInfo {
   path: string;
@@ -130,7 +162,7 @@ export async function getStatusFiles(dir: string): Promise<StatusFile[]> {
       const parts = line.split(' ');
       const xy = parts[1];
       files.push({
-        path: parts.slice(8).join(' '),
+        path: unquoteGitPath(parts.slice(8).join(' ')),
         origPath: null,
         staged: xy[0],
         unstaged: xy[1],
@@ -144,8 +176,8 @@ export async function getStatusFiles(dir: string): Promise<StatusFile[]> {
       const pathPart = parts.slice(9).join(' ');
       const [newPath, origPath] = pathPart.split('\t');
       files.push({
-        path: newPath,
-        origPath: origPath ?? null,
+        path: unquoteGitPath(newPath),
+        origPath: origPath ? unquoteGitPath(origPath) : null,
         staged: xy[0],
         unstaged: xy[1],
         untracked: false,
@@ -154,7 +186,7 @@ export async function getStatusFiles(dir: string): Promise<StatusFile[]> {
     } else if (line.startsWith('u ')) {
       const parts = line.split(' ');
       files.push({
-        path: parts.slice(10).join(' '),
+        path: unquoteGitPath(parts.slice(10).join(' ')),
         origPath: null,
         staged: 'U',
         unstaged: 'U',
@@ -163,7 +195,7 @@ export async function getStatusFiles(dir: string): Promise<StatusFile[]> {
       });
     } else if (line.startsWith('? ')) {
       files.push({
-        path: line.slice(2),
+        path: unquoteGitPath(line.slice(2)),
         origPath: null,
         staged: '.',
         unstaged: '?',
@@ -240,9 +272,9 @@ export async function getCommitFiles(dir: string, hash: string): Promise<CommitF
     const parts = line.split('\t');
     const status = parts[0][0];
     if (status === 'R' || status === 'C') {
-      files.push({ path: parts[2], origPath: parts[1], status });
+      files.push({ path: unquoteGitPath(parts[2]), origPath: unquoteGitPath(parts[1]), status });
     } else {
-      files.push({ path: parts[1], origPath: null, status });
+      files.push({ path: unquoteGitPath(parts[1]), origPath: null, status });
     }
   }
   return files;

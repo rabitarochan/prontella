@@ -110,7 +110,9 @@ export interface BranchStatus {
 }
 
 export async function getBranchStatus(dir: string): Promise<BranchStatus> {
-  const out = await runGit(dir, ['status', '--porcelain=v2', '--branch']);
+  // untracked-files=all: count individual files inside untracked directories,
+  // consistent with the file list shown in the UI
+  const out = await runGit(dir, ['status', '--porcelain=v2', '--branch', '--untracked-files=all']);
   const status: BranchStatus = {
     branch: '(detached)',
     upstream: null,
@@ -155,7 +157,9 @@ export interface StatusFile {
 }
 
 export async function getStatusFiles(dir: string): Promise<StatusFile[]> {
-  const out = await runGit(dir, ['status', '--porcelain=v2']);
+  // untracked-files=all: expand untracked directories into individual files
+  // (default shows only "dir/" for a fully-untracked directory)
+  const out = await runGit(dir, ['status', '--porcelain=v2', '--untracked-files=all']);
   const files: StatusFile[] = [];
   for (const line of out.split('\n')) {
     if (line.startsWith('1 ')) {

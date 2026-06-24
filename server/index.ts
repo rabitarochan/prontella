@@ -320,6 +320,29 @@ app.put('/api/fs/file', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+app.post('/api/fs/file', asyncHandler(async (req, res) => {
+  const { root, path: rel } = req.body as { root: string; path: string };
+  if (!rel) throw new Error('path が必要です');
+  files.createFile(root, rel);
+  res.json({ ok: true });
+}));
+
+app.post('/api/fs/dir', asyncHandler(async (req, res) => {
+  const { root, path: rel } = req.body as { root: string; path: string };
+  if (!rel) throw new Error('path が必要です');
+  files.createDir(root, rel);
+  res.json({ ok: true });
+}));
+
+app.get('/api/fs/git-status', asyncHandler(async (req, res) => {
+  const root = queryStr(req, 'root');
+  try {
+    res.json(await git.getTreeStatus(root));
+  } catch {
+    res.json([]); // non-git directory etc. → empty (everything renders white)
+  }
+}));
+
 // ---- terminals ---------------------------------------------------------------
 
 app.get('/api/terminals', asyncHandler(async (req, res) => {

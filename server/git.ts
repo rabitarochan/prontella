@@ -211,6 +211,58 @@ export async function getStatusFiles(dir: string): Promise<StatusFile[]> {
   return files;
 }
 
+export interface TreeStatusEntry {
+  path: string;
+  state: 'new' | 'modified' | 'ignored';
+  dir: boolean; // true when `path` is a directory (ignored directories collapse to one entry)
+}
+
+/**
+ * Per-path git state for coloring the file tree. Unlike getStatusFiles(), this
+ * also includes .gitignore'd entries (`--ignored`), reported as collapsed
+ * directories or individual files. Throws on a non-git directory.
+ */
+export async function getTreeStatus(dir: string): Promise<TreeStatusEntry[]> {
+  // Default (normal) untracked mode so fully-untracked / fully-ignored directories
+  // collapse into a single "dir/" entry instead of expanding into thousands of
+  // files (e.g. node_modules). Descendants are colored by prefix on the client.
+  const out = await runGit(dir, ['status', '--porcelain=v2', '--ignored']);
+  const entries: TreeStatusEntry[] = [];
+  for (const line of out.split('\n')) {
+    if (line.startsWith('1 ')) {
+      const parts = line.split(' ');
+      const xy = parts[1];
+      entries.push({
+        path: unquoteGitPath(parts.slice(8).join(' ')),
+        state: xy.includes('A') ? 'new' : 'modified',
+        dir: false,
+      });
+    } else if (line.startsWith('2 ')) {
+      const parts = line.split(' ');
+      const xy = parts[1];
+      const newPath = parts.slice(9).join(' ').split('\t')[0];
+      entries.push({
+        path: unquoteGitPath(newPath),
+        state: xy.includes('A') ? 'new' : 'modified',
+        dir: false,
+      });
+    } else if (line.startsWith('u ')) {
+      const parts = line.split(' ');
+      entries.push({
+        path: unquoteGitPath(parts.slice(10).join(' ')),
+        state: 'modified', // conflicts fold into "modified" for tree coloring
+        dir: false,
+      });
+    } else if (line.startsWith('? ') || line.startsWith('! ')) {
+      const state = line[0] === '?' ? 'new' : 'ignored';
+      const raw = unquoteGitPath(line.slice(2));
+      const isDir = raw.endsWith('/'); // collapsed directory entry
+      entries.push({ path: isDir ? raw.slice(0, -1) : raw, state, dir: isDir });
+    }
+  }
+  return entries;
+}
+
 export interface LogEntry {
   hash: string;
   shortHash: string;

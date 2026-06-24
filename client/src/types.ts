@@ -71,6 +71,12 @@ export interface FileContent {
   size: number;
 }
 
+export interface TreeStatusEntry {
+  path: string;
+  state: 'new' | 'modified' | 'ignored';
+  dir: boolean;
+}
+
 export interface StashEntry {
   ref: string;
   message: string;

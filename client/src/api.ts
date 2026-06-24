@@ -10,6 +10,7 @@ import type {
   StatusFile,
   TerminalSession,
   TreeEntry,
+  TreeStatusEntry,
 } from './types';
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -94,6 +95,7 @@ export const api = {
   stashDrop: (dir: string, ref: string) => post<void>('/api/git/stash-drop', { dir, ref }),
 
   tree: (root: string, dir = '') => request<TreeEntry[]>(`/api/fs/tree?root=${q(root)}&dir=${q(dir)}`),
+  treeStatus: (root: string) => request<TreeStatusEntry[]>(`/api/fs/git-status?root=${q(root)}`),
   file: (root: string, path: string) =>
     request<FileContent>(`/api/fs/file?root=${q(root)}&path=${q(path)}`),
   saveFile: (root: string, path: string, content: string) =>
@@ -102,6 +104,8 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ root, path, content }),
     }),
+  createFile: (root: string, path: string) => post<{ ok: boolean }>('/api/fs/file', { root, path }),
+  createFolder: (root: string, path: string) => post<{ ok: boolean }>('/api/fs/dir', { root, path }),
 
   terminals: (cwd?: string) =>
     request<TerminalSession[]>(`/api/terminals${cwd ? `?cwd=${q(cwd)}` : ''}`),

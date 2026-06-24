@@ -73,3 +73,17 @@ export function writeFileContent(root: string, rel: string, content: string): vo
   const abs = safeResolve(root, rel);
   fs.writeFileSync(abs, content, 'utf8');
 }
+
+/** Create an empty file. Fails if it already exists. */
+export function createFile(root: string, rel: string): void {
+  const abs = safeResolve(root, rel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, '', { flag: 'wx' }); // wx: error out if the file exists
+}
+
+/** Create a directory. Fails if it already exists. */
+export function createDir(root: string, rel: string): void {
+  const abs = safeResolve(root, rel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.mkdirSync(abs); // throws EEXIST if the directory already exists
+}

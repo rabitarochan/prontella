@@ -45,7 +45,7 @@ export default function DiffPane({ dir, path, scope, hash, origPath }: DiffPaneP
         scrollBeyondLastLine: false,
         fontSize: 13,
         renderOverviewRuler: false,
-        diffWordWrap: 'on',
+        diffWordWrap: 'off',
       }}
     />
   );

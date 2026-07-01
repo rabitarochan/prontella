@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+} from 'react';
 import { api } from '../api';
 import { layoutGraph, laneColor, type GraphRow } from '../graph';
 import type { CommitFile, LogEntry } from '../types';
@@ -6,6 +12,31 @@ import DiffPane from './DiffPane';
 
 const ROW_H = 28;
 const LANE_W = 14;
+const MIN_COL_W = 40;
+const COLS_KEY = 'deck3:historyColumns';
+
+type ColKey = 'tree' | 'subject' | 'commit' | 'author' | 'date';
+// tree is null while it tracks the computed graph width; a drag pins it to a number.
+type ColWidths = { tree: number | null; subject: number; commit: number; author: number; date: number };
+const DEFAULT_COLS: ColWidths = { tree: null, subject: 360, commit: 90, author: 110, date: 150 };
+
+const COLUMNS: { key: ColKey; label: string }[] = [
+  { key: 'tree', label: 'ツリー' },
+  { key: 'subject', label: '説明' },
+  { key: 'commit', label: 'コミット' },
+  { key: 'author', label: '作者' },
+  { key: 'date', label: '日時' },
+];
+
+function loadCols(): ColWidths {
+  try {
+    const raw = localStorage.getItem(COLS_KEY);
+    if (raw) return { ...DEFAULT_COLS, ...JSON.parse(raw) };
+  } catch {
+    // ignore malformed / unavailable storage
+  }
+  return DEFAULT_COLS;
+}
 
 function GraphCell({ row }: { row: GraphRow }) {
   const width = row.laneCount * LANE_W + LANE_W / 2;
@@ -75,6 +106,15 @@ export default function HistoryTab({ dir }: { dir: string }) {
   const [commitFiles, setCommitFiles] = useState<CommitFile[] | null>(null);
   const [selectedFile, setSelectedFile] = useState<CommitFile | null>(null);
   const [error, setError] = useState('');
+  const [cols, setCols] = useState<ColWidths>(loadCols);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(COLS_KEY, JSON.stringify(cols));
+    } catch {
+      // ignore quota / unavailable storage
+    }
+  }, [cols]);
 
   useEffect(() => {
     setLog(null);
@@ -103,6 +143,36 @@ export default function HistoryTab({ dir }: { dir: string }) {
     [graph],
   );
 
+  const treeW = cols.tree ?? graphWidth;
+  const totalW = treeW + cols.subject + cols.commit + cols.author + cols.date;
+
+  const colStyle = (key: ColKey): CSSProperties => {
+    if (key === 'subject') return { flex: `1 0 ${cols.subject}px`, minWidth: 0 };
+    const w = key === 'tree' ? treeW : cols[key];
+    return { flex: `0 0 ${w}px`, width: w };
+  };
+
+  const startResize = (key: ColKey) => (e: ReactMouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = key === 'tree' ? treeW : cols[key];
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.max(MIN_COL_W, startW + (ev.clientX - startX));
+      setCols((c) => ({ ...c, [key]: next }));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
   if (error) return <div className="placeholder">⚠ {error}</div>;
 
   return (
@@ -116,6 +186,14 @@ export default function HistoryTab({ dir }: { dir: string }) {
           {log && <span className="graph-count">{log.length} コミット</span>}
         </div>
         <div className="graph-scroll">
+          <div className="graph-header" style={{ minWidth: totalW }}>
+            {COLUMNS.map((col) => (
+              <div key={col.key} className="graph-hcell" style={colStyle(col.key)}>
+                <span className="graph-hlabel">{col.label}</span>
+                <span className="col-resize-handle" onMouseDown={startResize(col.key)} />
+              </div>
+            ))}
+          </div>
           {log === null ? (
             <div className="placeholder">読み込み中...</div>
           ) : log.length === 0 ? (
@@ -125,23 +203,27 @@ export default function HistoryTab({ dir }: { dir: string }) {
               <div
                 key={entry.hash}
                 className={`graph-row ${selected?.hash === entry.hash ? 'selected' : ''}`}
-                style={{ height: ROW_H }}
+                style={{ height: ROW_H, minWidth: totalW }}
                 onClick={() => setSelected(entry)}
               >
-                <div className="graph-cell" style={{ width: graphWidth }}>
+                <div className="graph-cell" style={colStyle('tree')}>
                   <GraphCell row={graph[i]} />
                 </div>
-                <div className="graph-subject">
+                <div className="graph-subject" style={colStyle('subject')}>
                   <RefChips refs={entry.refs} />
                   <span className="graph-subject-text" title={entry.subject}>
                     {entry.subject}
                   </span>
                 </div>
-                <span className="graph-hash">{entry.shortHash}</span>
-                <span className="graph-author" title={entry.author}>
+                <span className="graph-hash" style={colStyle('commit')}>
+                  {entry.shortHash}
+                </span>
+                <span className="graph-author" style={colStyle('author')} title={entry.author}>
                   {entry.author}
                 </span>
-                <span className="graph-date">{new Date(entry.date).toLocaleString('ja-JP')}</span>
+                <span className="graph-date" style={colStyle('date')}>
+                  {new Date(entry.date).toLocaleString('ja-JP')}
+                </span>
               </div>
             ))
           )}

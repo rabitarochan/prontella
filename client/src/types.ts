@@ -43,7 +43,7 @@ export interface LogEntry {
   shortHash: string;
   parents: string[];
   author: string;
-  date: string;
+  date: string; // committer date (ISO 8601)
   subject: string;
   refs: string;
 }

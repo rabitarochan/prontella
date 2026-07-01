@@ -268,7 +268,7 @@ export interface LogEntry {
   shortHash: string;
   parents: string[];
   author: string;
-  date: string;
+  date: string; // committer date (ISO 8601)
   subject: string;
   refs: string;
 }
@@ -278,9 +278,11 @@ export async function getLog(
   limit = 100,
   opts: { ref?: string; all?: boolean } = {},
 ): Promise<LogEntry[]> {
-  const format = ['%H', '%h', '%P', '%an', '%aI', '%s', '%D'].join(US);
-  // topo-order keeps children above parents, which the graph layout relies on
-  const args = ['log', '--topo-order', `--pretty=format:${format}`, '-n', String(limit)];
+  // %cI is the committer date (strict ISO 8601); LogEntry.date carries it
+  const format = ['%H', '%h', '%P', '%an', '%cI', '%s', '%D'].join(US);
+  // date-order sorts by committer date (descending) while still keeping a parent
+  // after all of its children, which the graph layout relies on
+  const args = ['log', '--date-order', `--pretty=format:${format}`, '-n', String(limit)];
   if (opts.all) args.push('--all');
   if (opts.ref) args.push(opts.ref);
   let out: string;

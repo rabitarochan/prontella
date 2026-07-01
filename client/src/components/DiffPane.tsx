@@ -44,7 +44,7 @@ export default function DiffPane({ dir, path, scope, hash, origPath }: DiffPaneP
         minimap: { enabled: false },
         scrollBeyondLastLine: false,
         fontSize: 13,
-        renderOverviewRuler: false,
+        renderOverviewRuler: true,
         diffWordWrap: 'off',
       }}
     />

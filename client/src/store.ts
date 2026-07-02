@@ -25,8 +25,10 @@ export const useDeck = create<DeckState>((set) => ({
   refresh: async () => {
     try {
       const repos = await api.repos();
-      set({ repos, loaded: true });
+      set({ repos, loaded: true, error: null });
     } catch (e) {
+      // repos は渡さず直前の一覧を保持し、エラーだけ表示する
+      // (サーバー一時エラーで UI が即座に空にならないようにする)
       set({ error: e instanceof Error ? e.message : String(e), loaded: true });
     }
   },

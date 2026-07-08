@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
+import * as monaco from 'monaco-editor';
 import { api } from '../api';
 import type { FileContent } from '../types';
 import FileTree from './FileTree';
@@ -20,6 +21,24 @@ function isDirty(t: OpenTab): boolean {
   return !!t.file && t.file.content !== null && t.draft !== t.file.content;
 }
 
+const EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOptions = {
+  fontSize: 13,
+  minimap: { enabled: true },
+  scrollBeyondLastLine: false,
+  automaticLayout: true,
+  renderWhitespace: 'selection',
+};
+
+// Monaco models are keyed by `path` and outlive both the editor and this
+// component, so a closed tab's draft would silently resurface on reopen (or in
+// another worktree, since paths are root-relative). Disposal is deferred a tick
+// so React re-renders first and the editor detaches the model before we drop it.
+function disposeModelsSoon(paths: string[]) {
+  setTimeout(() => {
+    for (const p of paths) monaco.editor.getModel(monaco.Uri.parse(p))?.dispose();
+  }, 0);
+}
+
 export default function FilesTab({ root }: { root: string }) {
   const [tabs, setTabs] = useState<OpenTab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -33,7 +52,10 @@ export default function FilesTab({ root }: { root: string }) {
     setTabs([]);
     setActivePath(null);
     setMessage('');
-    loadedRef.current.clear();
+    const loaded = loadedRef.current;
+    loaded.clear();
+    // On root change or unmount, drop every model this tab set created.
+    return () => disposeModelsSoon([...loaded]);
   }, [root]);
 
   const active = tabs.find((t) => t.path === activePath) ?? null;
@@ -78,6 +100,7 @@ export default function FilesTab({ root }: { root: string }) {
     const next = tabs.filter((t) => t.path !== path);
     setTabs(next);
     loadedRef.current.delete(path);
+    disposeModelsSoon([path]);
     if (activePath === path) {
       const neighbor = next[idx] ?? next[idx - 1] ?? null; // right neighbor, else left
       setActivePath(neighbor?.path ?? null);
@@ -179,20 +202,19 @@ export default function FilesTab({ root }: { root: string }) {
                   </button>
                 </div>
                 <div className="editor-host">
+                  {/* Uncontrolled on purpose: passing `value` makes the library rewrite the
+                      whole model whenever a re-render (e.g. the 4s repo poll) races a
+                      keystroke, which jumps the cursor and corrupts IME composition.
+                      State only mirrors the editor via onChange; models are dropped in
+                      closeTab / the root effect so stale drafts never resurface. */}
                   <Editor
                     path={active.path}
-                    value={active.draft}
+                    defaultValue={active.draft}
                     onChange={onChange}
                     onMount={onMount}
                     keepCurrentModel
                     theme="vs-dark"
-                    options={{
-                      fontSize: 13,
-                      minimap: { enabled: true },
-                      scrollBeyondLastLine: false,
-                      automaticLayout: true,
-                      renderWhitespace: 'selection',
-                    }}
+                    options={EDITOR_OPTIONS}
                   />
                 </div>
               </>

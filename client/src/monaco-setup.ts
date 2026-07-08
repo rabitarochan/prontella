@@ -2,6 +2,7 @@
 // offline and ships self-contained via npm.
 import * as monaco from 'monaco-editor';
 import { loader } from '@monaco-editor/react';
+import { emmetCSS, emmetHTML, emmetJSX } from 'emmet-monaco-es';
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker';
 import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker';
@@ -31,6 +32,25 @@ self.MonacoEnvironment = {
 };
 
 loader.config({ monaco });
+
+// Files are edited standalone (no tsconfig / node_modules resolution), so
+// TypeScript's semantic diagnostics (unresolved imports, missing types) are
+// all noise here — keep only genuine syntax errors.
+for (const defaults of [monaco.typescript.typescriptDefaults, monaco.typescript.javascriptDefaults]) {
+  defaults.setDiagnosticsOptions({
+    noSemanticValidation: true,
+    noSuggestionDiagnostics: true,
+    noSyntaxValidation: false,
+  });
+}
+
+// tokenizer: 'standard' — the default 'monarch' mode reads Monaco internals
+// (_tokenizerWithStateStore) that no longer exist in monaco-editor 0.55, which
+// makes the CSS/HTML providers throw instead of suggesting.
+const emmetOptions = { tokenizer: 'standard' as const };
+emmetHTML(monaco, ['html', 'handlebars', 'razor'], emmetOptions);
+emmetCSS(monaco, ['css', 'scss', 'less'], emmetOptions);
+emmetJSX(monaco, ['javascript', 'typescript'], emmetOptions);
 
 /** Monaco language id for a file path, via Monaco's own extension registry. */
 export function languageFor(filePath: string): string | undefined {

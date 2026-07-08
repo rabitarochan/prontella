@@ -46,6 +46,7 @@
     "@xterm/xterm": "^5.5.0",
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
+    "emmet-monaco-es": "^5.7.0",
     "monaco-editor": "^0.55.1",
     "react": "^18.3.1",
     "react-arborist": "^3.4.3",

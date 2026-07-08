@@ -12,6 +12,15 @@ import { PtyManager } from './pty.js';
 const PORT = Number(process.env.PORT) || 3711;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// 単発の未捕捉例外でサーバープロセス全体が落ちるのを防ぐ。ローカル開発ツールとして、
+// ログだけ出してプロセスは生かし続け、個別リクエストが 500 を返すだけに留める。
+process.on('uncaughtException', (err) => {
+  console.error('[claude-deck3] uncaughtException:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[claude-deck3] unhandledRejection:', reason);
+});
+
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
@@ -239,7 +248,9 @@ app.post('/api/git/discard', asyncHandler(async (req, res) => {
   const filePath = String(req.body.path ?? '');
   if (!filePath) throw new Error('path が必要です');
   if (req.body.untracked === true) {
-    fs.rmSync(files.safeResolve(dir, filePath), { force: true });
+    // recursive: 未追跡ディレクトリー(埋め込みリポジトリーなど git が `dir/` の
+    // 1 エントリーとして報告するもの)もフォルダーごと削除する。
+    fs.rmSync(files.safeResolve(dir, filePath), { recursive: true, force: true });
   } else {
     await git.discardFile(dir, filePath);
   }
@@ -373,6 +384,19 @@ if (clientDist) {
   app.use(express.static(clientDist));
   app.get(/^\/(?!api|ws).*/, (_req, res) => res.sendFile(path.join(clientDist, 'index.html')));
 }
+
+// ---- error handling ----------------------------------------------------------
+
+// 最終防波堤: asyncHandler の網から漏れた同期 throw や body-parser のエラーを
+// JSON 500 に統一する。4 引数シグネチャが Express にエラーミドルウェアとして
+// 認識される条件のため _next を省略しない。
+app.use(
+  (err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error('[claude-deck3] request error:', err);
+    if (res.headersSent) return;
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  },
+);
 
 // ---- server + websocket ------------------------------------------------------
 

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import type { TerminalSession } from '../../types';
 import type { LeafNode } from '../../layout/tileTree';
 import type { TileActions } from '../../layout/useTileLayout';
@@ -38,6 +38,16 @@ export default function TilePane({
   useEffect(() => {
     if (focused) host.querySelector('textarea')?.focus();
   }, []);
+
+  // Adopt the host node. Must be idempotent: appendChild detaches and
+  // re-inserts even under the same parent, which silently drops focus and
+  // selection — guard so re-renders (e.g. the 3s status poll) are no-ops.
+  const adoptHost = useCallback(
+    (el: HTMLDivElement | null) => {
+      if (el && host.parentElement !== el) el.appendChild(host);
+    },
+    [host],
+  );
 
   const close = () => {
     // FilesTab marks unsaved tabs with .editor-tab-dirty — closing the tile
@@ -79,12 +89,7 @@ export default function TilePane({
           </button>
         </span>
       </header>
-      <div
-        className="tile-body"
-        ref={(el) => {
-          if (el) el.appendChild(host);
-        }}
-      />
+      <div className="tile-body" ref={adoptHost} />
     </section>
   );
 }

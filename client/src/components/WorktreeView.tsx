@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Group, Panel, Separator } from 'react-resizable-panels';
 import { api } from '../api';
 import { useDeck } from '../store';
 import type { Repo, Worktree } from '../types';
@@ -92,11 +93,31 @@ export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree:
         </div>
       </div>
       <div className="wt-body">
-        <div className="wt-content">
-          {tab === 'files' && <FilesTab root={worktree.path} />}
-          {tab === 'git' && <GitTab repo={repo} worktree={worktree} />}
-        </div>
-        {showTerminal && <TerminalPanel cwd={worktree.path} />}
+        {/* Key the Group by structure: panel count changes need a clean remount
+            for defaultSize to reapply. */}
+        <Group
+          key={showTerminal ? 'content-term' : 'content'}
+          orientation="vertical"
+          className="wt-split"
+        >
+          <Panel
+            defaultSize={showTerminal ? '62%' : '100%'}
+            minSize="10%"
+            className="wt-content"
+            style={{ overflow: 'hidden' }}
+          >
+            {tab === 'files' && <FilesTab root={worktree.path} />}
+            {tab === 'git' && <GitTab repo={repo} worktree={worktree} />}
+          </Panel>
+          {showTerminal && (
+            <>
+              <Separator className="pane-separator pane-separator-v" />
+              <Panel defaultSize="38%" minSize="120px" style={{ overflow: 'hidden' }}>
+                <TerminalPanel cwd={worktree.path} />
+              </Panel>
+            </>
+          )}
+        </Group>
       </div>
     </div>
   );

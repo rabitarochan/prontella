@@ -430,6 +430,30 @@ textarea:focus {
   overflow: hidden;
 }
 
+/* ---- resizable panes (react-resizable-panels) ---- */
+
+.wt-split {
+  flex: 1;
+  min-height: 0;
+}
+.pane-separator {
+  background: var(--border);
+  transition: background 0.15s;
+}
+.pane-separator:hover,
+.pane-separator[data-separator='active'],
+.pane-separator[data-separator='focus'] {
+  background: var(--accent);
+}
+/* between vertically stacked panels */
+.pane-separator-v {
+  height: 4px;
+}
+/* between side-by-side panels */
+.pane-separator-h {
+  width: 4px;
+}
+
 /* ---- files tab ---- */
 
 .files-tab {
@@ -1136,10 +1160,7 @@ textarea:focus {
 /* ---- terminal panel ---- */
 
 .terminal-panel {
-  height: 38%;
-  min-height: 180px;
-  flex-shrink: 0;
-  border-top: 1px solid var(--border);
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: #1b1b20;

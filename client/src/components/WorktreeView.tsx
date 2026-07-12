@@ -12,7 +12,7 @@ export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree:
   const { refresh, setError } = useDeck();
   const [syncing, setSyncing] = useState<string | null>(null);
   const { sessions, create, kill } = useTerminalSessions(worktree.path);
-  const tiles = useTileLayout(sessions, create, kill);
+  const tiles = useTileLayout(worktree.path, sessions, create, kill);
 
   const dirty =
     (worktree.status?.staged ?? 0) +
@@ -106,6 +106,17 @@ export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree:
             onClick={() => void tiles.openTerminal('claude')}
           >
             ✦ Claude 起動
+          </button>
+          <button
+            className="icon-btn layout-reset"
+            title="レイアウトを初期化"
+            onClick={() => {
+              if (confirm('レイアウトを初期化しますか?(未保存の編集内容は失われます)')) {
+                tiles.reset();
+              }
+            }}
+          >
+            <span className="codicon codicon-layout" />
           </button>
         </div>
       </div>

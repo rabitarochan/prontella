@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type { TerminalSession } from '../../types';
 import type { LeafNode } from '../../layout/tileTree';
 import type { TileActions } from '../../layout/useTileLayout';
@@ -31,6 +32,22 @@ export default function TilePane({
   const meta = META[leaf.content.kind];
   const title = leaf.content.kind === 'terminal' ? (session?.title ?? 'ターミナル') : meta.title;
 
+  // A DOM move (host re-append after a split/close elsewhere) drops focus;
+  // give it back to the focused terminal. Mount-only: focus changes from
+  // clicks are handled by the browser itself.
+  useEffect(() => {
+    if (focused) host.querySelector('textarea')?.focus();
+  }, []);
+
+  const close = () => {
+    // FilesTab marks unsaved tabs with .editor-tab-dirty — closing the tile
+    // would silently discard those drafts.
+    if (leaf.content.kind === 'files' && host.querySelector('.editor-tab-dirty')) {
+      if (!confirm('未保存の変更があります。ファイルタイルを閉じますか?')) return;
+    }
+    void actions.close(leaf.id);
+  };
+
   return (
     <section
       className={`tile-pane ${focused ? 'focused' : ''}`}
@@ -57,7 +74,7 @@ export default function TilePane({
           >
             <span className="codicon codicon-split-vertical" />
           </button>
-          <button className="icon-btn" title="閉じる" onClick={() => void actions.close(leaf.id)}>
+          <button className="icon-btn" title="閉じる" onClick={close}>
             <span className="codicon codicon-close" />
           </button>
         </span>

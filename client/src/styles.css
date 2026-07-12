@@ -1256,6 +1256,10 @@ textarea:focus {
 .wt-tabs .claude-launch {
   color: var(--accent);
 }
+.wt-tabs .layout-reset {
+  margin-left: 8px;
+  align-self: center;
+}
 .xterm-container {
   position: absolute;
   inset: 0;

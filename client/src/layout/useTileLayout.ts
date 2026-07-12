@@ -7,6 +7,7 @@ import {
   makeLeaf,
   normalize,
   removeLeaf,
+  sanitize,
   setLeafContent,
   setSizes,
   splitLeaf,
@@ -14,6 +15,21 @@ import {
   type TileNode,
   type WorktreeLayout,
 } from './tileTree';
+
+const STORAGE_PREFIX = 'claude-deck.tileLayout.';
+
+function loadLayout(worktreePath: string): WorktreeLayout {
+  try {
+    const raw = localStorage.getItem(STORAGE_PREFIX + worktreePath);
+    if (raw) {
+      const parsed = sanitize(JSON.parse(raw));
+      if (parsed) return parsed;
+    }
+  } catch {
+    // broken JSON / storage unavailable — fall through to the default
+  }
+  return createDefaultLayout();
+}
 
 export interface TileActions {
   layout: WorktreeLayout;
@@ -32,15 +48,26 @@ export interface TileActions {
   openTerminal: (run?: string) => Promise<void>;
   /** Persist pane sizes after a drag. */
   applySizes: (splitId: string, sizes: number[]) => void;
+  /** Back to the default layout (escape hatch for broken layouts). */
+  reset: () => void;
 }
 
 export function useTileLayout(
+  worktreePath: string,
   sessions: TerminalSession[] | null,
   createSession: (run?: string, place?: (s: TerminalSession) => void) => Promise<TerminalSession>,
   killSession: (id: string) => Promise<void>,
 ): TileActions {
-  const [layout, setLayout] = useState<WorktreeLayout>(createDefaultLayout);
+  const [layout, setLayout] = useState<WorktreeLayout>(() => loadLayout(worktreePath));
   const [focusedLeafId, setFocusedLeafId] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_PREFIX + worktreePath, JSON.stringify(layout));
+    } catch {
+      // storage full / unavailable — layout just won't persist
+    }
+  }, [worktreePath, layout]);
 
   // Handlers read the latest tree through a ref so rapid successive actions
   // never operate on a stale closure.
@@ -52,6 +79,8 @@ export function useTileLayout(
   }, []);
 
   // Adopt sessions created outside the layout (other browser tab, stale layout).
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
   useEffect(() => {
     if (!sessions) return;
     setLayout((prev) => adoptSessions(prev, sessions.map((s) => s.id)));
@@ -180,6 +209,14 @@ export function useTileLayout(
     setLayout((prev) => ({ ...prev, root: prev.root ? setSizes(prev.root, splitId, sizes) : null }));
   }, []);
 
+  const reset = useCallback(() => {
+    // Re-adopt live sessions immediately so terminals reappear without
+    // waiting for the next poll tick.
+    const ids = (sessionsRef.current ?? []).map((s) => s.id);
+    setLayout(adoptSessions(createDefaultLayout(), ids));
+    setFocusedLeafId(null);
+  }, []);
+
   return {
     layout,
     focusedLeafId,
@@ -191,5 +228,6 @@ export function useTileLayout(
     openContent,
     openTerminal,
     applySizes,
+    reset,
   };
 }

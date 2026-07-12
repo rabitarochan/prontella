@@ -1,25 +1,27 @@
 import { useState } from 'react';
-import { Group, Panel, Separator } from 'react-resizable-panels';
 import { api } from '../api';
 import { useDeck } from '../store';
 import type { Repo, Worktree } from '../types';
+import { leaves } from '../layout/tileTree';
+import { useTerminalSessions } from '../layout/useTerminalSessions';
+import { useTileLayout } from '../layout/useTileLayout';
 import StatusBadge from './StatusBadge';
-import FilesTab from './FilesTab';
-import GitTab from './GitTab';
-import TerminalPanel from './TerminalPanel';
-
-type Tab = 'files' | 'git';
+import TileGrid from './tiles/TileGrid';
 
 export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree: Worktree }) {
   const { refresh, setError } = useDeck();
-  const [tab, setTab] = useState<Tab>('files');
-  const [showTerminal, setShowTerminal] = useState(true);
   const [syncing, setSyncing] = useState<string | null>(null);
+  const { sessions, create, kill } = useTerminalSessions(worktree.path);
+  const tiles = useTileLayout(sessions, create, kill);
 
   const dirty =
     (worktree.status?.staged ?? 0) +
     (worktree.status?.unstaged ?? 0) +
     (worktree.status?.untracked ?? 0);
+
+  const allLeaves = leaves(tiles.layout.root);
+  const hasFiles = allLeaves.some((l) => l.content.kind === 'files');
+  const hasGit = allLeaves.some((l) => l.content.kind === 'git');
 
   const sync = async (kind: 'fetch' | 'pull' | 'push') => {
     setSyncing(kind);
@@ -77,47 +79,38 @@ export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree:
           </span>
         </div>
         <div className="wt-tabs">
-          <button className={tab === 'files' ? 'active' : ''} onClick={() => setTab('files')}>
+          <button
+            className={hasFiles ? 'active' : ''}
+            title="ファイルタイルを開く/フォーカス"
+            onClick={() => tiles.openContent('files')}
+          >
             ファイル
           </button>
-          <button className={tab === 'git' ? 'active' : ''} onClick={() => setTab('git')}>
+          <button
+            className={hasGit ? 'active' : ''}
+            title="Git タイルを開く/フォーカス"
+            onClick={() => tiles.openContent('git')}
+          >
             Git{dirty > 0 ? ` (${dirty})` : ''}
           </button>
           <button
-            className={`terminal-toggle ${showTerminal ? 'active' : ''}`}
-            onClick={() => setShowTerminal((v) => !v)}
-            title="ターミナルパネルの表示/非表示"
+            className="terminal-toggle"
+            title="新しいシェルのタイルを開く"
+            onClick={() => void tiles.openTerminal()}
           >
-            ターミナル
+            ＋ シェル
+          </button>
+          <button
+            className="claude-launch"
+            title="このWorktreeでClaude Codeを起動"
+            onClick={() => void tiles.openTerminal('claude')}
+          >
+            ✦ Claude 起動
           </button>
         </div>
       </div>
       <div className="wt-body">
-        {/* Key the Group by structure: panel count changes need a clean remount
-            for defaultSize to reapply. */}
-        <Group
-          key={showTerminal ? 'content-term' : 'content'}
-          orientation="vertical"
-          className="wt-split"
-        >
-          <Panel
-            defaultSize={showTerminal ? '62%' : '100%'}
-            minSize="10%"
-            className="wt-content"
-            style={{ overflow: 'hidden' }}
-          >
-            {tab === 'files' && <FilesTab root={worktree.path} />}
-            {tab === 'git' && <GitTab repo={repo} worktree={worktree} />}
-          </Panel>
-          {showTerminal && (
-            <>
-              <Separator className="pane-separator pane-separator-v" />
-              <Panel defaultSize="38%" minSize="120px" style={{ overflow: 'hidden' }}>
-                <TerminalPanel cwd={worktree.path} />
-              </Panel>
-            </>
-          )}
-        </Group>
+        <TileGrid repo={repo} worktree={worktree} sessions={sessions} actions={tiles} />
       </div>
     </div>
   );

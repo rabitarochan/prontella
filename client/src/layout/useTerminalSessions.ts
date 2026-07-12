@@ -29,8 +29,11 @@ export function useTerminalSessions(cwd: string) {
   }, [reload]);
 
   const create = useCallback(
-    async (run?: string) => {
+    async (run?: string, place?: (session: TerminalSession) => void) => {
       const session = await api.createTerminal(cwd, run);
+      // Let the caller claim the session (e.g. assign it to a tile) before the
+      // reload publishes it — otherwise the layout adoption rule could grab it.
+      place?.(session);
       await reload();
       await refreshDeck();
       return session;

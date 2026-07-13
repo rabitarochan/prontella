@@ -103,4 +103,5 @@ export interface TerminalSession {
   claudeDetected: boolean;
   createdAt: number;
   lastOutputAt: number;
+  statusSince: number;
 }

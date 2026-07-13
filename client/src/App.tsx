@@ -1,5 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
+import { connectAgentEvents, useAgentEvents, waitingSessions } from './agentEvents';
 import { useDeck, findSelection } from './store';
+import AttentionBell from './components/AttentionBell';
 import Sidebar from './components/Sidebar';
 import DeckView from './components/DeckView';
 import WorktreeView from './components/WorktreeView';
@@ -8,12 +10,20 @@ const POLL_MS = 4000;
 
 export default function App() {
   const { repos, loaded, selected, error, refresh, setError } = useDeck();
+  const sessions = useAgentEvents((s) => s.sessions);
 
   useEffect(() => {
     void refresh();
+    connectAgentEvents();
     const timer = setInterval(() => void refresh(), POLL_MS);
     return () => clearInterval(timer);
   }, [refresh]);
+
+  // タブタイトルにバッジ: 他のタブで作業中でも確認待ちの発生が分かる
+  const waitingCount = useMemo(() => waitingSessions(sessions).length, [sessions]);
+  useEffect(() => {
+    document.title = waitingCount > 0 ? `(${waitingCount}) 確認待ち — Claude Deck` : 'Claude Deck';
+  }, [waitingCount]);
 
   const current = findSelection(repos, selected);
 
@@ -24,11 +34,14 @@ export default function App() {
           ◆ Claude Deck
         </span>
         <span className="topbar-sub">repos: {repos.length}</span>
-        {error && (
-          <span className="topbar-error" onClick={() => setError(null)} title="クリックで閉じる">
-            ⚠ {error}
-          </span>
-        )}
+        <span className="topbar-right">
+          {error && (
+            <span className="topbar-error" onClick={() => setError(null)} title="クリックで閉じる">
+              ⚠ {error}
+            </span>
+          )}
+          <AttentionBell />
+        </span>
       </header>
       <div className="body">
         <Sidebar />

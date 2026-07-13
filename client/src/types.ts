@@ -63,12 +63,27 @@ export interface TreeEntry {
   size: number;
 }
 
+// server/editorconfig.ts の EditorConfigSettings と手動同期(共有型機構がないため)
+export interface EditorConfigSettings {
+  indentStyle?: 'tab' | 'space';
+  indentSize?: number;
+  tabWidth?: number;
+  endOfLine?: 'lf' | 'crlf';
+  charset?: 'latin1' | 'utf-8' | 'utf-8-bom' | 'utf-16be' | 'utf-16le';
+  trimTrailingWhitespace?: boolean;
+  insertFinalNewline?: boolean;
+}
+
+// server/files.ts の FileContent と手動同期(共有型機構がないため)
 export interface FileContent {
   path: string;
   content: string | null;
   binary: boolean;
   tooLarge: boolean;
   size: number;
+  encoding: string | null; // binary / tooLarge のとき null
+  hasBom: boolean;
+  editorconfig: EditorConfigSettings | null;
 }
 
 export interface TreeStatusEntry {

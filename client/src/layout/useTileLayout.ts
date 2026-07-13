@@ -2,16 +2,20 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TerminalSession } from '../types';
 import {
   adoptSessions,
+  appendSession,
   createDefaultLayout,
+  findLeaf,
   leaves,
   makeLeaf,
   normalize,
+  pruneSessions,
   removeLeaf,
+  removeSession,
   sanitize,
-  setLeafContent,
   setSizes,
   splitLeaf,
-  type TileContent,
+  updateLeaf,
+  type TileView,
   type TileNode,
   type WorktreeLayout,
 } from './tileTree';
@@ -35,17 +39,22 @@ export interface TileActions {
   layout: WorktreeLayout;
   focusedLeafId: string | null;
   focusLeaf: (leafId: string) => void;
-  /** Split a leaf; the new tile starts as an empty picker. */
+  /** Split a leaf; the new tile starts as an empty terminal view. */
   split: (leafId: string, dir: 'row' | 'column') => void;
-  /** Close a tile. Kills the terminal session (with confirm) if one is alive. */
+  /** Close a tile. Kills its live terminal sessions (with confirm). */
   close: (leafId: string) => Promise<void>;
-  /** Resolve an empty tile's picker choice. */
-  pick: (leafId: string, choice: 'shell' | 'claude' | 'files' | 'git') => Promise<void>;
-  /** Replace a dead terminal tile's session in place. */
-  relaunch: (leafId: string, run?: string) => Promise<void>;
-  /** Header shortcuts: focus the existing tile or open a new one. */
-  openContent: (kind: 'files' | 'git') => void;
-  openTerminal: (run?: string) => Promise<void>;
+  /** Switch which view (files / git / term) a tile shows. */
+  setView: (leafId: string, view: TileView) => void;
+  /** Activate a terminal tab within a tile. */
+  setActiveSession: (leafId: string, sessionId: string) => void;
+  /** Close a terminal tab: kills the session if alive, then removes the tab. */
+  closeSessionTab: (leafId: string, sessionId: string) => Promise<void>;
+  /**
+   * Create a terminal session as a new tab. Target: explicit leaf, else the
+   * focused leaf, else the first term-view leaf. Switches the tile to the
+   * terminal view and activates the new tab.
+   */
+  openTerminal: (run?: string, leafId?: string) => Promise<void>;
   /** Persist pane sizes after a drag. */
   applySizes: (splitId: string, sizes: number[]) => void;
   /** Back to the default layout (escape hatch for broken layouts). */
@@ -73,17 +82,28 @@ export function useTileLayout(
   // never operate on a stale closure.
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
+  const focusedRef = useRef(focusedLeafId);
+  focusedRef.current = focusedLeafId;
 
   const update = useCallback((root: TileNode | null) => {
     setLayout((prev) => ({ ...prev, root: normalize(root) }));
   }, []);
 
-  // Adopt sessions created outside the layout (other browser tab, stale layout).
+  // Reconcile sessions into the tree:
+  // - once per page load, drop persisted session ids that are no longer alive
+  //   (sessions that die later keep their tab so the last output stays visible)
+  // - adopt sessions no leaf owns yet (created from another browser tab etc.)
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
+  const prunedRef = useRef(false);
   useEffect(() => {
     if (!sessions) return;
-    setLayout((prev) => adoptSessions(prev, sessions.map((s) => s.id)));
+    const ids = sessions.map((s) => s.id);
+    setLayout((prev) => {
+      const pruned = prunedRef.current ? prev : pruneSessions(prev, ids);
+      prunedRef.current = true;
+      return adoptSessions(pruned, ids, focusedRef.current);
+    });
   }, [sessions]);
 
   const focusLeaf = useCallback((leafId: string) => setFocusedLeafId(leafId), []);
@@ -92,7 +112,7 @@ export function useTileLayout(
     (leafId: string, dir: 'row' | 'column') => {
       const root = layoutRef.current.root;
       if (!root) return;
-      const result = splitLeaf(root, leafId, dir, { kind: 'empty' });
+      const result = splitLeaf(root, leafId, dir, 'term');
       update(result.root);
       setFocusedLeafId(result.newLeafId);
     },
@@ -103,104 +123,80 @@ export function useTileLayout(
     async (leafId: string) => {
       const root = layoutRef.current.root;
       if (!root) return;
-      const target = leaves(root).find((l) => l.id === leafId);
+      const target = findLeaf(root, leafId);
       if (!target) return;
-      if (target.content.kind === 'terminal') {
-        const sessionId = target.content.sessionId;
-        const alive = sessions?.some((s) => s.id === sessionId) ?? false;
-        if (alive) {
-          if (!confirm('このターミナルを終了しますか?')) return;
-          await killSession(sessionId);
-        }
+      const alive = target.sessions.filter((id) => sessionsRef.current?.some((s) => s.id === id));
+      if (alive.length > 0) {
+        if (!confirm(`このタイルを閉じますか? (ターミナル ${alive.length} 件を終了します)`)) return;
+        for (const id of alive) await killSession(id);
       }
       update(removeLeaf(layoutRef.current.root ?? root, leafId));
     },
-    [sessions, killSession, update],
+    [killSession, update],
   );
 
-  const placeSession = useCallback(
-    (leafId: string) => (session: TerminalSession) => {
+  const setView = useCallback(
+    (leafId: string, view: TileView) => {
       const root = layoutRef.current.root;
-      if (root) {
-        update(setLeafContent(root, leafId, { kind: 'terminal', sessionId: session.id }));
-      }
+      if (!root) return;
+      update(updateLeaf(root, leafId, (leaf) => (leaf.view === view ? leaf : { ...leaf, view })));
+      setFocusedLeafId(leafId);
     },
     [update],
   );
 
-  const pick = useCallback(
-    async (leafId: string, choice: 'shell' | 'claude' | 'files' | 'git') => {
+  const setActiveSession = useCallback(
+    (leafId: string, sessionId: string) => {
       const root = layoutRef.current.root;
       if (!root) return;
-      if (choice === 'files' || choice === 'git') {
-        update(setLeafContent(root, leafId, { kind: choice }));
-        return;
+      update(
+        updateLeaf(root, leafId, (leaf) =>
+          leaf.activeSession === sessionId ? leaf : { ...leaf, activeSession: sessionId },
+        ),
+      );
+    },
+    [update],
+  );
+
+  const closeSessionTab = useCallback(
+    async (leafId: string, sessionId: string) => {
+      if (sessionsRef.current?.some((s) => s.id === sessionId)) {
+        await killSession(sessionId);
       }
-      await createSession(choice === 'claude' ? 'claude' : undefined, placeSession(leafId));
-    },
-    [createSession, placeSession, update],
-  );
-
-  const relaunch = useCallback(
-    async (leafId: string, run?: string) => {
-      await createSession(run, placeSession(leafId));
-    },
-    [createSession, placeSession],
-  );
-
-  const openContent = useCallback(
-    (kind: 'files' | 'git') => {
       const root = layoutRef.current.root;
-      const existing = leaves(root).find((l) => l.content.kind === kind);
-      if (existing) {
-        setFocusedLeafId(existing.id);
-        return;
-      }
-      const content: TileContent = { kind };
-      if (!root) {
-        const l = makeLeaf(content);
-        update(l);
-        setFocusedLeafId(l.id);
-        return;
-      }
-      const empty = leaves(root).find((l) => l.content.kind === 'empty');
-      if (empty) {
-        update(setLeafContent(root, empty.id, content));
-        setFocusedLeafId(empty.id);
-        return;
-      }
-      const anchor = leaves(root).find((l) => l.id === focusedLeafId) ?? leaves(root)[0];
-      const result = splitLeaf(root, anchor.id, 'row', content);
-      update(result.root);
-      setFocusedLeafId(result.newLeafId);
+      if (root) update(removeSession(root, leafId, sessionId));
     },
-    [focusedLeafId, update],
+    [killSession, update],
   );
 
   const openTerminal = useCallback(
-    async (run?: string) => {
-      const root = layoutRef.current.root;
-      // Reserve a leaf first so the terminal lands where the user expects.
-      let leafId: string;
+    async (run?: string, leafId?: string) => {
+      // Reserve the target leaf first so the terminal lands where the user expects.
+      let root = layoutRef.current.root;
+      let targetId: string;
       if (!root) {
-        const l = makeLeaf({ kind: 'empty' });
-        update(l);
-        leafId = l.id;
+        const leaf = makeLeaf('term');
+        update(leaf);
+        targetId = leaf.id;
       } else {
-        const empty = leaves(root).find((l) => l.content.kind === 'empty');
-        if (empty) {
-          leafId = empty.id;
-        } else {
-          const anchor = leaves(root).find((l) => l.id === focusedLeafId) ?? leaves(root)[0];
-          const result = splitLeaf(root, anchor.id, 'column', { kind: 'empty' });
-          update(result.root);
-          leafId = result.newLeafId;
-        }
+        const all = leaves(root);
+        const target =
+          all.find((l) => l.id === leafId) ??
+          all.find((l) => l.id === focusedRef.current) ??
+          all.find((l) => l.view === 'term') ??
+          all[0];
+        targetId = target.id;
+        update(updateLeaf(root, targetId, (leaf) => ({ ...leaf, view: 'term' })));
       }
-      setFocusedLeafId(leafId);
-      await createSession(run, placeSession(leafId));
+      setFocusedLeafId(targetId);
+      await createSession(run, (session) => {
+        // Claim the session before the reload publishes it — otherwise the
+        // adoption rule could place it in another leaf.
+        const current = layoutRef.current.root;
+        if (current) update(appendSession(current, targetId, session.id));
+      });
     },
-    [createSession, focusedLeafId, placeSession, update],
+    [createSession, update],
   );
 
   const applySizes = useCallback((splitId: string, sizes: number[]) => {
@@ -213,7 +209,7 @@ export function useTileLayout(
     // Re-adopt live sessions immediately so terminals reappear without
     // waiting for the next poll tick.
     const ids = (sessionsRef.current ?? []).map((s) => s.id);
-    setLayout(adoptSessions(createDefaultLayout(), ids));
+    setLayout(adoptSessions(createDefaultLayout(), ids, null));
     setFocusedLeafId(null);
   }, []);
 
@@ -223,9 +219,9 @@ export function useTileLayout(
     focusLeaf,
     split,
     close,
-    pick,
-    relaunch,
-    openContent,
+    setView,
+    setActiveSession,
+    closeSessionTab,
     openTerminal,
     applySizes,
     reset,

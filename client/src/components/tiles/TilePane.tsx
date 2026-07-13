@@ -1,37 +1,45 @@
 import { useCallback, useEffect } from 'react';
-import type { TerminalSession } from '../../types';
-import type { LeafNode } from '../../layout/tileTree';
+import type { AgentStatus, TerminalSession } from '../../types';
+import type { LeafNode, TileView } from '../../layout/tileTree';
 import type { TileActions } from '../../layout/useTileLayout';
 import StatusBadge from '../StatusBadge';
 
-const META: Record<string, { title: string; icon: string }> = {
-  files: { title: 'ファイル', icon: 'codicon-files' },
-  git: { title: 'Git', icon: 'codicon-source-control' },
-  terminal: { title: 'ターミナル', icon: 'codicon-terminal' },
-  empty: { title: '新しいタイル', icon: 'codicon-add' },
-};
+const VIEWS: { view: TileView; label: string; icon: string }[] = [
+  { view: 'files', label: 'ファイル', icon: 'codicon-files' },
+  { view: 'git', label: 'Git', icon: 'codicon-source-control' },
+  { view: 'term', label: 'ターミナル', icon: 'codicon-terminal' },
+];
+
+/** タイル内セッションの「最も注意が必要な」ステータス (デッキのカードと同じ優先順)。 */
+function aggregateStatus(leaf: LeafNode, sessions: TerminalSession[] | null): AgentStatus | null {
+  const owned = (sessions ?? []).filter((s) => leaf.sessions.includes(s.id));
+  if (owned.length === 0) return null;
+  const order: AgentStatus[] = ['waiting', 'busy', 'idle', 'shell'];
+  for (const status of order) {
+    if (owned.some((s) => s.status === status)) return status;
+  }
+  return null;
+}
 
 /**
- * Tile chrome: header with title/status/split/close, and a body that adopts
- * the leaf's stable host element. TilePane itself may be remounted freely by
- * geometry changes — appendChild of the already-parented host is just a move.
+ * Tile chrome: the header IS the tile's top-level tab bar (files / git /
+ * term) plus split/close actions. The body adopts the leaf's stable host
+ * element. TilePane itself may be remounted freely by geometry changes —
+ * appendChild of the already-parented host is just a move.
  */
 export default function TilePane({
   leaf,
-  session,
+  sessions,
   focused,
   actions,
   host,
 }: {
   leaf: LeafNode;
-  session: TerminalSession | null;
+  sessions: TerminalSession[] | null;
   focused: boolean;
   actions: TileActions;
   host: HTMLDivElement;
 }) {
-  const meta = META[leaf.content.kind];
-  const title = leaf.content.kind === 'terminal' ? (session?.title ?? 'ターミナル') : meta.title;
-
   // A DOM move (host re-append after a split/close elsewhere) drops focus;
   // give it back to the focused terminal. Mount-only: focus changes from
   // clicks are handled by the browser itself.
@@ -52,11 +60,13 @@ export default function TilePane({
   const close = () => {
     // FilesTab marks unsaved tabs with .editor-tab-dirty — closing the tile
     // would silently discard those drafts.
-    if (leaf.content.kind === 'files' && host.querySelector('.editor-tab-dirty')) {
-      if (!confirm('未保存の変更があります。ファイルタイルを閉じますか?')) return;
+    if (host.querySelector('.editor-tab-dirty')) {
+      if (!confirm('未保存の変更があります。タイルを閉じますか?')) return;
     }
     void actions.close(leaf.id);
   };
+
+  const termStatus = aggregateStatus(leaf, sessions);
 
   return (
     <section
@@ -64,11 +74,23 @@ export default function TilePane({
       onMouseDownCapture={() => actions.focusLeaf(leaf.id)}
     >
       <header className="tile-header">
-        <span className={`codicon ${meta.icon}`} />
-        <span className="tile-title">{title}</span>
-        {leaf.content.kind === 'terminal' && session && (
-          <StatusBadge status={session.status} compact />
-        )}
+        <span className="tile-tabs">
+          {VIEWS.map(({ view, label, icon }) => (
+            <button
+              key={view}
+              className={`tile-tab ${leaf.view === view ? 'active' : ''}`}
+              title={label}
+              onClick={() => actions.setView(leaf.id, view)}
+            >
+              <span className={`codicon ${icon}`} />
+              <span className="tile-tab-label">{label}</span>
+              {view === 'term' && leaf.sessions.length > 0 && (
+                <span className="tile-tab-count">{leaf.sessions.length}</span>
+              )}
+              {view === 'term' && termStatus && <StatusBadge status={termStatus} compact />}
+            </button>
+          ))}
+        </span>
         <span className="tile-actions">
           <button
             className="icon-btn"
@@ -84,7 +106,7 @@ export default function TilePane({
           >
             <span className="codicon codicon-split-vertical" />
           </button>
-          <button className="icon-btn" title="閉じる" onClick={close}>
+          <button className="icon-btn" title="タイルを閉じる" onClick={close}>
             <span className="codicon codicon-close" />
           </button>
         </span>

@@ -107,10 +107,17 @@ textarea:focus {
   color: var(--fg-dim);
   font-size: 12px;
 }
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .topbar-error {
   color: var(--red);
   cursor: pointer;
-  margin-left: auto;
   font-size: 12px;
   max-width: 60%;
   overflow: hidden;
@@ -654,18 +661,33 @@ textarea:focus {
   opacity: 0;
 }
 
-/* ---- changes tab ---- */
+/* ---- changes (ステージ済み|変更 リスト + 選択ファイルの diff タブ) ---- */
 
-.changes-tab {
+/* Git の status ビュー全体: [変更リスト (常時表示)] + [diff タブ] */
+.changes-wrap {
   display: flex;
   height: 100%;
+  min-width: 0;
 }
-.changes-list {
-  width: 320px;
+.changes-pane {
+  width: 340px;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.changes-list {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+}
+.git-file-tabs {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
@@ -798,12 +820,6 @@ textarea:focus {
 .commit-box textarea {
   resize: vertical;
 }
-.changes-diff {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-}
-
 /* ---- commit detail ---- */
 
 .commit-head {
@@ -1147,7 +1163,7 @@ textarea:focus {
   word-break: break-all;
 }
 
-/* ---- tile layout ---- */
+/* ---- tile layout (各タイル = タブ付きワークスペース) ---- */
 
 .tile-grid {
   flex: 1;
@@ -1175,13 +1191,14 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   background: var(--bg);
+  container: tile / inline-size;
 }
 .tile-header {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
-  padding: 0 4px 0 8px;
+  height: 30px;
+  padding: 0 4px 0 4px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
@@ -1193,13 +1210,51 @@ textarea:focus {
   color: var(--fg);
   box-shadow: inset 0 2px 0 0 var(--accent-dim);
 }
-.tile-header .codicon {
+.tile-tabs {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+.tile-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--fg-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.tile-tab:hover {
+  background: transparent;
+  color: var(--fg);
+}
+.tile-tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+.tile-tab .codicon {
   font-size: 13px;
 }
-.tile-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.tile-tab-count {
+  font-size: 10px;
+  color: var(--fg-dim);
+}
+.tile-tab .badge {
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+/* 狭いタイルではラベルを隠してアイコンだけにする */
+@container tile (max-width: 380px) {
+  .tile-tab-label {
+    display: none;
+  }
 }
 .tile-actions {
   margin-left: auto;
@@ -1221,10 +1276,21 @@ textarea:focus {
   inset: 0;
   overflow: hidden;
 }
-.tile-terminal {
+.tile-workspace {
   height: 100%;
-  position: relative;
-  background: #1b1b20;
+  display: flex;
+  flex-direction: column;
+}
+.tile-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.tile-view > * {
+  flex: 1;
+  min-height: 0;
 }
 .tile-note {
   height: 100%;
@@ -1253,12 +1319,100 @@ textarea:focus {
   color: var(--accent);
   border-color: var(--accent-dim);
 }
-.wt-tabs .claude-launch {
+.wt-tabs .layout-reset {
+  margin-left: 4px;
+  align-self: center;
+}
+
+/* ---- diff tabs ---- */
+
+.diff-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.diff-tab-staged {
+  color: var(--green);
+  font-size: 10px;
+}
+.diff-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--fg-dim);
+  flex: none;
+}
+.diff-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+.diff-scope {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.diff-body {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---- terminal panel (2 段目タブ: セッションごと) ---- */
+
+.term-panel {
+  display: flex;
+  flex-direction: column;
+}
+.term-tab-buttons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+}
+.editor-tabs .term-claude {
   color: var(--accent);
 }
-.wt-tabs .layout-reset {
-  margin-left: 8px;
-  align-self: center;
+.editor-tab .badge {
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+.term-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: #1b1b20;
+}
+.term-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  background: var(--bg);
+}
+.term-empty p {
+  margin: 0;
+}
+.term-empty-buttons {
+  display: flex;
+  gap: 8px;
+}
+.term-empty-buttons .claude {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+.wt-tabs .claude-launch {
+  color: var(--accent);
 }
 .xterm-container {
   position: absolute;
@@ -1316,4 +1470,122 @@ textarea:focus {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 14px;
+}
+
+/* ---- attention bell (要対応キュー) ---- */
+
+.bell {
+  position: relative;
+  flex-shrink: 0;
+}
+.bell-btn {
+  position: relative;
+  font-size: 14px;
+  padding: 3px 6px;
+}
+.bell-alert {
+  color: var(--yellow);
+}
+.bell-count {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  background: var(--yellow);
+  color: var(--bg);
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  min-width: 14px;
+  height: 14px;
+  line-height: 14px;
+  text-align: center;
+  padding: 0 3px;
+}
+.bell-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.bell-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: 320px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  z-index: 41;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bell-section-title {
+  font-size: 11px;
+  color: var(--fg-dim);
+  padding: 4px 6px 2px;
+}
+.bell-empty {
+  color: var(--fg-dim);
+  font-size: 12px;
+  padding: 6px;
+}
+.bell-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  text-align: left;
+  padding: 5px 6px;
+  border-radius: 4px;
+}
+.bell-item:hover {
+  background: var(--bg-hover);
+}
+.bell-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.bell-dot-waiting {
+  background: var(--yellow);
+  animation: pulse 0.6s ease-in-out infinite;
+}
+.bell-dot-idle {
+  background: var(--blue);
+}
+.bell-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bell-item-time {
+  color: var(--fg-dim);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.bell-prefs {
+  border-top: 1px solid var(--border);
+  margin-top: 6px;
+  padding: 8px 6px 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.bell-prefs label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.bell-note {
+  color: var(--fg-dim);
+  font-size: 11px;
 }

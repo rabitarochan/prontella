@@ -1,18 +1,17 @@
 // Tile layout tree: pure data + pure operations, no React.
-// A layout is a tree of splits (row = side by side, column = stacked)
-// whose leaves host a content: the files tab, the git tab, one terminal
-// session, or an empty picker.
+// A layout is a tree of splits (row = side by side, column = stacked).
+// v2: every leaf is a tabbed workspace — the view (files / git / term) is
+// switched INSIDE the tile, and terminal sessions belong to a leaf as tabs.
 
-export type TileContent =
-  | { kind: 'files' }
-  | { kind: 'git' }
-  | { kind: 'terminal'; sessionId: string }
-  | { kind: 'empty' };
+export type TileView = 'files' | 'git' | 'term';
 
 export interface LeafNode {
   type: 'leaf';
   id: string;
-  content: TileContent;
+  view: TileView;
+  /** owned terminal session ids, in tab order */
+  sessions: string[];
+  activeSession: string | null;
 }
 
 export interface SplitNode {
@@ -28,7 +27,7 @@ export interface SplitNode {
 export type TileNode = LeafNode | SplitNode;
 
 export interface WorktreeLayout {
-  version: 1;
+  version: 2;
   root: TileNode | null;
 }
 
@@ -36,20 +35,20 @@ export function newId(): string {
   return crypto.randomUUID().slice(0, 8);
 }
 
-export function makeLeaf(content: TileContent): LeafNode {
-  return { type: 'leaf', id: newId(), content };
+export function makeLeaf(view: TileView): LeafNode {
+  return { type: 'leaf', id: newId(), view, sessions: [], activeSession: null };
 }
 
-/** Reproduces the pre-tile look: files on top, terminal area below. */
+/** Reproduces the classic look: files on top, terminal area below. */
 export function createDefaultLayout(): WorktreeLayout {
   return {
-    version: 1,
+    version: 2,
     root: {
       type: 'split',
       id: newId(),
       dir: 'column',
       sizes: [62, 38],
-      children: [makeLeaf({ kind: 'files' }), makeLeaf({ kind: 'empty' })],
+      children: [makeLeaf('files'), makeLeaf('term')],
     },
   };
 }
@@ -76,18 +75,18 @@ function renormalized(sizes: number[]): number[] {
 }
 
 /**
- * Split `leafId` in direction `dir`, placing a new leaf with `content`
- * after it. If the leaf's parent already splits in `dir`, the new leaf is
- * inserted as a sibling (taking half of the target's share); otherwise the
- * leaf is wrapped into a new 50/50 split.
+ * Split `leafId` in direction `dir`, placing a new leaf after it. If the
+ * leaf's parent already splits in `dir`, the new leaf is inserted as a
+ * sibling (taking half of the target's share); otherwise the leaf is wrapped
+ * into a new 50/50 split.
  */
 export function splitLeaf(
   root: TileNode,
   leafId: string,
   dir: 'row' | 'column',
-  content: TileContent,
+  view: TileView = 'term',
 ): { root: TileNode; newLeafId: string } {
-  const newLeaf = makeLeaf(content);
+  const newLeaf = makeLeaf(view);
 
   const rec = (node: TileNode): TileNode => {
     if (node.type === 'leaf') {
@@ -130,12 +129,39 @@ export function removeLeaf(root: TileNode, leafId: string): TileNode | null {
   return rec(root);
 }
 
-export function setLeafContent(root: TileNode, leafId: string, content: TileContent): TileNode {
+export function updateLeaf(
+  root: TileNode,
+  leafId: string,
+  patch: (leaf: LeafNode) => LeafNode,
+): TileNode {
   const rec = (node: TileNode): TileNode => {
-    if (node.type === 'leaf') return node.id === leafId ? { ...node, content } : node;
+    if (node.type === 'leaf') return node.id === leafId ? patch(node) : node;
     return { ...node, children: node.children.map(rec) };
   };
   return rec(root);
+}
+
+/** Append a session as the leaf's last tab and make it active. */
+export function appendSession(root: TileNode, leafId: string, sessionId: string): TileNode {
+  return updateLeaf(root, leafId, (leaf) =>
+    leaf.sessions.includes(sessionId)
+      ? { ...leaf, activeSession: sessionId }
+      : { ...leaf, sessions: [...leaf.sessions, sessionId], activeSession: sessionId },
+  );
+}
+
+/** Remove a session tab; the neighbor (right, else left) becomes active. */
+export function removeSession(root: TileNode, leafId: string, sessionId: string): TileNode {
+  return updateLeaf(root, leafId, (leaf) => {
+    const idx = leaf.sessions.indexOf(sessionId);
+    if (idx === -1) return leaf;
+    const sessions = leaf.sessions.filter((s) => s !== sessionId);
+    const activeSession =
+      leaf.activeSession === sessionId
+        ? (sessions[idx] ?? sessions[idx - 1] ?? null)
+        : leaf.activeSession;
+    return { ...leaf, sessions, activeSession };
+  });
 }
 
 export function setSizes(root: TileNode, splitId: string, sizes: number[]): TileNode {
@@ -174,84 +200,73 @@ export function normalize(node: TileNode | null): TileNode | null {
 }
 
 /**
- * Place sessions that no leaf references yet: fill the first empty leaf,
- * else split the last terminal leaf side by side, else stack a new tile
- * under the whole layout. Returns the same object when nothing changed.
+ * Attach sessions that no leaf owns yet as tabs of `preferLeafId` (else the
+ * first term-view leaf, else the first leaf). Does NOT switch the target
+ * leaf's view — adoption is a background event. Returns the same object when
+ * nothing changed.
  */
-export function adoptSessions(layout: WorktreeLayout, sessionIds: string[]): WorktreeLayout {
-  const placed = new Set(
-    leaves(layout.root)
-      .map((l) => l.content)
-      .filter((c): c is Extract<TileContent, { kind: 'terminal' }> => c.kind === 'terminal')
-      .map((c) => c.sessionId),
-  );
-  const unplaced = sessionIds.filter((id) => !placed.has(id));
+export function adoptSessions(
+  layout: WorktreeLayout,
+  sessionIds: string[],
+  preferLeafId: string | null,
+): WorktreeLayout {
+  const all = leaves(layout.root);
+  const owned = new Set(all.flatMap((l) => l.sessions));
+  const unplaced = sessionIds.filter((id) => !owned.has(id));
   if (unplaced.length === 0) return layout;
 
   let root = layout.root;
+  if (!root) root = makeLeaf('term');
+  const current = leaves(root);
+  const target =
+    current.find((l) => l.id === preferLeafId) ??
+    current.find((l) => l.view === 'term') ??
+    current[0];
+
   for (const sessionId of unplaced) {
-    const content: TileContent = { kind: 'terminal', sessionId };
-    if (!root) {
-      root = makeLeaf(content);
-      continue;
-    }
-    const all = leaves(root);
-    const empty = all.find((l) => l.content.kind === 'empty');
-    if (empty) {
-      root = setLeafContent(root, empty.id, content);
-      continue;
-    }
-    const terminals = all.filter((l) => l.content.kind === 'terminal');
-    if (terminals.length > 0) {
-      root = splitLeaf(root, terminals[terminals.length - 1].id, 'row', content).root;
-    } else {
-      root = normalize({
-        type: 'split',
-        id: newId(),
-        dir: 'column',
-        sizes: [62, 38],
-        children: [root, makeLeaf(content)],
-      });
-    }
+    root = updateLeaf(root, target.id, (leaf) => ({
+      ...leaf,
+      sessions: [...leaf.sessions, sessionId],
+      activeSession: leaf.activeSession ?? sessionId,
+    }));
   }
   return { ...layout, root };
+}
+
+/**
+ * Drop owned session ids that are not alive (used once per page load —
+ * sessions that died while the page was open keep their tab so the last
+ * output stays visible).
+ */
+export function pruneSessions(layout: WorktreeLayout, liveIds: string[]): WorktreeLayout {
+  const live = new Set(liveIds);
+  let changed = false;
+  const rec = (node: TileNode): TileNode => {
+    if (node.type === 'leaf') {
+      const sessions = node.sessions.filter((s) => live.has(s));
+      if (sessions.length === node.sessions.length) return node;
+      changed = true;
+      const activeSession =
+        node.activeSession && sessions.includes(node.activeSession)
+          ? node.activeSession
+          : (sessions[sessions.length - 1] ?? null);
+      return { ...node, sessions, activeSession };
+    }
+    return { ...node, children: node.children.map(rec) };
+  };
+  const root = layout.root ? rec(layout.root) : null;
+  return changed ? { ...layout, root } : layout;
 }
 
 /** Defensive validation for layouts loaded from localStorage. */
 export function sanitize(value: unknown): WorktreeLayout | null {
   if (typeof value !== 'object' || value === null) return null;
   const v = value as { version?: unknown; root?: unknown };
-  if (v.version !== 1) return null;
-  if (v.root === null) return { version: 1, root: null };
+  if (v.version !== 2) return null;
+  if (v.root === null) return { version: 2, root: null };
 
   const seenIds = new Set<string>();
   const seenSessions = new Set<string>();
-  let seenFiles = false;
-  let seenGit = false;
-
-  const sanitizeContent = (c: unknown): TileContent => {
-    if (typeof c !== 'object' || c === null) return { kind: 'empty' };
-    const k = (c as { kind?: unknown }).kind;
-    if (k === 'files') {
-      if (seenFiles) return { kind: 'empty' };
-      seenFiles = true;
-      return { kind: 'files' };
-    }
-    if (k === 'git') {
-      if (seenGit) return { kind: 'empty' };
-      seenGit = true;
-      return { kind: 'git' };
-    }
-    if (k === 'terminal') {
-      const sessionId = (c as { sessionId?: unknown }).sessionId;
-      if (typeof sessionId !== 'string' || sessionId === '' || seenSessions.has(sessionId)) {
-        return { kind: 'empty' };
-      }
-      seenSessions.add(sessionId);
-      return { kind: 'terminal', sessionId };
-    }
-    return { kind: 'empty' };
-  };
 
   const uniqueId = (raw: unknown): string => {
     let id = typeof raw === 'string' && raw !== '' ? raw : newId();
@@ -265,13 +280,30 @@ export function sanitize(value: unknown): WorktreeLayout | null {
     const node = n as {
       type?: unknown;
       id?: unknown;
-      content?: unknown;
+      view?: unknown;
+      sessions?: unknown;
+      activeSession?: unknown;
       dir?: unknown;
       sizes?: unknown;
       children?: unknown;
     };
     if (node.type === 'leaf') {
-      return { type: 'leaf', id: uniqueId(node.id), content: sanitizeContent(node.content) };
+      const view: TileView =
+        node.view === 'files' || node.view === 'git' || node.view === 'term'
+          ? node.view
+          : 'term';
+      const sessions = (Array.isArray(node.sessions) ? node.sessions : []).filter(
+        (s): s is string => {
+          if (typeof s !== 'string' || s === '' || seenSessions.has(s)) return false;
+          seenSessions.add(s);
+          return true;
+        },
+      );
+      const activeSession =
+        typeof node.activeSession === 'string' && sessions.includes(node.activeSession)
+          ? node.activeSession
+          : (sessions[sessions.length - 1] ?? null);
+      return { type: 'leaf', id: uniqueId(node.id), view, sessions, activeSession };
     }
     if (node.type === 'split') {
       if (!Array.isArray(node.children)) return null;
@@ -292,5 +324,5 @@ export function sanitize(value: unknown): WorktreeLayout | null {
 
   const root = sanitizeNode(v.root);
   if (!root) return null;
-  return { version: 1, root: normalize(root) };
+  return { version: 2, root: normalize(root) };
 }

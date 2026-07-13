@@ -2,26 +2,21 @@ import { useState } from 'react';
 import { api } from '../api';
 import { useDeck } from '../store';
 import type { Repo, Worktree } from '../types';
-import { leaves } from '../layout/tileTree';
 import { useTerminalSessions } from '../layout/useTerminalSessions';
 import { useTileLayout } from '../layout/useTileLayout';
 import StatusBadge from './StatusBadge';
 import TileGrid from './tiles/TileGrid';
 
+/**
+ * Worktree のメインビュー: 分割・リサイズできるタイルグリッド。
+ * 各タイルが自分のタブ (ファイル / Git / ターミナル) を持ち、タイル内で
+ * 切り替える。ターミナルはタイルごとのタブとして複数持てる。
+ */
 export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree: Worktree }) {
   const { refresh, setError } = useDeck();
   const [syncing, setSyncing] = useState<string | null>(null);
   const { sessions, create, kill } = useTerminalSessions(worktree.path);
   const tiles = useTileLayout(worktree.path, sessions, create, kill);
-
-  const dirty =
-    (worktree.status?.staged ?? 0) +
-    (worktree.status?.unstaged ?? 0) +
-    (worktree.status?.untracked ?? 0);
-
-  const allLeaves = leaves(tiles.layout.root);
-  const hasFiles = allLeaves.some((l) => l.content.kind === 'files');
-  const hasGit = allLeaves.some((l) => l.content.kind === 'git');
 
   const sync = async (kind: 'fetch' | 'pull' | 'push') => {
     setSyncing(kind);
@@ -80,29 +75,8 @@ export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree:
         </div>
         <div className="wt-tabs">
           <button
-            className={hasFiles ? 'active' : ''}
-            title="ファイルタイルを開く/フォーカス"
-            onClick={() => tiles.openContent('files')}
-          >
-            ファイル
-          </button>
-          <button
-            className={hasGit ? 'active' : ''}
-            title="Git タイルを開く/フォーカス"
-            onClick={() => tiles.openContent('git')}
-          >
-            Git{dirty > 0 ? ` (${dirty})` : ''}
-          </button>
-          <button
-            className="terminal-toggle"
-            title="新しいシェルのタイルを開く"
-            onClick={() => void tiles.openTerminal()}
-          >
-            ＋ シェル
-          </button>
-          <button
             className="claude-launch"
-            title="このWorktreeでClaude Codeを起動"
+            title="このWorktreeでClaude Codeを起動 (フォーカス中のタイルに開く)"
             onClick={() => void tiles.openTerminal('claude')}
           >
             ✦ Claude 起動

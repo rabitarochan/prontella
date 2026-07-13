@@ -2,10 +2,10 @@ import { Fragment, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Group, Panel, Separator } from 'react-resizable-panels';
 import type { Repo, TerminalSession, Worktree } from '../../types';
-import { leaves, type LeafNode, type TileNode } from '../../layout/tileTree';
+import { leaves, type TileNode } from '../../layout/tileTree';
 import type { TileActions } from '../../layout/useTileLayout';
 import TilePane from './TilePane';
-import TileContentView from './TileContentView';
+import TileWorkspace from './TileWorkspace';
 
 /**
  * Two-layer rendering:
@@ -13,8 +13,9 @@ import TileContentView from './TileContentView';
  *   layer is freely remounted when the tree structure changes.
  * - Content layer: one portal per leaf into a stable detached host div (kept
  *   in hostsRef). The portal's container and key never change for the life of
- *   a leaf, so FilesTab / GitTab / XTermTile are never remounted by splits or
- *   closes elsewhere — TilePane just re-appends the host DOM node.
+ *   a leaf, so the workspace (FilesTab / GitTab / TermPanel) is never
+ *   remounted by splits or closes elsewhere — TilePane just re-appends the
+ *   host DOM node.
  */
 export default function TileGrid({
   repo,
@@ -52,22 +53,12 @@ export default function TileGrid({
     }
   });
 
-  const hasFiles = allLeaves.some((l) => l.content.kind === 'files');
-  const hasGit = allLeaves.some((l) => l.content.kind === 'git');
-
-  const sessionOf = (leaf: LeafNode): TerminalSession | null =>
-    leaf.content.kind === 'terminal'
-      ? (sessions?.find(
-          (s) => leaf.content.kind === 'terminal' && s.id === leaf.content.sessionId,
-        ) ?? null)
-      : null;
-
   const renderNode = (node: TileNode): JSX.Element => {
     if (node.type === 'leaf') {
       return (
         <TilePane
           leaf={node}
-          session={sessionOf(node)}
+          sessions={sessions}
           focused={actions.focusedLeafId === node.id}
           actions={actions}
           host={getHost(node.id)}
@@ -97,7 +88,7 @@ export default function TileGrid({
             <Panel
               id={child.id}
               defaultSize={`${node.sizes[i] ?? 100 / node.children.length}%`}
-              minSize="80px"
+              minSize="120px"
               className="tile-panel"
               style={{ overflow: 'hidden' }}
             >
@@ -125,21 +116,17 @@ export default function TileGrid({
             >
               ✦ Claude 起動
             </button>
-            <button onClick={() => actions.openContent('files')}>ファイル</button>
-            <button onClick={() => actions.openContent('git')}>Git</button>
+            <button onClick={() => actions.reset()}>レイアウト初期化</button>
           </div>
         </div>
       )}
       {allLeaves.map((leaf) =>
         createPortal(
-          <TileContentView
+          <TileWorkspace
             leaf={leaf}
             repo={repo}
             worktree={worktree}
-            session={sessionOf(leaf)}
-            sessionsLoaded={sessions !== null}
-            hasFiles={hasFiles}
-            hasGit={hasGit}
+            sessions={sessions}
             actions={actions}
           />,
           getHost(leaf.id),

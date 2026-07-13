@@ -2,7 +2,12 @@ import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 
-export default function XTermTile({
+/**
+ * One xterm.js instance bound to a PTY session (/ws/term). Mounted once per
+ * session and kept alive across tab switches — hide with `visible` instead of
+ * unmounting, so scrollback and the WebSocket connection survive.
+ */
+export default function XTermView({
   id,
   claudeMode,
   visible = true,

@@ -59,6 +59,13 @@ function unquoteGitPath(quoted: string): string {
   return Buffer.from(bytes).toString('utf8');
 }
 
+/** Tracked + untracked (non-ignored) files, root-relative with forward slashes. */
+export async function listFiles(dir: string): Promise<string[]> {
+  // -z: NUL separators and no C-quoting — non-ASCII paths arrive as raw UTF-8
+  const out = await runGit(dir, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']);
+  return out.split('\0').filter(Boolean);
+}
+
 export interface WorktreeInfo {
   path: string;
   head: string;

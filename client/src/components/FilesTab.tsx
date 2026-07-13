@@ -3,7 +3,9 @@ import Editor, { type OnMount } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import { api } from '../api';
 import type { FileContent } from '../types';
+import { registerFilesTab, touchFilesTab, unregisterFilesTab } from '../search/registry';
 import FileTree from './FileTree';
+import SearchPanel from './SearchPanel';
 
 interface OpenTab {
   path: string;
@@ -52,11 +54,29 @@ export default function FilesTab({ root }: { root: string }) {
   const instanceRef = useRef(crypto.randomUUID().slice(0, 8));
   const modelPath = (path: string) => `${instanceRef.current}/${path}`;
 
+  // Left pane: file tree or the Ctrl+Shift+F search panel. The panel stays
+  // mounted after first visit (display:none) so query and results survive
+  // switching back to the tree — same idea as TileWorkspace's visitedRef.
+  const [side, setSide] = useState<'tree' | 'search'>('tree');
+  const [searchFocusSeq, setSearchFocusSeq] = useState(0);
+  const searchVisitedRef = useRef(false);
+  if (side === 'search') searchVisitedRef.current = true;
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const pendingRevealRef = useRef<{ path: string; line: number; column: number } | null>(null);
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const activePathRef = useRef(activePath);
+  activePathRef.current = activePath;
+
   // Worktree switched — open tabs are root-relative, so start fresh.
   useEffect(() => {
     setTabs([]);
     setActivePath(null);
     setMessage('');
+    setSide('tree');
+    pendingRevealRef.current = null;
     const loaded = loadedRef.current;
     loaded.clear();
     // On root change or unmount, drop every model this tab set created.
@@ -92,6 +112,68 @@ export default function FilesTab({ root }: { root: string }) {
     },
     [root],
   );
+
+  // Jump to a search match once the target file is loaded AND the editor has
+  // switched to its model. Reads only refs, so it can be called from any
+  // timing (onMount, the effect below, openAtLine) without stale closures.
+  // Never rewrites model content — the uncontrolled-editor invariant holds.
+  const tryReveal = () => {
+    const p = pendingRevealRef.current;
+    const editor = editorRef.current;
+    if (!p || !editor) return;
+    if (activePathRef.current !== p.path) return;
+    const tab = tabsRef.current.find((t) => t.path === p.path);
+    if (!tab?.file || tab.file.content === null) return; // loading / binary / tooLarge
+    const model = editor.getModel();
+    if (!model || model.uri.toString() !== monaco.Uri.parse(modelPath(p.path)).toString()) return;
+    const line = Math.min(p.line, model.getLineCount()); // file may have changed since the search
+    editor.revealLineInCenter(line);
+    editor.setPosition({ lineNumber: line, column: p.column });
+    editor.focus();
+    pendingRevealRef.current = null;
+  };
+
+  const openAtLine = (path: string, line: number, column = 1) => {
+    pendingRevealRef.current = { path, line, column };
+    openFile(path);
+    tryReveal(); // already open and loaded → jump immediately
+  };
+
+  // Covers the async paths: file load completing, tab/model switches.
+  useEffect(() => {
+    tryReveal();
+  });
+
+  const showSearchPanel = () => {
+    setSide('search');
+    setSearchFocusSeq((n) => n + 1); // re-focus the input on repeat Ctrl+Shift+F
+  };
+
+  const openFileRef = useRef(openFile);
+  openFileRef.current = openFile;
+  const openAtLineRef = useRef(openAtLine);
+  openAtLineRef.current = openAtLine;
+  const showSearchPanelRef = useRef(showSearchPanel);
+  showSearchPanelRef.current = showSearchPanel;
+
+  // Expose this instance to the window-level search hotkeys (Ctrl+P / Ctrl+Shift+F).
+  useEffect(() => {
+    const id = instanceRef.current;
+    registerFilesTab({
+      id,
+      root,
+      isVisible: () => {
+        const el = containerRef.current;
+        if (!el) return false;
+        return el.checkVisibility?.() ?? el.offsetParent !== null;
+      },
+      openFile: (path) => openFileRef.current(path),
+      openAtLine: (path, line, column) => openAtLineRef.current(path, line, column),
+      getOpenTabPaths: () => tabsRef.current.map((t) => t.path),
+      showSearchPanel: () => showSearchPanelRef.current(),
+    });
+    return () => unregisterFilesTab(id);
+  }, [root]);
 
   const switchTo = (path: string) => {
     setActivePath(path);
@@ -136,16 +218,49 @@ export default function FilesTab({ root }: { root: string }) {
 
   const onMount: OnMount = (editor, monaco) => {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => saveRef.current());
+    editorRef.current = editor;
+    tryReveal(); // first mount happens after the initial file load completes
   };
 
   const onChange = (value: string | undefined) => {
     setTabs((prev) => prev.map((t) => (t.path === activePath ? { ...t, draft: value ?? '' } : t)));
   };
 
+  const touch = () => touchFilesTab(instanceRef.current);
+
   return (
-    <div className="files-tab">
+    <div className="files-tab" ref={containerRef} onPointerDownCapture={touch} onFocusCapture={touch}>
       <div className="files-tree-pane">
-        <FileTree root={root} selectedPath={activePath} onSelectFile={openFile} />
+        <div className="side-switch">
+          <button
+            className={`side-switch-btn ${side === 'tree' ? 'active' : ''}`}
+            title="エクスプローラー"
+            onClick={() => setSide('tree')}
+          >
+            <span className="codicon codicon-files" />
+          </button>
+          <button
+            className={`side-switch-btn ${side === 'search' ? 'active' : ''}`}
+            title="検索 (Ctrl+Shift+F)"
+            onClick={showSearchPanel}
+          >
+            <span className="codicon codicon-search" />
+          </button>
+        </div>
+        <div className="side-view" style={{ display: side === 'tree' ? undefined : 'none' }}>
+          <FileTree root={root} selectedPath={activePath} onSelectFile={openFile} />
+        </div>
+        {searchVisitedRef.current && (
+          <div className="side-view" style={{ display: side === 'search' ? undefined : 'none' }}>
+            <SearchPanel
+              root={root}
+              visible={side === 'search'}
+              focusSeq={searchFocusSeq}
+              onJump={openAtLine}
+              onClose={() => setSide('tree')}
+            />
+          </div>
+        )}
       </div>
       <div className="files-editor-pane">
         {tabs.length === 0 ? (

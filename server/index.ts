@@ -7,6 +7,7 @@ import { WebSocketServer } from 'ws';
 import * as config from './config.js';
 import * as git from './git.js';
 import * as files from './files.js';
+import * as search from './search.js';
 import { PtyManager } from './pty.js';
 
 const PORT = Number(process.env.PORT) || 3711;
@@ -352,6 +353,30 @@ app.get('/api/fs/git-status', asyncHandler(async (req, res) => {
   } catch {
     res.json([]); // non-git directory etc. → empty (everything renders white)
   }
+}));
+
+// ---- code search -------------------------------------------------------------
+
+app.get('/api/search/files', asyncHandler(async (req, res) => {
+  const root = queryStr(req, 'root');
+  if (!fs.existsSync(root)) throw new Error(`ディレクトリーが存在しません: ${root}`);
+  res.json({ files: await git.listFiles(root) });
+}));
+
+app.get('/api/search/text', asyncHandler(async (req, res) => {
+  const root = queryStr(req, 'root');
+  if (!fs.existsSync(root)) throw new Error(`ディレクトリーが存在しません: ${root}`);
+  const q = queryStr(req, 'q');
+  const running = search.searchText(root, q, {
+    regex: req.query.regex === '1',
+    caseSensitive: req.query.case === '1',
+    maxResults: Math.min(Number(req.query.max) || 500, 2000),
+  });
+  // クライアントが AbortController で接続を切ったら rg を止める(連打対策)
+  res.on('close', () => {
+    if (!res.writableEnded) running.cancel();
+  });
+  res.json(await running.promise);
 }));
 
 // ---- terminals ---------------------------------------------------------------

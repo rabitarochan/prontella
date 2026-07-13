@@ -2,15 +2,22 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { useDeck } from '../store';
 import type { StatusFile } from '../types';
-import DiffPane from './DiffPane';
 
 const POLL_MS = 5000;
 
-export default function ChangesTab({ dir }: { dir: string }) {
+export default function ChangesTab({
+  dir,
+  onOpenDiff,
+  selectedKey,
+}: {
+  dir: string;
+  onOpenDiff: (file: StatusFile, staged: boolean) => void;
+  /** アクティブな diff タブのキー (`s:` / `w:` + path) — 行のハイライト用 */
+  selectedKey?: string | null;
+}) {
   const refreshDeck = useDeck((s) => s.refresh);
   const [files, setFiles] = useState<StatusFile[]>([]);
   const [merging, setMerging] = useState(false);
-  const [selected, setSelected] = useState<{ path: string; staged: boolean } | null>(null);
   const [commitMsg, setCommitMsg] = useState('');
   const [amend, setAmend] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -58,9 +65,9 @@ export default function ChangesTab({ dir }: { dir: string }) {
   const fileRow = (file: StatusFile, staged: boolean) => (
     <div
       key={`${staged}-${file.path}`}
-      className={`change-row ${selected?.path === file.path && selected.staged === staged ? 'selected' : ''}`}
-      onClick={() => setSelected({ path: file.path, staged })}
-      title={file.path}
+      className={`change-row ${selectedKey === `${staged ? 's' : 'w'}:${file.path}` ? 'selected' : ''}`}
+      onClick={() => onOpenDiff(file, staged)}
+      title={`${file.path} — クリックで差分をタブ表示`}
     >
       <span
         className={`change-mark mark-${file.conflicted ? 'U' : staged ? file.staged : file.untracked ? 'A' : file.unstaged}`}
@@ -98,7 +105,7 @@ export default function ChangesTab({ dir }: { dir: string }) {
   );
 
   return (
-    <div className="changes-tab">
+    <div className="changes-pane">
       <div className="changes-list">
         {error && <div className="modal-error">⚠ {error}</div>}
         {merging && (
@@ -174,18 +181,6 @@ export default function ChangesTab({ dir }: { dir: string }) {
             {amend ? 'コミットを修正' : `コミット (${stagedFiles.length} ファイル)`}
           </button>
         </div>
-      </div>
-      <div className="changes-diff">
-        {selected ? (
-          <DiffPane
-            dir={dir}
-            path={selected.path}
-            scope={selected.staged ? 'staged' : 'worktree'}
-            origPath={files.find((f) => f.path === selected.path)?.origPath}
-          />
-        ) : (
-          <div className="placeholder">ファイルを選択すると差分を表示します</div>
-        )}
       </div>
     </div>
   );

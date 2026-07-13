@@ -2,23 +2,21 @@ import { useState } from 'react';
 import { api } from '../api';
 import { useDeck } from '../store';
 import type { Repo, Worktree } from '../types';
+import { useTerminalSessions } from '../layout/useTerminalSessions';
+import { useTileLayout } from '../layout/useTileLayout';
 import StatusBadge from './StatusBadge';
-import FilesTab from './FilesTab';
-import GitTab from './GitTab';
-import TerminalPanel from './TerminalPanel';
+import TileGrid from './tiles/TileGrid';
 
-type Tab = 'files' | 'git';
-
+/**
+ * Worktree のメインビュー: 分割・リサイズできるタイルグリッド。
+ * 各タイルが自分のタブ (ファイル / Git / ターミナル) を持ち、タイル内で
+ * 切り替える。ターミナルはタイルごとのタブとして複数持てる。
+ */
 export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree: Worktree }) {
   const { refresh, setError } = useDeck();
-  const [tab, setTab] = useState<Tab>('files');
-  const [showTerminal, setShowTerminal] = useState(true);
   const [syncing, setSyncing] = useState<string | null>(null);
-
-  const dirty =
-    (worktree.status?.staged ?? 0) +
-    (worktree.status?.unstaged ?? 0) +
-    (worktree.status?.untracked ?? 0);
+  const { sessions, create, kill } = useTerminalSessions(worktree.path);
+  const tiles = useTileLayout(worktree.path, sessions, create, kill);
 
   const sync = async (kind: 'fetch' | 'pull' | 'push') => {
     setSyncing(kind);
@@ -76,27 +74,28 @@ export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree:
           </span>
         </div>
         <div className="wt-tabs">
-          <button className={tab === 'files' ? 'active' : ''} onClick={() => setTab('files')}>
-            ファイル
-          </button>
-          <button className={tab === 'git' ? 'active' : ''} onClick={() => setTab('git')}>
-            Git{dirty > 0 ? ` (${dirty})` : ''}
+          <button
+            className="claude-launch"
+            title="このWorktreeでClaude Codeを起動 (フォーカス中のタイルに開く)"
+            onClick={() => void tiles.openTerminal('claude')}
+          >
+            ✦ Claude 起動
           </button>
           <button
-            className={`terminal-toggle ${showTerminal ? 'active' : ''}`}
-            onClick={() => setShowTerminal((v) => !v)}
-            title="ターミナルパネルの表示/非表示"
+            className="icon-btn layout-reset"
+            title="レイアウトを初期化"
+            onClick={() => {
+              if (confirm('レイアウトを初期化しますか?(未保存の編集内容は失われます)')) {
+                tiles.reset();
+              }
+            }}
           >
-            ターミナル
+            <span className="codicon codicon-layout" />
           </button>
         </div>
       </div>
       <div className="wt-body">
-        <div className="wt-content">
-          {tab === 'files' && <FilesTab root={worktree.path} />}
-          {tab === 'git' && <GitTab repo={repo} worktree={worktree} />}
-        </div>
-        {showTerminal && <TerminalPanel cwd={worktree.path} />}
+        <TileGrid repo={repo} worktree={worktree} sessions={sessions} actions={tiles} />
       </div>
     </div>
   );

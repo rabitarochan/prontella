@@ -46,6 +46,11 @@ export default function FilesTab({ root }: { root: string }) {
   const [message, setMessage] = useState('');
   const saveRef = useRef<() => void>(() => {});
   const loadedRef = useRef(new Set<string>()); // paths whose load is in flight or done
+  // Monaco models are global; two FilesTab instances (one per tile) opening
+  // the same path would fight over one model and dispose each other's drafts.
+  // Namespace every model URI with a per-instance prefix.
+  const instanceRef = useRef(crypto.randomUUID().slice(0, 8));
+  const modelPath = (path: string) => `${instanceRef.current}/${path}`;
 
   // Worktree switched — open tabs are root-relative, so start fresh.
   useEffect(() => {
@@ -55,7 +60,7 @@ export default function FilesTab({ root }: { root: string }) {
     const loaded = loadedRef.current;
     loaded.clear();
     // On root change or unmount, drop every model this tab set created.
-    return () => disposeModelsSoon([...loaded]);
+    return () => disposeModelsSoon([...loaded].map(modelPath));
   }, [root]);
 
   const active = tabs.find((t) => t.path === activePath) ?? null;
@@ -100,7 +105,7 @@ export default function FilesTab({ root }: { root: string }) {
     const next = tabs.filter((t) => t.path !== path);
     setTabs(next);
     loadedRef.current.delete(path);
-    disposeModelsSoon([path]);
+    disposeModelsSoon([modelPath(path)]);
     if (activePath === path) {
       const neighbor = next[idx] ?? next[idx - 1] ?? null; // right neighbor, else left
       setActivePath(neighbor?.path ?? null);
@@ -208,7 +213,7 @@ export default function FilesTab({ root }: { root: string }) {
                       State only mirrors the editor via onChange; models are dropped in
                       closeTab / the root effect so stale drafts never resurface. */}
                   <Editor
-                    path={active.path}
+                    path={modelPath(active.path)}
                     defaultValue={active.draft}
                     onChange={onChange}
                     onMount={onMount}

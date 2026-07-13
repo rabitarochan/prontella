@@ -24,7 +24,7 @@ process.on('unhandledRejection', (reason) => {
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
-const ptyManager = new PtyManager();
+const ptyManager = new PtyManager(PORT);
 
 function asyncHandler(
   fn: (req: express.Request, res: express.Response) => Promise<void>,
@@ -371,6 +371,29 @@ app.post('/api/terminals/:id/kill', asyncHandler(async (req, res) => {
   res.json({ ok: ptyManager.kill(req.params.id) });
 }));
 
+// Claude Code の hooks (deck-hook.mjs) からのイベント通知。127.0.0.1 バインドの
+// ためローカルプロセスのみ到達できる。未知のターミナル id は黙って無視する
+// (セッション終了とフック POST のレースで普通に起きる)。
+app.post('/api/agent-events', asyncHandler(async (req, res) => {
+  const { term, event, message, notificationType } = req.body as {
+    term?: string;
+    event?: string;
+    message?: string;
+    notificationType?: string;
+  };
+  if (typeof term !== 'string' || typeof event !== 'string') {
+    throw new Error('term と event が必要です');
+  }
+  res.json({
+    ok: ptyManager.applyHookEvent(
+      term,
+      event,
+      typeof message === 'string' ? message : '',
+      typeof notificationType === 'string' ? notificationType : '',
+    ),
+  });
+}));
+
 // ---- static client (production build) ---------------------------------------
 
 // Resolve the built client for both layouts:
@@ -405,17 +428,20 @@ const wss = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url ?? '', 'http://localhost');
-  if (url.pathname !== '/ws/term') {
+  if (url.pathname === '/ws/term') {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      const id = url.searchParams.get('id') ?? '';
+      if (!ptyManager.attach(id, ws)) {
+        ws.send(JSON.stringify({ type: 'error', message: 'ターミナルが見つかりません' }));
+        ws.close();
+      }
+    });
+  } else if (url.pathname === '/ws/events') {
+    // 全セッションのステータス変化を購読するグローバルチャンネル (通知・要対応キュー用)
+    wss.handleUpgrade(req, socket, head, (ws) => ptyManager.attachEvents(ws));
+  } else {
     socket.destroy();
-    return;
   }
-  wss.handleUpgrade(req, socket, head, (ws) => {
-    const id = url.searchParams.get('id') ?? '';
-    if (!ptyManager.attach(id, ws)) {
-      ws.send(JSON.stringify({ type: 'error', message: 'ターミナルが見つかりません' }));
-      ws.close();
-    }
-  });
 });
 
 server.listen(PORT, '127.0.0.1', () => {

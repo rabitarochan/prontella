@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { useDeck } from '../store';
-import type { BranchInfo, Repo, StashEntry, Worktree } from '../types';
+import type { BranchInfo, Repo, StashEntry, StatusFile, Worktree } from '../types';
 import ChangesTab from './ChangesTab';
+import DiffTabsPane, { diffTabKey, type DiffTab } from './DiffTabsPane';
 import HistoryTab from './HistoryTab';
 
 type GitView = 'status' | 'history';
@@ -20,6 +21,38 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+  // 変更リストで選択したファイルの diff タブ。ChangesTab は reloadKey で
+  // 再マウントされるので、タブはここ (GitTab) が持って生き残らせる。
+  const [diffTabs, setDiffTabs] = useState<DiffTab[]>([]);
+  const [activeDiff, setActiveDiff] = useState<string | null>(null);
+
+  const openDiff = useCallback((file: StatusFile, staged: boolean) => {
+    const key = diffTabKey(file, staged);
+    setDiffTabs((prev) => {
+      const hit = prev.find((t) => t.key === key);
+      // 既存タブの再クリックは最新の差分を取り直す
+      if (hit) return prev.map((t) => (t.key === key ? { ...t, gen: t.gen + 1 } : t));
+      return [...prev, { key, path: file.path, origPath: file.origPath, staged, gen: 0 }];
+    });
+    setActiveDiff(key);
+  }, []);
+
+  const closeDiff = useCallback(
+    (key: string) => {
+      setDiffTabs((prev) => prev.filter((t) => t.key !== key));
+      setActiveDiff((current) => {
+        if (current !== key) return current;
+        const idx = diffTabs.findIndex((t) => t.key === key);
+        const next = diffTabs.filter((t) => t.key !== key);
+        return next[idx]?.key ?? next[idx - 1]?.key ?? null;
+      });
+    },
+    [diffTabs],
+  );
+
+  const reloadDiff = useCallback((key: string) => {
+    setDiffTabs((prev) => prev.map((t) => (t.key === key ? { ...t, gen: t.gen + 1 } : t)));
+  }, []);
 
   const dir = worktree.path;
   const currentBranch = worktree.branch;
@@ -251,7 +284,23 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
       </div>
       <div className="git-main">
         {view === 'status' ? (
-          <ChangesTab key={`s${reloadKey}`} dir={dir} />
+          <div className="changes-wrap">
+            <ChangesTab
+              key={`s${reloadKey}`}
+              dir={dir}
+              onOpenDiff={openDiff}
+              selectedKey={activeDiff}
+            />
+            <DiffTabsPane
+              dir={dir}
+              tabs={diffTabs}
+              activeKey={activeDiff}
+              reloadKey={reloadKey}
+              onActivate={setActiveDiff}
+              onClose={closeDiff}
+              onReload={reloadDiff}
+            />
+          </div>
         ) : (
           <HistoryTab key={`h${reloadKey}`} dir={dir} />
         )}

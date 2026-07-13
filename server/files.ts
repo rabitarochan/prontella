@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { decodeBuffer, encodeText } from './encoding.js';
+import { resolveEditorConfig, type EditorConfigSettings } from './editorconfig.js';
 
 const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
 const HIDDEN_NAMES = new Set(['.git']);
@@ -48,30 +50,50 @@ export function listDir(root: string, rel: string): TreeEntry[] {
   return result;
 }
 
+// client/src/types.ts の FileContent と手動同期(共有型機構がないため)
 export interface FileContent {
   path: string;
   content: string | null;
   binary: boolean;
   tooLarge: boolean;
   size: number;
+  encoding: string | null; // binary / tooLarge のとき null
+  hasBom: boolean;
+  editorconfig: EditorConfigSettings | null;
 }
 
-export function readFileContent(root: string, rel: string): FileContent {
+export function readFileContent(root: string, rel: string, forcedEncoding?: string): FileContent {
   const abs = safeResolve(root, rel);
   const stat = fs.statSync(abs);
+  // editorconfig は binary / tooLarge でも返す(新規ファイルのデフォルト決定に使う)
+  const editorconfig = resolveEditorConfig(root, abs);
+  const base = { path: rel, size: stat.size, hasBom: false, editorconfig };
   if (stat.size > MAX_FILE_SIZE) {
-    return { path: rel, content: null, binary: false, tooLarge: true, size: stat.size };
+    return { ...base, content: null, binary: false, tooLarge: true, encoding: null };
   }
-  const buf = fs.readFileSync(abs);
-  if (buf.includes(0)) {
-    return { path: rel, content: null, binary: true, tooLarge: false, size: stat.size };
+  const decoded = decodeBuffer(fs.readFileSync(abs), forcedEncoding);
+  if (!decoded) {
+    return { ...base, content: null, binary: true, tooLarge: false, encoding: null };
   }
-  return { path: rel, content: buf.toString('utf8'), binary: false, tooLarge: false, size: stat.size };
+  return {
+    ...base,
+    content: decoded.content,
+    binary: false,
+    tooLarge: false,
+    encoding: decoded.encoding,
+    hasBom: decoded.hasBom,
+  };
 }
 
-export function writeFileContent(root: string, rel: string, content: string): void {
+export function writeFileContent(
+  root: string,
+  rel: string,
+  content: string,
+  encoding = 'utf-8',
+  bom = false,
+): void {
   const abs = safeResolve(root, rel);
-  fs.writeFileSync(abs, content, 'utf8');
+  fs.writeFileSync(abs, encodeText(content, encoding, bom));
 }
 
 /** Create an empty file. Fails if it already exists. */

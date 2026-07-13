@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import * as pty from 'node-pty';
 import type { WebSocket } from 'ws';
+import { claudeCommand } from './hooks.js';
 
 export type AgentStatus = 'busy' | 'waiting' | 'idle' | 'shell';
 
@@ -51,6 +52,7 @@ export interface SessionInfo {
   claudeDetected: boolean;
   createdAt: number;
   lastOutputAt: number;
+  statusSince: number;
 }
 
 interface Session {
@@ -66,6 +68,7 @@ interface Session {
   lastBusyAt: number;
   lastOutputAt: number;
   createdAt: number;
+  statusSince: number;
   exited: boolean;
 }
 
@@ -78,24 +81,32 @@ function defaultShell(): { file: string; args: string[] } {
 
 export class PtyManager {
   private sessions = new Map<string, Session>();
+  private eventSockets = new Set<WebSocket>();
   private timer: NodeJS.Timeout;
 
-  constructor() {
+  constructor(private port: number) {
     this.timer = setInterval(() => this.tick(), 1_000);
     this.timer.unref();
   }
 
   create(cwd: string, run?: 'claude' | string): SessionInfo {
+    const id = randomUUID().slice(0, 8);
     const shell = defaultShell();
     const proc = pty.spawn(shell.file, shell.args, {
       name: 'xterm-256color',
       cols: 120,
       rows: 32,
       cwd,
-      env: { ...process.env } as Record<string, string>,
+      // CLAUDE_DECK_* は deck-hook.mjs がイベントの届け先とセッションを
+      // 特定するための変数。claude 経由でフックの子プロセスまで届く。
+      env: {
+        ...process.env,
+        CLAUDE_DECK_PORT: String(this.port),
+        CLAUDE_DECK_TERM: id,
+      } as Record<string, string>,
     });
     const session: Session = {
-      id: randomUUID().slice(0, 8),
+      id,
       cwd: path.resolve(cwd),
       title: run ? 'Claude Code' : path.basename(cwd),
       proc,
@@ -107,6 +118,7 @@ export class PtyManager {
       lastBusyAt: 0,
       lastOutputAt: Date.now(),
       createdAt: Date.now(),
+      statusSince: Date.now(),
       exited: false,
     };
     this.sessions.set(session.id, session);
@@ -117,16 +129,20 @@ export class PtyManager {
       this.broadcast(session, { type: 'exit' });
       for (const ws of session.sockets) ws.close();
       this.sessions.delete(session.id);
+      this.broadcastEvent({ type: 'removed', id: session.id });
     });
 
     if (run) {
+      // "claude" は hooks 設定つきの完全なコマンドラインに展開する。
+      const command = run === 'claude' ? claudeCommand() : run;
       // Let the shell finish initializing before injecting the command, so it
       // lands on a ready prompt across PowerShell / bash / zsh.
       const eol = '\r';
       setTimeout(() => {
-        if (!session.exited) proc.write(run + eol);
+        if (!session.exited) proc.write(command + eol);
       }, process.platform === 'win32' ? 1_200 : 400);
     }
+    this.broadcastEvent({ type: 'session', session: this.toInfo(session) });
     return this.toInfo(session);
   }
 
@@ -158,6 +174,70 @@ export class PtyManager {
       }
     });
     ws.on('close', () => session.sockets.delete(ws));
+    return true;
+  }
+
+  /** 全セッションのステータス変化を購読するグローバルソケット (/ws/events)。 */
+  attachEvents(ws: WebSocket): void {
+    this.eventSockets.add(ws);
+    ws.send(
+      JSON.stringify({
+        type: 'snapshot',
+        sessions: [...this.sessions.values()].map((s) => this.toInfo(s)),
+      }),
+    );
+    ws.on('close', () => this.eventSockets.delete(ws));
+    ws.on('error', () => this.eventSockets.delete(ws));
+  }
+
+  /**
+   * Claude Code の hook イベントを反映する (deck-hook.mjs からの POST)。
+   * TUI ヒューリスティックと同じ状態機械に「確度の高い信号」として注入する:
+   * 遷移が即時・正確になる一方、hooks が届かないセッションでは従来どおり
+   * ヒューリスティックだけで動く。
+   */
+  applyHookEvent(id: string, event: string, message: string, notificationType: string): boolean {
+    const session = this.sessions.get(id);
+    if (!session) return false;
+    switch (event) {
+      case 'SessionStart':
+        session.claudeDetected = true;
+        if (session.status === 'shell') this.setStatus(session, 'idle');
+        break;
+      case 'UserPromptSubmit':
+      case 'PreToolUse':
+      case 'PostToolUse':
+        session.claudeDetected = true;
+        session.lastBusyAt = Date.now();
+        this.setStatus(session, 'busy');
+        break;
+      case 'Notification':
+        // ユーザーの判断が必要な通知 (許可要求・質問ダイアログ) のみ waiting。
+        // アイドル通知は idle。notification_type が無い旧バージョンは message で判定。
+        session.claudeDetected = true;
+        if (
+          /^(permission_prompt|elicitation_dialog|agent_needs_input)$/.test(notificationType) ||
+          (!notificationType && /permission|needs your/i.test(message))
+        ) {
+          this.setStatus(session, 'waiting');
+        } else if (
+          notificationType === 'idle_prompt' ||
+          (!notificationType && /waiting for .*input|ready for your input/i.test(message))
+        ) {
+          this.setStatus(session, 'idle');
+        }
+        break;
+      case 'Stop':
+        session.claudeDetected = true;
+        this.setStatus(session, 'idle');
+        break;
+      case 'SessionEnd':
+        session.claudeDetected = false;
+        this.setStatus(session, 'shell');
+        break;
+      default:
+        break;
+    }
     return true;
   }
 
@@ -237,12 +317,21 @@ export class PtyManager {
   private setStatus(session: Session, status: AgentStatus): void {
     if (session.status === status) return;
     session.status = status;
+    session.statusSince = Date.now();
     this.broadcast(session, { type: 'status', status });
+    this.broadcastEvent({ type: 'session', session: this.toInfo(session) });
   }
 
   private broadcast(session: Session, msg: object): void {
     const payload = JSON.stringify(msg);
     for (const ws of session.sockets) {
+      if (ws.readyState === ws.OPEN) ws.send(payload);
+    }
+  }
+
+  private broadcastEvent(msg: object): void {
+    const payload = JSON.stringify(msg);
+    for (const ws of this.eventSockets) {
       if (ws.readyState === ws.OPEN) ws.send(payload);
     }
   }
@@ -256,6 +345,7 @@ export class PtyManager {
       claudeDetected: session.claudeDetected,
       createdAt: session.createdAt,
       lastOutputAt: session.lastOutputAt,
+      statusSince: session.statusSince,
     };
   }
 }

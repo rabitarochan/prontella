@@ -97,13 +97,20 @@ export const api = {
 
   tree: (root: string, dir = '') => request<TreeEntry[]>(`/api/fs/tree?root=${q(root)}&dir=${q(dir)}`),
   treeStatus: (root: string) => request<TreeStatusEntry[]>(`/api/fs/git-status?root=${q(root)}`),
-  file: (root: string, path: string) =>
-    request<FileContent>(`/api/fs/file?root=${q(root)}&path=${q(path)}`),
-  saveFile: (root: string, path: string, content: string) =>
+  file: (root: string, path: string, encoding?: string) =>
+    request<FileContent>(
+      `/api/fs/file?root=${q(root)}&path=${q(path)}${encoding ? `&encoding=${q(encoding)}` : ''}`,
+    ),
+  saveFile: (
+    root: string,
+    path: string,
+    content: string,
+    opts: { encoding?: string; bom?: boolean } = {},
+  ) =>
     request<void>('/api/fs/file', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ root, path, content }),
+      body: JSON.stringify({ root, path, content, encoding: opts.encoding, bom: opts.bom }),
     }),
   createFile: (root: string, path: string) => post<{ ok: boolean }>('/api/fs/file', { root, path }),
   createFolder: (root: string, path: string) => post<{ ok: boolean }>('/api/fs/dir', { root, path }),

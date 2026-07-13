@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import { api } from '../api';
-import type { FileContent } from '../types';
+import type { EditorConfigSettings, FileContent } from '../types';
 import { registerFilesTab, touchFilesTab, unregisterFilesTab } from '../search/registry';
+import EditorStatusBar from './EditorStatusBar';
 import FileTree from './FileTree';
 import SearchPanel from './SearchPanel';
 
@@ -29,7 +30,75 @@ const EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOptions = {
   scrollBeyondLastLine: false,
   automaticLayout: true,
   renderWhitespace: 'selection',
+  // インデントは applyModelOptions がモデル単位で制御する(editorconfig 指定が
+  // なければ手動で detectIndentation を呼ぶ)ので、attach 時の自動検出は切る。
+  detectIndentation: false,
 };
+
+// editorconfig の charset → 保存時のエンコーディング指定。latin1 は iconv-lite 側の
+// ホワイトリストに合わせて上位互換の windows-1252 に寄せる。utf-16 系は BOM 付きで書く。
+function charsetToEncoding(charset: EditorConfigSettings['charset']): {
+  encoding: string;
+  bom: boolean;
+} {
+  switch (charset) {
+    case 'utf-8-bom':
+      return { encoding: 'utf-8', bom: true };
+    case 'utf-16le':
+      return { encoding: 'utf-16le', bom: true };
+    case 'utf-16be':
+      return { encoding: 'utf-16be', bom: true };
+    case 'latin1':
+      return { encoding: 'windows-1252', bom: false };
+    default:
+      return { encoding: 'utf-8', bom: false };
+  }
+}
+
+// .editorconfig の保存時整形。モデルに適用してから保存することで、エディタ表示と
+// 保存内容が常に一致し、Ctrl+Z で整形前に戻せる。トリムと最終行改行は 1 回の
+// pushEditOperations にまとめる(複数回に分けると undo の復元位置がずれる)。
+function formatOnSave(
+  model: monaco.editor.ITextModel,
+  ec: EditorConfigSettings | null,
+  beforeCursorState: monaco.Selection[] | null,
+): void {
+  if (!ec) return;
+  const edits: monaco.editor.IIdentifiedSingleEditOperation[] = [];
+  if (ec.trimTrailingWhitespace) {
+    for (let line = 1; line <= model.getLineCount(); line++) {
+      const text = model.getLineContent(line);
+      const m = /[ \t]+$/.exec(text);
+      if (m) edits.push({ range: new monaco.Range(line, m.index + 1, line, text.length + 1), text: '' });
+    }
+  }
+  if (ec.insertFinalNewline) {
+    const lastLine = model.getLineCount();
+    const text = model.getLineContent(lastLine);
+    // トリム適用後に最終行が空になるなら挿入不要。空ファイルにも挿入しない(editorconfig 仕様)。
+    // 挿入位置は行末(トリム範囲の後端)なのでトリムの削除範囲とは重ならない。
+    const trimmed = ec.trimTrailingWhitespace ? text.replace(/[ \t]+$/, '') : text;
+    if (trimmed.length > 0) {
+      edits.push({
+        range: new monaco.Range(lastLine, text.length + 1, lastLine, text.length + 1),
+        text: model.getEOL(),
+      });
+    }
+  }
+  model.pushStackElement();
+  if (edits.length > 0) model.pushEditOperations(beforeCursorState, edits, () => null);
+  if (ec.endOfLine) {
+    const want = ec.endOfLine === 'crlf' ? '\r\n' : '\n';
+    if (model.getEOL() !== want) {
+      model.pushEOL(
+        ec.endOfLine === 'crlf'
+          ? monaco.editor.EndOfLineSequence.CRLF
+          : monaco.editor.EndOfLineSequence.LF,
+      );
+    }
+  }
+  model.pushStackElement();
+}
 
 // Monaco models are keyed by `path` and outlive both the editor and this
 // component, so a closed tab's draft would silently resurface on reopen (or in
@@ -64,11 +133,19 @@ export default function FilesTab({ root }: { root: string }) {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  // ステータスバー用。ref と違い state にすることで、マウント後に子コンポーネントの
+  // 購読 effect が再実行される。バイナリタブ表示中などは Editor ごと破棄されるので
+  // onDidDispose で null に戻し、破棄済みインスタンスを子へ渡さない。
+  const [editorInst, setEditorInst] = useState<Parameters<OnMount>[0] | null>(null);
   const pendingRevealRef = useRef<{ path: string; line: number; column: number } | null>(null);
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
   const activePathRef = useRef(activePath);
   activePathRef.current = activePath;
+
+  // インデント設定を適用済みのモデル(のタブパス)。モデルは閉じると破棄されるので、
+  // closeTab / root 切替で該当エントリも消して再適用させる。
+  const indentAppliedRef = useRef(new Set<string>());
 
   // Worktree switched — open tabs are root-relative, so start fresh.
   useEffect(() => {
@@ -77,6 +154,7 @@ export default function FilesTab({ root }: { root: string }) {
     setMessage('');
     setSide('tree');
     pendingRevealRef.current = null;
+    indentAppliedRef.current.clear();
     const loaded = loadedRef.current;
     loaded.clear();
     // On root change or unmount, drop every model this tab set created.
@@ -139,8 +217,42 @@ export default function FilesTab({ root }: { root: string }) {
     tryReveal(); // already open and loaded → jump immediately
   };
 
+  // editorconfig のインデント設定をアクティブなモデルへ 1 回だけ適用する。
+  // tryReveal と同じく ref のみを読むので、onMount / onDidChangeModel /
+  // 毎レンダー effect のどこから呼んでも stale にならない。
+  const applyModelOptions = () => {
+    const editor = editorRef.current;
+    const path = activePathRef.current;
+    if (!editor || !path || indentAppliedRef.current.has(path)) return;
+    const tab = tabsRef.current.find((t) => t.path === path);
+    if (!tab?.file || tab.file.content === null) return;
+    const model = editor.getModel();
+    if (!model || model.uri.toString() !== monaco.Uri.parse(modelPath(path)).toString()) return;
+    indentAppliedRef.current.add(path);
+    const ec = tab.file.editorconfig;
+    // 明示されていない項目は自動検出結果を残したいので、まず検出してから上書きする
+    model.detectIndentation(true, 4);
+    const opts: monaco.editor.ITextModelUpdateOptions = {};
+    if (ec?.indentStyle) opts.insertSpaces = ec.indentStyle === 'space';
+    const size = ec?.indentSize ?? ec?.tabWidth;
+    if (size) {
+      opts.indentSize = size;
+      opts.tabSize = ec?.tabWidth ?? size;
+    }
+    if (Object.keys(opts).length > 0) model.updateOptions(opts);
+    // 新規(空)ファイルは end_of_line をデフォルト EOL にする(空なので dirty にならない)
+    if (ec?.endOfLine && model.getValueLength() === 0) {
+      model.setEOL(
+        ec.endOfLine === 'crlf'
+          ? monaco.editor.EndOfLineSequence.CRLF
+          : monaco.editor.EndOfLineSequence.LF,
+      );
+    }
+  };
+
   // Covers the async paths: file load completing, tab/model switches.
   useEffect(() => {
+    applyModelOptions();
     tryReveal();
   });
 
@@ -187,6 +299,7 @@ export default function FilesTab({ root }: { root: string }) {
     const next = tabs.filter((t) => t.path !== path);
     setTabs(next);
     loadedRef.current.delete(path);
+    indentAppliedRef.current.delete(path);
     disposeModelsSoon([modelPath(path)]);
     if (activePath === path) {
       const neighbor = next[idx] ?? next[idx - 1] ?? null; // right neighbor, else left
@@ -195,15 +308,43 @@ export default function FilesTab({ root }: { root: string }) {
     }
   };
 
-  const save = async () => {
-    if (!active || !active.file || active.file.content === active.draft) return;
-    const { path, draft } = active;
+  // encOverride は「指定エンコーディングで保存」用。非 dirty でも encOverride 付き
+  // なら保存する(エンコーディング変換だけの保存を許す)。ref 経由で読むので
+  // ステータスバーのハンドラーからも stale なく呼べる。
+  const save = async (encOverride?: { encoding: string; bom: boolean }) => {
+    const path = activePathRef.current;
+    const tab = path ? tabsRef.current.find((t) => t.path === path) : null;
+    if (!path || !tab?.file || tab.file.content === null) return;
+    if (tab.draft === tab.file.content && !encOverride) return;
+    const ec = tab.file.editorconfig;
+    // 新規(空)ファイルに限り editorconfig の charset を保存エンコーディングの
+    // デフォルトにする(既存ファイルを勝手に文字コード変換しない)
+    const isEmptyFile = tab.file.content === '' && tab.file.size === 0;
+    const enc =
+      encOverride ??
+      (isEmptyFile && ec?.charset
+        ? charsetToEncoding(ec.charset)
+        : { encoding: tab.file.encoding ?? 'utf-8', bom: tab.file.hasBom });
     setSaving(true);
     try {
-      await api.saveFile(root, path, draft);
+      // 保存時整形をモデルに適用してから getValue() を送る。アクティブなモデルが
+      // 取れない特殊ケースでは整形をスキップして draft をそのまま送る(安全側)。
+      const model = editorRef.current?.getModel();
+      let content = tab.draft;
+      if (model && model.uri.toString() === monaco.Uri.parse(modelPath(path)).toString()) {
+        formatOnSave(model, ec, editorRef.current?.getSelections() ?? null);
+        content = model.getValue();
+      }
+      await api.saveFile(root, path, content, enc);
       setTabs((prev) =>
         prev.map((t) =>
-          t.path === path && t.file ? { ...t, file: { ...t.file, content: draft } } : t,
+          t.path === path && t.file
+            ? {
+                ...t,
+                draft: content,
+                file: { ...t.file, content, encoding: enc.encoding, hasBom: enc.bom },
+              }
+            : t,
         ),
       );
       setMessage('✓ 保存しました');
@@ -216,9 +357,45 @@ export default function FilesTab({ root }: { root: string }) {
   };
   saveRef.current = () => void save();
 
+  // 「エンコーディング指定で再読み込み」。dirty なら確認してから破棄する。
+  const reloadWithEncoding = async (encoding: string) => {
+    const path = activePathRef.current;
+    const tab = path ? tabsRef.current.find((t) => t.path === path) : null;
+    if (!path || !tab) return;
+    if (tab.file && tab.file.content !== null && tab.draft !== tab.file.content) {
+      if (!confirm(`${basename(path)} の未保存の変更を破棄して再読み込みしますか?`)) return;
+    }
+    try {
+      const f = await api.file(root, path, encoding);
+      setTabs((prev) =>
+        prev.map((t) => (t.path === path ? { ...t, file: f, draft: f.content ?? '', error: '' } : t)),
+      );
+      // uncontrolled モデルなので明示的に反映する(tryReveal と同じ URI 一致ガード付き。
+      // undo 履歴はリセットされるがリロードなので許容)。インデントも内容が変わったので
+      // 再検出させる。
+      const model = editorRef.current?.getModel();
+      if (
+        f.content !== null &&
+        model &&
+        model.uri.toString() === monaco.Uri.parse(modelPath(path)).toString()
+      ) {
+        model.setValue(f.content);
+        indentAppliedRef.current.delete(path);
+        applyModelOptions();
+      }
+      setMessage('');
+    } catch (e) {
+      setMessage(`⚠ ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   const onMount: OnMount = (editor, monaco) => {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => saveRef.current());
     editorRef.current = editor;
+    editor.onDidChangeModel(() => applyModelOptions()); // タブ切替(モデル切替)を捕まえる
+    editor.onDidDispose(() => setEditorInst((cur) => (cur === editor ? null : cur)));
+    setEditorInst(editor);
+    applyModelOptions();
     tryReveal(); // first mount happens after the initial file load completes
   };
 
@@ -337,6 +514,13 @@ export default function FilesTab({ root }: { root: string }) {
                     options={EDITOR_OPTIONS}
                   />
                 </div>
+                <EditorStatusBar
+                  editor={editorInst}
+                  activePath={active.path}
+                  file={active.file}
+                  onReloadWithEncoding={(encoding) => void reloadWithEncoding(encoding)}
+                  onSaveWithEncoding={(encoding, bom) => void save({ encoding, bom })}
+                />
               </>
             )}
           </>

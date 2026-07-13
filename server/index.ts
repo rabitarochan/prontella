@@ -322,13 +322,20 @@ app.get('/api/fs/tree', asyncHandler(async (req, res) => {
 }));
 
 app.get('/api/fs/file', asyncHandler(async (req, res) => {
-  res.json(files.readFileContent(queryStr(req, 'root'), queryStr(req, 'path')));
+  const encoding = typeof req.query.encoding === 'string' && req.query.encoding ? req.query.encoding : undefined;
+  res.json(files.readFileContent(queryStr(req, 'root'), queryStr(req, 'path'), encoding));
 }));
 
 app.put('/api/fs/file', asyncHandler(async (req, res) => {
-  const { root, path: rel, content } = req.body as { root: string; path: string; content: string };
+  const { root, path: rel, content, encoding, bom } = req.body as {
+    root: string;
+    path: string;
+    content: string;
+    encoding?: string;
+    bom?: boolean;
+  };
   if (typeof content !== 'string') throw new Error('content が必要です');
-  files.writeFileContent(root, rel, content);
+  files.writeFileContent(root, rel, content, typeof encoding === 'string' ? encoding : undefined, bom === true);
   res.json({ ok: true });
 }));
 

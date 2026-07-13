@@ -583,6 +583,73 @@ textarea:focus {
   min-height: 0;
 }
 
+.editor-statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 1px 10px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--fg-dim);
+  flex-shrink: 0;
+  user-select: none;
+}
+.statusbar-item {
+  background: none;
+  border: none;
+  border-radius: 3px;
+  padding: 2px 7px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+button.statusbar-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border: none;
+  color: var(--fg);
+}
+.statusbar-item.static {
+  cursor: default;
+}
+.statusbar-anchor {
+  position: relative;
+}
+.statusbar-menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  right: 0;
+  min-width: 180px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  padding: 3px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+}
+.statusbar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--fg);
+  text-align: left;
+  white-space: nowrap;
+}
+button.statusbar-menu-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border: none;
+}
+.statusbar-menu-item .codicon {
+  font-size: 13px !important;
+}
+
 .editor-tabs {
   display: flex;
   align-items: stretch;

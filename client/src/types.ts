@@ -95,6 +95,25 @@ export interface DiffPair {
   tooLarge: boolean;
 }
 
+export interface SearchMatch {
+  line: number; // 1-based
+  column: number; // 1-based, UTF-16 code units
+  preview: string;
+  ranges: [number, number][]; // highlight ranges in preview, [start, end)
+}
+
+export interface SearchFileResult {
+  path: string;
+  matches: SearchMatch[];
+}
+
+export interface SearchTextResponse {
+  results: SearchFileResult[];
+  fileCount: number;
+  matchCount: number;
+  limitHit: boolean;
+}
+
 export interface TerminalSession {
   id: string;
   cwd: string;

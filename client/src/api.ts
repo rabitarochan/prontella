@@ -6,6 +6,7 @@ import type {
   FileContent,
   LogEntry,
   Repo,
+  SearchTextResponse,
   StashEntry,
   StatusFile,
   TerminalSession,
@@ -106,6 +107,20 @@ export const api = {
     }),
   createFile: (root: string, path: string) => post<{ ok: boolean }>('/api/fs/file', { root, path }),
   createFolder: (root: string, path: string) => post<{ ok: boolean }>('/api/fs/dir', { root, path }),
+
+  searchFiles: (root: string) => request<{ files: string[] }>(`/api/search/files?root=${q(root)}`),
+  searchText: (
+    root: string,
+    query: string,
+    opts: { regex?: boolean; caseSensitive?: boolean; max?: number } = {},
+    signal?: AbortSignal,
+  ) => {
+    const params = new URLSearchParams({ root, q: query });
+    if (opts.regex) params.set('regex', '1');
+    if (opts.caseSensitive) params.set('case', '1');
+    if (opts.max) params.set('max', String(opts.max));
+    return request<SearchTextResponse>(`/api/search/text?${params}`, { signal });
+  },
 
   terminals: (cwd?: string) =>
     request<TerminalSession[]>(`/api/terminals${cwd ? `?cwd=${q(cwd)}` : ''}`),

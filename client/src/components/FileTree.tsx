@@ -60,7 +60,7 @@ function parentOf(path: string): string {
 }
 
 /** VS Code-ish file icon (codicon name + color) by file name. */
-function fileIcon(name: string): { icon: string; color: string } {
+export function fileIcon(name: string): { icon: string; color: string } {
   const lower = name.toLowerCase();
   const ext = lower.includes('.') ? lower.slice(lower.lastIndexOf('.') + 1) : '';
   if (lower.startsWith('.git')) return { icon: 'source-control', color: '#f05133' };

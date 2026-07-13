@@ -1,9 +1,12 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { connectAgentEvents, useAgentEvents, waitingSessions } from './agentEvents';
 import { useDeck, findSelection } from './store';
+import { useSearchHotkeys } from './search/useSearchHotkeys';
+import type { FilesTabHandle } from './search/registry';
 import AttentionBell from './components/AttentionBell';
 import Sidebar from './components/Sidebar';
 import DeckView from './components/DeckView';
+import QuickOpenModal from './components/QuickOpenModal';
 import WorktreeView from './components/WorktreeView';
 
 const POLL_MS = 4000;
@@ -11,6 +14,8 @@ const POLL_MS = 4000;
 export default function App() {
   const { repos, loaded, selected, error, refresh, setError } = useDeck();
   const sessions = useAgentEvents((s) => s.sessions);
+  const [quickOpenTarget, setQuickOpenTarget] = useState<FilesTabHandle | null>(null);
+  useSearchHotkeys(setQuickOpenTarget);
 
   useEffect(() => {
     void refresh();
@@ -55,6 +60,9 @@ export default function App() {
           )}
         </main>
       </div>
+      {quickOpenTarget && (
+        <QuickOpenModal target={quickOpenTarget} onClose={() => setQuickOpenTarget(null)} />
+      )}
     </div>
   );
 }

@@ -1589,3 +1589,237 @@ textarea:focus {
   color: var(--fg-dim);
   font-size: 11px;
 }
+
+/* ---- code search (Ctrl+P / Ctrl+Shift+F) ---- */
+
+.files-tree-pane {
+  display: flex;
+  flex-direction: column;
+}
+.side-switch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+.side-switch-btn {
+  background: transparent;
+  border: none;
+  padding: 3px 6px;
+  color: var(--fg-dim);
+  border-radius: 3px;
+}
+.side-switch-btn:hover {
+  background: var(--bg-hover);
+}
+.side-switch-btn.active {
+  color: var(--fg);
+  background: var(--bg-active);
+}
+.side-view {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Quick Open (Ctrl+P) */
+.quickopen-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10vh;
+  z-index: 100;
+}
+.quickopen {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 560px;
+  max-width: 92vw;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+}
+.quickopen-input {
+  margin: 8px;
+  padding: 5px 8px;
+}
+.quickopen-list {
+  overflow-y: auto;
+  padding-bottom: 6px;
+}
+.quickopen-section {
+  color: var(--fg-dim);
+  font-size: 11px;
+  padding: 4px 12px 2px;
+}
+.quickopen-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.quickopen-item.selected {
+  background: var(--bg-active);
+}
+.quickopen-item-icon {
+  flex-shrink: 0;
+  font-size: 15px !important;
+}
+.quickopen-item-name {
+  flex-shrink: 0;
+}
+.quickopen-item-dir {
+  color: var(--fg-dim);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.quickopen-empty {
+  color: var(--fg-dim);
+  padding: 8px 12px;
+}
+.fuzzy-hl {
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* text search panel (Ctrl+Shift+F) */
+.search-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.search-input-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  flex-shrink: 0;
+}
+.search-input-row input {
+  flex: 1;
+  min-width: 0;
+}
+.search-toggle {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--fg-dim);
+  padding: 3px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.search-toggle:hover {
+  background: var(--bg-hover);
+}
+.search-toggle.active {
+  color: var(--fg);
+  background: var(--bg-active);
+  border-color: var(--accent);
+}
+.search-error {
+  color: var(--red);
+  font-size: 11px;
+  padding: 0 8px 4px;
+  white-space: pre-wrap;
+}
+.search-summary {
+  color: var(--fg-dim);
+  font-size: 11px;
+  padding: 0 8px 4px;
+  flex-shrink: 0;
+}
+.search-limit {
+  margin-left: 4px;
+}
+.search-results {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  font-size: 12px;
+}
+.search-empty {
+  color: var(--fg-dim);
+  padding: 6px 12px;
+}
+.search-file-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+.search-file-header:hover {
+  background: var(--bg-hover);
+}
+.search-chevron {
+  flex-shrink: 0;
+  color: var(--fg-dim);
+  transition: transform 0.1s;
+  font-size: 14px !important;
+}
+.search-chevron.open {
+  transform: rotate(90deg);
+}
+.search-file-icon {
+  flex-shrink: 0;
+  font-size: 15px !important;
+}
+.search-file-name {
+  flex-shrink: 0;
+}
+.search-file-dir {
+  color: var(--fg-dim);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-file-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: var(--bg-active);
+  color: var(--fg-dim);
+  border-radius: 8px;
+  font-size: 10px;
+  padding: 0 6px;
+}
+.search-match-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 1px 6px 1px 24px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.search-match-row:hover {
+  background: var(--bg-hover);
+}
+.search-line-no {
+  color: var(--fg-dim);
+  font-size: 10px;
+  min-width: 24px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.search-match-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-hl {
+  background: rgba(217, 119, 87, 0.28);
+  color: inherit;
+  border-radius: 2px;
+}

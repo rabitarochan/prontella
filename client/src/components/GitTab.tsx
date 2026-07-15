@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { useDeck } from '../store';
 import type { BranchInfo, Repo, StashEntry, StatusFile, Worktree } from '../types';
+import BranchTree from './BranchTree';
 import ChangesTab from './ChangesTab';
+import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import DiffTabsPane, { diffTabKey, type DiffTab } from './DiffTabsPane';
 import HistoryTab from './HistoryTab';
 
@@ -21,6 +23,9 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+  const [branchMenu, setBranchMenu] = useState<{ x: number; y: number; branch: BranchInfo } | null>(
+    null,
+  );
   // 変更リストで選択したファイルの diff タブ。ChangesTab は reloadKey で
   // 再マウントされるので、タブはここ (GitTab) が持って生き残らせる。
   const [diffTabs, setDiffTabs] = useState<DiffTab[]>([]);
@@ -112,6 +117,39 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
     }, 'ブランチを削除しました');
   };
 
+  const openBranchMenu = useCallback((e: React.MouseEvent, branch: BranchInfo) => {
+    setBranchMenu({ x: e.clientX, y: e.clientY, branch });
+  }, []);
+
+  const branchMenuItems = (b: BranchInfo): ContextMenuItem[] => {
+    const usedElsewhere = !!b.worktreePath && b.worktreePath !== worktree.path.replace(/\\/g, '/');
+    return [
+      {
+        label: '切り替え',
+        icon: 'arrow-swap',
+        disabled: busy || usedElsewhere,
+        onClick: () => void act(() => api.switchBranch(dir, b.name), `${b.name} に切り替えました`),
+      },
+      {
+        label: 'マージ',
+        icon: 'git-merge',
+        disabled: busy,
+        onClick: () => {
+          if (confirm(`${b.name} を ${currentBranch ?? '現在のブランチ'} にマージしますか?`)) {
+            void act(() => api.merge(dir, b.name), 'マージしました');
+          }
+        },
+      },
+      {
+        label: '削除',
+        icon: 'trash',
+        disabled: busy || usedElsewhere,
+        danger: true,
+        onClick: () => deleteBranch(b.name),
+      },
+    ];
+  };
+
   const locals = branches.filter((b) => !b.remote);
   const remotes = branches.filter((b) => b.remote);
   const dirty =
@@ -168,69 +206,21 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
           title: '新しいブランチを作成',
           onClick: createBranch,
         })}
-        {openLocal &&
-          locals.map((b) => {
-            const isCurrent = b.name === currentBranch;
-            const usedElsewhere =
-              !!b.worktreePath && b.worktreePath !== worktree.path.replace(/\\/g, '/');
-            return (
-              <div key={b.name} className={`git-branch-row ${isCurrent ? 'current' : ''}`} title={b.name}>
-                <span className="codicon codicon-git-branch branch-icon" />
-                <span className="branch-name">
-                  {b.name}
-                  {usedElsewhere && <span className="branch-used-mark" title="他の Worktree で使用中"> ◈</span>}
-                </span>
-                {isCurrent ? (
-                  <span className="branch-current-mark">✓</span>
-                ) : (
-                  <span className="branch-actions">
-                    <button
-                      className="icon-btn"
-                      title="切り替え"
-                      disabled={busy || usedElsewhere}
-                      onClick={() =>
-                        void act(() => api.switchBranch(dir, b.name), `${b.name} に切り替えました`)
-                      }
-                    >
-                      <span className="codicon codicon-arrow-swap" />
-                    </button>
-                    <button
-                      className="icon-btn"
-                      title={`${b.name} を ${currentBranch ?? 'HEAD'} にマージ`}
-                      disabled={busy}
-                      onClick={() => {
-                        if (confirm(`${b.name} を ${currentBranch ?? '現在のブランチ'} にマージしますか?`)) {
-                          void act(() => api.merge(dir, b.name), 'マージしました');
-                        }
-                      }}
-                    >
-                      <span className="codicon codicon-git-merge" />
-                    </button>
-                    <button
-                      className="icon-btn"
-                      title="削除"
-                      disabled={busy || usedElsewhere}
-                      onClick={() => deleteBranch(b.name)}
-                    >
-                      <span className="codicon codicon-trash" />
-                    </button>
-                  </span>
-                )}
-              </div>
-            );
-          })}
+        {openLocal && (
+          <BranchTree
+            branches={locals}
+            currentBranch={currentBranch}
+            worktreePath={worktree.path}
+            onContextMenu={openBranchMenu}
+          />
+        )}
 
         {sectionHead('リモート', openRemote, () => setOpenRemote((v) => !v))}
         {openRemote &&
           (remotes.length === 0 ? (
             <div className="git-side-empty">リモートブランチはありません</div>
           ) : (
-            remotes.map((b) => (
-              <div key={b.name} className="git-branch-row" title={b.name}>
-                <span className="codicon codicon-cloud branch-icon" />
-                <span className="branch-name">{b.name}</span>
-              </div>
-            ))
+            <BranchTree branches={remotes} />
           ))}
 
         {sectionHead('スタッシュ', openStash, () => setOpenStash((v) => !v), {
@@ -305,6 +295,14 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
           <HistoryTab key={`h${reloadKey}`} dir={dir} />
         )}
       </div>
+      {branchMenu && (
+        <ContextMenu
+          x={branchMenu.x}
+          y={branchMenu.y}
+          items={branchMenuItems(branchMenu.branch)}
+          onClose={() => setBranchMenu(null)}
+        />
+      )}
     </div>
   );
 }

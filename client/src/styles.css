@@ -1190,6 +1190,33 @@ button.statusbar-menu-item:hover:not(:disabled) {
 .git-branch-row.current {
   background: var(--bg-active);
 }
+.git-branch-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 16px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.git-branch-folder-row:hover {
+  background: var(--bg-hover);
+}
+.git-branch-folder-row .codicon {
+  color: var(--fg-dim);
+  flex-shrink: 0;
+  font-size: 13px !important;
+}
+.branch-folder-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 開閉アイコンの領域。葉の行でも同じ幅を確保して名前を縦に揃える */
+.branch-twisty {
+  width: 13px;
+  flex-shrink: 0;
+}
 .branch-icon {
   color: var(--fg-dim);
   flex-shrink: 0;
@@ -1228,6 +1255,44 @@ button.statusbar-menu-item:hover:not(:disabled) {
   color: var(--fg-dim);
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+/* ---- context menu (右クリックメニュー、汎用) ---- */
+
+.context-menu {
+  position: fixed;
+  min-width: 160px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  padding: 3px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+}
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--fg);
+  text-align: left;
+  white-space: nowrap;
+}
+button.context-menu-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border: none;
+}
+.context-menu-item.danger {
+  color: var(--red);
+}
+.context-menu-item .codicon {
+  font-size: 13px !important;
 }
 
 /* ---- tile layout (各タイル = タブ付きワークスペース) ---- */

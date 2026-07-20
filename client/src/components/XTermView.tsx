@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { ClipboardAddon } from '@xterm/addon-clipboard';
 
 /**
  * One xterm.js instance bound to a PTY session (/ws/term). Mounted once per
@@ -38,6 +39,8 @@ export default function XTermView({
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
+    // OSC 52 support — Claude Code's select-to-copy emits OSC 52; xterm core drops it without this addon.
+    term.loadAddon(new ClipboardAddon());
     term.open(container);
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';

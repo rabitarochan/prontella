@@ -52,6 +52,14 @@ button.primary {
 button.primary:hover:not(:disabled) {
   background: var(--accent);
 }
+button.danger {
+  background: #7a2e26;
+  border-color: var(--red);
+  color: #fff;
+}
+button.danger:hover:not(:disabled) {
+  background: #99392e;
+}
 
 input,
 select,
@@ -1602,6 +1610,12 @@ button.context-menu-item:hover:not(:disabled) {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 14px;
+}
+.confirm-message {
+  color: var(--fg);
+  font-size: 12px;
+  white-space: pre-wrap;
+  line-height: 1.5;
 }
 
 /* ---- attention bell (要対応キュー) ---- */

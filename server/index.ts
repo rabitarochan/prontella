@@ -194,7 +194,8 @@ app.get('/api/git/status', asyncHandler(async (req, res) => {
   res.json({
     branch: await git.getBranchStatus(dir),
     files: await git.getStatusFiles(dir),
-    merging: await git.isMerging(dir),
+    merging: await git.isMerging(dir), // 後方互換のため維持(新規実装は operation を見ること)
+    operation: await git.getOperationState(dir),
   });
 }));
 

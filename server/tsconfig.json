@@ -10,5 +10,6 @@
     "types": ["node"],
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["."]
+  "include": ["."],
+  "exclude": ["**/*.test.ts"]
 }

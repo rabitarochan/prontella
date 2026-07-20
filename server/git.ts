@@ -1,8 +1,11 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
 const US = '\x1f'; // unit separator for log formatting
+
+// runGit(execFile の maxBuffer)と runGitInput(手動の累積バイト数ガード)で共有する出力上限
+const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 export function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -13,7 +16,7 @@ export function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise
       ['-c', 'core.quotepath=false', ...args],
       {
         cwd,
-        maxBuffer: 64 * 1024 * 1024,
+        maxBuffer: MAX_OUTPUT_BYTES,
         windowsHide: true,
         timeout: timeoutMs,
         // Fail fast instead of hanging when a remote asks for credentials.
@@ -27,6 +30,73 @@ export function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise
   });
 }
 
+/**
+ * runGit と同じ設定(shell 無効・windowsHide・GIT_TERMINAL_PROMPT=0)で git を起動し、
+ * input を stdin に書き込んでから閉じる。`git apply --cached --check -` のように
+ * stdin からパッチ/バイナリを受け取るコマンド用。stdout/stderr は Buffer で扱う
+ * (パッチにバイナリを含み得るため UTF-8 前提の execFile は使わない)。
+ */
+export function runGitInput(cwd: string, args: string[], input: Buffer, timeoutMs = 30_000): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['-c', 'core.quotepath=false', ...args], {
+      cwd,
+      windowsHide: true,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    });
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let totalBytes = 0;
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      reject(new Error(`git ${args.join(' ')} がタイムアウトしました (${timeoutMs}ms)`));
+    }, timeoutMs);
+
+    // stdout/stderr 合算の累積バイト数が上限を超えたら kill + reject する(runGit の
+    // execFile maxBuffer 相当のガード。無制限に貯め込むとメモリを圧迫するため)。
+    const pushChunk = (chunks: Buffer[], chunk: Buffer) => {
+      if (settled) return;
+      totalBytes += chunk.length;
+      if (totalBytes > MAX_OUTPUT_BYTES) {
+        settled = true;
+        clearTimeout(timer);
+        child.kill();
+        reject(new Error(`git ${args.join(' ')} の出力が上限 (${MAX_OUTPUT_BYTES} バイト) を超えました`));
+        return;
+      }
+      chunks.push(chunk);
+    };
+
+    child.stdout.on('data', (chunk: Buffer) => pushChunk(stdoutChunks, chunk));
+    child.stderr.on('data', (chunk: Buffer) => pushChunk(stderrChunks, chunk));
+    // 早期終了(タイムアウト kill 等)で stdin への write が EPIPE することがあるため無視する
+    child.stdin.on('error', () => {});
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new Error(Buffer.concat(stderrChunks).toString('utf8').trim() || `git exited with code ${code}`));
+      } else {
+        resolve(Buffer.concat(stdoutChunks));
+      }
+    });
+
+    child.stdin.write(input);
+    child.stdin.end();
+  });
+}
+
 const NETWORK_TIMEOUT = 120_000;
 
 /**
@@ -34,7 +104,7 @@ const NETWORK_TIMEOUT = 120_000;
  * Even with core.quotepath=false, git still quotes paths containing
  * double quotes, backslashes, or control characters.
  */
-function unquoteGitPath(quoted: string): string {
+export function unquoteGitPath(quoted: string): string {
   if (quoted.length < 2 || !quoted.startsWith('"') || !quoted.endsWith('"')) return quoted;
   const inner = quoted.slice(1, -1);
   const bytes: number[] = [];
@@ -558,4 +628,31 @@ export async function stashApply(dir: string, ref: string, pop: boolean): Promis
 export async function stashDrop(dir: string, ref: string): Promise<void> {
   if (!/^stash@\{\d+\}$/.test(ref)) throw new Error(`不正な stash 参照です: ${ref}`);
   await runGit(dir, ['stash', 'drop', ref]);
+}
+
+// ---- operation state ---------------------------------------------------------
+
+export type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'revert';
+
+/**
+ * 進行中の git 操作の種別。git-dir 配下のマーカーファイル/ディレクトリーで fs 判定する。
+ * worktree では `.git` がファイル(gitdir へのポインター)のため resolveGitRoot ベースの
+ * fs 直読みはできない — `git rev-parse --git-dir` で実体の git-dir を解決してから調べる。
+ * rebase/cherry-pick 中も MERGE_HEAD 類似ファイルが併存し得るため、優先順は
+ * rebase → cherry-pick → revert → merge。
+ */
+export async function getOperationState(dir: string): Promise<GitOperation | null> {
+  let gitDir: string;
+  try {
+    gitDir = (await runGit(dir, ['rev-parse', '--git-dir'])).trim();
+  } catch {
+    return null; // git リポジトリーでない
+  }
+  const abs = path.isAbsolute(gitDir) ? gitDir : path.join(dir, gitDir);
+  const exists = (name: string) => fs.existsSync(path.join(abs, name));
+  if (exists('rebase-merge') || exists('rebase-apply')) return 'rebase';
+  if (exists('CHERRY_PICK_HEAD')) return 'cherry-pick';
+  if (exists('REVERT_HEAD')) return 'revert';
+  if (exists('MERGE_HEAD')) return 'merge';
+  return null;
 }

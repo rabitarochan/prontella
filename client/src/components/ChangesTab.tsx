@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { useDeck } from '../store';
 import type { StatusFile } from '../types';
+import { useConfirm } from './ConfirmDialog';
 
 const POLL_MS = 5000;
 
@@ -16,6 +17,7 @@ export default function ChangesTab({
   selectedKey?: string | null;
 }) {
   const refreshDeck = useDeck((s) => s.refresh);
+  const { confirm: confirmDialog, dialog } = useConfirm();
   const [files, setFiles] = useState<StatusFile[]>([]);
   const [merging, setMerging] = useState(false);
   const [commitMsg, setCommitMsg] = useState('');
@@ -56,9 +58,15 @@ export default function ChangesTab({
     }
   };
 
-  const discard = (file: StatusFile) => {
+  const discard = async (file: StatusFile) => {
     const what = file.untracked ? 'この未追跡ファイルを削除' : 'この変更を破棄';
-    if (!confirm(`${what}しますか?\n${file.path}\n\n※ 元に戻せません`)) return;
+    const ok = await confirmDialog({
+      title: what,
+      message: `${what}しますか?\n${file.path}\n\n※ 元に戻せません`,
+      confirmLabel: '破棄',
+      severity: 'danger',
+    });
+    if (!ok) return;
     void act(() => api.discard(dir, file.path, file.untracked));
   };
 
@@ -83,7 +91,7 @@ export default function ChangesTab({
             title={file.untracked ? 'ファイルを削除' : '変更を破棄'}
             onClick={(e) => {
               e.stopPropagation();
-              discard(file);
+              void discard(file);
             }}
           >
             <span className="codicon codicon-discard" />
@@ -182,6 +190,7 @@ export default function ChangesTab({
           </button>
         </div>
       </div>
+      {dialog}
     </div>
   );
 }

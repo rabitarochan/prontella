@@ -4,6 +4,7 @@ import type {
   CommitFile,
   DiffPair,
   FileContent,
+  GitOperation,
   LogEntry,
   Repo,
   SearchTextResponse,
@@ -49,7 +50,7 @@ export const api = {
   commitDetail: (dir: string, hash: string) =>
     request<{ text: string }>(`/api/git/commit?dir=${q(dir)}&hash=${q(hash)}`),
   gitStatus: (dir: string) =>
-    request<{ branch: BranchStatus; files: StatusFile[]; merging: boolean }>(
+    request<{ branch: BranchStatus; files: StatusFile[]; merging: boolean; operation: GitOperation | null }>(
       `/api/git/status?dir=${q(dir)}`,
     ),
   diff: (dir: string, opts: { path?: string; staged?: boolean; untracked?: boolean } = {}) => {

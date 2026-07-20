@@ -11,6 +11,9 @@ export interface BranchStatus {
   conflicted: number;
 }
 
+// server/git.ts の GitOperation と手動同期(共有型機構がないため)
+export type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'revert';
+
 export interface Worktree {
   path: string;
   head: string;

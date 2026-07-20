@@ -27,6 +27,7 @@ export interface Repo {
   name: string;
   worktrees: Worktree[];
   error: string | null;
+  gitMode: 'root' | 'subdir' | 'none'; // GET /api/repos が実行時判定で付与 — server/index.ts と手動同期(共有型機構がないため)
 }
 
 export interface StatusFile {

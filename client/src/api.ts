@@ -94,6 +94,7 @@ export const api = {
   stashApply: (dir: string, ref: string, pop: boolean) =>
     post<void>('/api/git/stash-apply', { dir, ref, pop }),
   stashDrop: (dir: string, ref: string) => post<void>('/api/git/stash-drop', { dir, ref }),
+  gitInit: (dir: string) => post<void>('/api/git/init', { dir }),
 
   tree: (root: string, dir = '') => request<TreeEntry[]>(`/api/fs/tree?root=${q(root)}&dir=${q(dir)}`),
   treeStatus: (root: string) => request<TreeStatusEntry[]>(`/api/fs/git-status?root=${q(root)}`),

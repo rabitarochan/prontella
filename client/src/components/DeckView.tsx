@@ -33,8 +33,8 @@ export default function DeckView() {
                 <StatusBadge status={wt.agent.status} />
               </div>
               <div className="card-branch">
-                {wt.branch ?? `(detached ${wt.head})`}
-                {wt.isMain && <span className="wt-main-mark"> ●main</span>}
+                {repo.gitMode === 'none' ? '(Git なし)' : (wt.branch ?? `(detached ${wt.head})`)}
+                {repo.gitMode === 'root' && wt.isMain && <span className="wt-main-mark"> ●main</span>}
               </div>
               <div className="card-path" title={wt.path}>
                 {wt.path}

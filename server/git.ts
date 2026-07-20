@@ -59,6 +59,27 @@ function unquoteGitPath(quoted: string): string {
   return Buffer.from(bytes).toString('utf8');
 }
 
+/**
+ * dir 自身または祖先で最初に `.git` が見つかったディレクトリー(git worktree root)。
+ * 見つからなければ null。git プロセスを起動しない fs ウォークアップのみで判定する
+ * (GET /api/repos の 4 秒ポーリングに乗るため軽量である必要がある)。linked
+ * worktree の下位でも `.git` ファイルに当たり、正しい worktree root を返す。
+ */
+export function resolveGitRoot(dir: string): string | null {
+  let current = path.resolve(dir);
+  for (;;) {
+    if (fs.existsSync(path.join(current, '.git'))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return null; // ドライブルートで停止
+    current = parent;
+  }
+}
+
+/** ユーザーの init.defaultBranch を尊重するため -b は付けない。 */
+export async function init(dir: string): Promise<void> {
+  await runGit(dir, ['init']);
+}
+
 /** Tracked + untracked (non-ignored) files, root-relative with forward slashes. */
 export async function listFiles(dir: string): Promise<string[]> {
   // -z: NUL separators and no C-quoting — non-ASCII paths arrive as raw UTF-8

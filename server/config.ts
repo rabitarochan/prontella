@@ -37,9 +37,10 @@ export function saveConfig(config: DeckConfig): void {
 
 export function addRepo(repoPath: string): RepoConfig {
   const resolved = path.resolve(repoPath);
-  if (!fs.existsSync(path.join(resolved, '.git'))) {
-    throw new Error(`Git リポジトリーではありません: ${resolved}`);
-  }
+  let stat: fs.Stats;
+  try { stat = fs.statSync(resolved); }
+  catch { throw new Error(`ディレクトリーが存在しません: ${resolved}`); }
+  if (!stat.isDirectory()) throw new Error(`ディレクトリーではありません: ${resolved}`);
   const config = loadConfig();
   const id = repoId(resolved);
   const existing = config.repos.find((r) => r.id === id);

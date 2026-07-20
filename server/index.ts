@@ -44,6 +44,13 @@ function requireRepo(req: express.Request): config.RepoConfig {
   return repo;
 }
 
+// child が parent 自身または parent 配下かどうか(Windows の大文字小文字・ドライブレターは
+// path.relative が吸収する)
+function contains(parent: string, child: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
 function queryStr(req: express.Request, name: string): string {
   const value = req.query[name];
   if (typeof value !== 'string' || !value) throw new Error(`クエリパラメーター ${name} が必要です`);
@@ -56,6 +63,41 @@ app.get('/api/repos', asyncHandler(async (_req, res) => {
   const { repos } = config.loadConfig();
   const result = await Promise.all(
     repos.map(async (repo) => {
+      if (!fs.existsSync(repo.path)) {
+        return { ...repo, gitMode: 'none', worktrees: [], error: `ディレクトリーが存在しません: ${repo.path}` };
+      }
+      const gitRoot = git.resolveGitRoot(repo.path);
+      if (!gitRoot) {
+        // none: git リポジトリーではない
+        const pseudo = {
+          path: repo.path, head: '', branch: null, isMain: true, locked: false,
+          status: null, agent: ptyManager.statusFor(repo.path),
+        };
+        return { ...repo, gitMode: 'none', worktrees: [pseudo], error: null };
+      }
+      if (gitRoot !== repo.path) {
+        // subdir: git リポジトリー下位のディレクトリー。Git タブは repo 全体スコープ
+        try {
+          const all = await git.listWorktrees(repo.path); // cwd=subdir でも repo 全体を返す
+          const container = all
+            .filter((wt) => contains(wt.path, repo.path))
+            .sort((a, b) => b.path.length - a.path.length)[0]; // ネスト worktree は最深を採用
+          let status: git.BranchStatus | null = null;
+          try {
+            status = await git.getBranchStatus(repo.path);
+          } catch {
+            // 破損時
+          }
+          const entry = {
+            path: repo.path, head: container?.head ?? '', branch: container?.branch ?? null,
+            isMain: true /* 削除✕を出さない */, locked: container?.locked ?? false,
+            status, agent: ptyManager.statusFor(repo.path),
+          };
+          return { ...repo, gitMode: 'subdir', worktrees: [entry], error: null };
+        } catch (e) {
+          return { ...repo, gitMode: 'subdir', worktrees: [], error: e instanceof Error ? e.message : String(e) };
+        }
+      }
       try {
         const worktrees = await git.listWorktrees(repo.path);
         const detailed = await Promise.all(
@@ -69,9 +111,9 @@ app.get('/api/repos', asyncHandler(async (_req, res) => {
             return { ...wt, status, agent: ptyManager.statusFor(wt.path) };
           }),
         );
-        return { ...repo, worktrees: detailed, error: null };
+        return { ...repo, gitMode: 'root', worktrees: detailed, error: null };
       } catch (e) {
-        return { ...repo, worktrees: [], error: e instanceof Error ? e.message : String(e) };
+        return { ...repo, gitMode: 'root', worktrees: [], error: e instanceof Error ? e.message : String(e) };
       }
     }),
   );
@@ -124,7 +166,9 @@ app.delete('/api/repos/:id/worktrees', asyncHandler(async (req, res) => {
 function requireKnownDir(req: express.Request): string {
   const dir = queryStr(req, 'dir');
   if (!fs.existsSync(dir)) throw new Error(`ディレクトリーが存在しません: ${dir}`);
-  return dir;
+  // git status/log 等は worktree root 相対で解釈されるため、subdir 登録時は git root に正規化する
+  // (root 登録なら恒等変換)
+  return git.resolveGitRoot(dir) ?? dir;
 }
 
 app.get('/api/git/log', asyncHandler(async (req, res) => {
@@ -213,26 +257,35 @@ app.get('/api/git/diff', asyncHandler(async (req, res) => {
 }));
 
 app.post('/api/git/stage', asyncHandler(async (req, res) => {
-  await git.stageFile(String(req.body.dir), String(req.body.path));
+  await git.stageFile(bodyDir(req), String(req.body.path));
   res.json({ ok: true });
 }));
 
 app.post('/api/git/unstage', asyncHandler(async (req, res) => {
-  await git.unstageFile(String(req.body.dir), String(req.body.path));
+  await git.unstageFile(bodyDir(req), String(req.body.path));
   res.json({ ok: true });
 }));
 
 app.post('/api/git/commit', asyncHandler(async (req, res) => {
   const message = String(req.body.message ?? '').trim();
   if (!message) throw new Error('コミットメッセージが必要です');
-  res.json({ result: await git.commit(String(req.body.dir), message, req.body.amend === true) });
+  res.json({ result: await git.commit(bodyDir(req), message, req.body.amend === true) });
 }));
 
 function bodyDir(req: express.Request): string {
   const dir = String(req.body.dir ?? '');
   if (!dir || !fs.existsSync(dir)) throw new Error(`ディレクトリーが存在しません: ${dir}`);
-  return dir;
+  // requireKnownDir 同様、git root に正規化する
+  return git.resolveGitRoot(dir) ?? dir;
 }
+
+// 登録ディレクトリー自身を git 化する意味論のため正規化しない(bodyDir は使わない)
+app.post('/api/git/init', asyncHandler(async (req, res) => {
+  const dir = String(req.body.dir ?? '');
+  if (!dir || !fs.existsSync(dir)) throw new Error(`ディレクトリーが存在しません: ${dir}`);
+  await git.init(dir);
+  res.json({ ok: true });
+}));
 
 app.post('/api/git/stage-all', asyncHandler(async (req, res) => {
   await git.stageAll(bodyDir(req));
@@ -355,8 +408,15 @@ app.post('/api/fs/dir', asyncHandler(async (req, res) => {
 
 app.get('/api/fs/git-status', asyncHandler(async (req, res) => {
   const root = queryStr(req, 'root');
+  const gitRoot = git.resolveGitRoot(root);
+  if (!gitRoot) { res.json([]); return; } // none → 全て白(従来挙動)
   try {
-    res.json(await git.getTreeStatus(root));
+    const entries = await git.getTreeStatus(gitRoot);
+    if (gitRoot === root) { res.json(entries); return; }
+    // subdir: repo 全体分から登録ディレクトリー配下だけを切り出し、パスを subdir 相対にする
+    const prefix = path.relative(gitRoot, root).replace(/\\/g, '/') + '/';
+    res.json(entries.flatMap((e) =>
+      e.path.startsWith(prefix) ? [{ ...e, path: e.path.slice(prefix.length) }] : []));
   } catch {
     res.json([]); // non-git directory etc. → empty (everything renders white)
   }
@@ -367,7 +427,10 @@ app.get('/api/fs/git-status', asyncHandler(async (req, res) => {
 app.get('/api/search/files', asyncHandler(async (req, res) => {
   const root = queryStr(req, 'root');
   if (!fs.existsSync(root)) throw new Error(`ディレクトリーが存在しません: ${root}`);
-  res.json({ files: await git.listFiles(root) });
+  const files = git.resolveGitRoot(root)
+    ? await git.listFiles(root)      // root/subdir: ls-files は cwd 相対・cwd 配下のみ
+    : await search.listFilesRg(root); // none のみ rg フォールバック
+  res.json({ files });
 }));
 
 app.get('/api/search/text', asyncHandler(async (req, res) => {

@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import readline from 'node:readline';
 import { rgPath } from '@vscode/ripgrep';
 
@@ -190,4 +190,29 @@ export function searchText(
   });
 
   return { promise, cancel };
+}
+
+/**
+ * git 管理下にないディレクトリー(gitMode: 'none')向けの `git ls-files` 代替(`rg --files`)。
+ * ストリーミング不要のため execFile + maxBuffer(shell:true は禁止)。
+ */
+export function listFilesRg(root: string): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      rgPath,
+      ['--files', '--hidden', '--glob', '!**/.git/**'],
+      { cwd: root, maxBuffer: 64 * 1024 * 1024, windowsHide: true },
+      (err, stdout) => {
+        if (err && stdout === '') {
+          resolve([]); // rg --files は該当 0 件時に exit 1 になり得る
+          return;
+        }
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve(stdout.split(/\r?\n/).filter(Boolean).map((p) => p.replace(/\\/g, '/')));
+      },
+    );
+  });
 }

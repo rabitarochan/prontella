@@ -38,40 +38,44 @@ export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree:
       <div className="wt-header">
         <div className="wt-header-info">
           <span className="wt-header-repo">{repo.name}</span>
-          <span className="wt-header-branch">{worktree.branch ?? `(detached ${worktree.head})`}</span>
-          <StatusBadge status={worktree.agent.status} />
-          <span className="wt-sync">
-            <button
-              className="icon-btn"
-              title="フェッチ (git fetch --all --prune)"
-              disabled={syncing !== null}
-              onClick={() => void sync('fetch')}
-            >
-              <span className={`codicon codicon-refresh ${syncing === 'fetch' ? 'spin' : ''}`} />
-            </button>
-            <button
-              className="icon-btn"
-              title={`プル${worktree.status?.behind ? ` (↓${worktree.status.behind})` : ''}`}
-              disabled={syncing !== null}
-              onClick={() => void sync('pull')}
-            >
-              <span className={`codicon codicon-arrow-down ${syncing === 'pull' ? 'spin' : ''}`} />
-              {(worktree.status?.behind ?? 0) > 0 && (
-                <span className="sync-count">{worktree.status?.behind}</span>
-              )}
-            </button>
-            <button
-              className="icon-btn"
-              title={`プッシュ${worktree.status?.ahead ? ` (↑${worktree.status.ahead})` : ''}${worktree.status?.upstream ? '' : ' — upstream 未設定のため -u origin で公開'}`}
-              disabled={syncing !== null}
-              onClick={() => void sync('push')}
-            >
-              <span className={`codicon codicon-arrow-up ${syncing === 'push' ? 'spin' : ''}`} />
-              {(worktree.status?.ahead ?? 0) > 0 && (
-                <span className="sync-count">{worktree.status?.ahead}</span>
-              )}
-            </button>
+          <span className="wt-header-branch">
+            {repo.gitMode === 'none' ? '(Git なし)' : (worktree.branch ?? `(detached ${worktree.head})`)}
           </span>
+          <StatusBadge status={worktree.agent.status} />
+          {repo.gitMode !== 'none' && (
+            <span className="wt-sync">
+              <button
+                className="icon-btn"
+                title="フェッチ (git fetch --all --prune)"
+                disabled={syncing !== null}
+                onClick={() => void sync('fetch')}
+              >
+                <span className={`codicon codicon-refresh ${syncing === 'fetch' ? 'spin' : ''}`} />
+              </button>
+              <button
+                className="icon-btn"
+                title={`プル${worktree.status?.behind ? ` (↓${worktree.status.behind})` : ''}`}
+                disabled={syncing !== null}
+                onClick={() => void sync('pull')}
+              >
+                <span className={`codicon codicon-arrow-down ${syncing === 'pull' ? 'spin' : ''}`} />
+                {(worktree.status?.behind ?? 0) > 0 && (
+                  <span className="sync-count">{worktree.status?.behind}</span>
+                )}
+              </button>
+              <button
+                className="icon-btn"
+                title={`プッシュ${worktree.status?.ahead ? ` (↑${worktree.status.ahead})` : ''}${worktree.status?.upstream ? '' : ' — upstream 未設定のため -u origin で公開'}`}
+                disabled={syncing !== null}
+                onClick={() => void sync('push')}
+              >
+                <span className={`codicon codicon-arrow-up ${syncing === 'push' ? 'spin' : ''}`} />
+                {(worktree.status?.ahead ?? 0) > 0 && (
+                  <span className="sync-count">{worktree.status?.ahead}</span>
+                )}
+              </button>
+            </span>
+          )}
         </div>
         <div className="wt-tabs">
           <button

@@ -10,7 +10,7 @@ export default function Sidebar() {
   const [worktreeTarget, setWorktreeTarget] = useState<Repo | null>(null);
 
   const addRepo = async () => {
-    const path = prompt('Git リポジトリーのパスを入力してください:');
+    const path = prompt('追加するディレクトリーのパスを入力してください:');
     if (!path) return;
     try {
       await api.addRepo(path.trim());
@@ -65,13 +65,15 @@ export default function Sidebar() {
                 {repo.name}
               </span>
               <span className="repo-actions">
-                <button
-                  className="icon-btn"
-                  title="Worktree を追加"
-                  onClick={() => setWorktreeTarget(repo)}
-                >
-                  ＋
-                </button>
+                {repo.gitMode === 'root' && (
+                  <button
+                    className="icon-btn"
+                    title="Worktree を追加"
+                    onClick={() => setWorktreeTarget(repo)}
+                  >
+                    ＋
+                  </button>
+                )}
                 <button className="icon-btn" title="Deck から削除" onClick={() => void removeRepo(repo)}>
                   ✕
                 </button>
@@ -91,8 +93,8 @@ export default function Sidebar() {
                 >
                   <StatusBadge status={wt.agent.status} compact />
                   <span className="wt-branch">
-                    {wt.branch ?? `(detached ${wt.head})`}
-                    {wt.isMain && <span className="wt-main-mark"> ●main</span>}
+                    {repo.gitMode === 'none' ? '(Git なし)' : (wt.branch ?? `(detached ${wt.head})`)}
+                    {repo.gitMode === 'root' && wt.isMain && <span className="wt-main-mark"> ●main</span>}
                   </span>
                   {dirty > 0 && <span className="wt-dirty">{dirty}</span>}
                   {!wt.isMain && (

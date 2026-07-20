@@ -68,10 +68,11 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
   }, [repo.id, dir]);
 
   useEffect(() => {
+    if (repo.gitMode === 'none') return;
     load();
     const timer = setInterval(load, POLL_MS);
     return () => clearInterval(timer);
-  }, [load]);
+  }, [load, repo.gitMode]);
 
   const act = async (fn: () => Promise<unknown>, successMsg?: string) => {
     setBusy(true);
@@ -182,6 +183,22 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
       )}
     </div>
   );
+
+  if (repo.gitMode === 'none') {
+    return (
+      <div className="placeholder">
+        <p>Git リポジトリーではありません</p>
+        <button
+          className="primary"
+          disabled={busy}
+          onClick={() => void act(() => api.gitInit(dir), 'git init を実行しました')}
+        >
+          git init を実行
+        </button>
+        {message && <div className="git-side-msg">{message}</div>}
+      </div>
+    );
+  }
 
   return (
     <div className="git-tab">

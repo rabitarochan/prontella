@@ -19,3 +19,5 @@
 - [ ] 2026-07-14 | task: git-branch-tree | Rework | builder が「初期値空 = 全フォルダ閉じ」と自己申告したが、実装は `collapsed` Set + `isOpen = !collapsed.has()` で論理が反転しており、実際は全部開いていた。typecheck は通るため型検査では捕まらず、挙動検証で初めて発覚
 - [ ] 2026-07-14 | task: git-branch-tree | Friction | claude-deck 自身を開発対象にすると、ユーザー稼働中のインスタンスと dev サーバのポート (8110/3711) が衝突し、さらに新クライアントが稼働中 PTY セッションに再接続してブラウザタブがフリーズして検証できなかった
 - [ ] 2026-07-14 | task: git-branch-tree | Success | 本体アプリが重くて開けないとき、対象コンポーネントだけを単独マウントする使い捨ての Vite ページ (client/*.html + entry.tsx) を立て、DOM を evaluate_script で直接アサートする検証が速くて確実だった
+- [ ] 2026-07-20 | task: terminal-clipboard | Surprise | ConPTY は子プロセスの DECSET を選別転送する: ?2004 (bracketed paste) と OSC 52 はホストへ通すが、マウストラッキング (?1002/?1006) は素の probe では飲み込んだ。「エスケープシーケンスは素通し」という前提は Windows では成立しない
+- [ ] 2026-07-20 | task: terminal-clipboard | Success | 別ポート (3799) にテストサーバーを立て、ページ内から side-WebSocket で PTY 入力を注入 + navigator.clipboard と WebSocket.send をモンキーパッチして観測する方式で、キーボードシミュレーション無しにクリップボード/ペーストの E2E 検証ができた

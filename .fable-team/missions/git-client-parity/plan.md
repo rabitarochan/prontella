@@ -97,12 +97,12 @@ worktree を任意コミット/detached から作成、format-patch/am、bisect�
 
 | # | タスク | 担当 | サイズ | 観測可能な完了基準 | 依存 | 状態 |
 |---|---|---|---|---|---|---|
-| 1.1 | コミット本文(複数行)対応。`message` をそのまま `-m` 渡し(複数行 OK)、履歴の commit-side に subject 以外の本文を表示(`git show`/`%b` 由来) | builder | S | subject+空行+body のコミットを作成→ HistoryTab の詳細に本文が表示 | - | ⬜ |
-| 1.2 | `merge` に `opts:{ noFf?; ffOnly?; message? }`。API/型同期。ブランチ context メニューの「マージ」を **--no-ff 既定** に | builder | M | --no-ff マージ→ graph に親 2 つのマージコミット。ff-only も選択可 | - | ⬜ |
-| 1.3 | 直前コミットの取り消し(`reset --soft HEAD~1`)。ボタン + `useConfirm`(normal) | builder | S | 実行後 HEAD が 1 つ戻り、直前コミットの変更がステージ済みに戻る | 0.3 | ⬜ |
-| 1.4 | 全変更破棄 / 全未追跡削除。tracked=`git restore`、untracked=選択で削除。`useConfirm`(danger、影響ファイル/行数明示) | builder | M | danger モーダル→ tracked 変更が消え、選択に応じ未追跡も削除。キャンセルで無変更 | 0.3 | ⬜ |
-| 1.V | Phase 1 動作検証 | verifier | S | 上記 4 つを dev で実操作検証、1.4 の破壊範囲を重点確認 | 1.1-1.4 | ⬜ |
-| 1.R | レビュー | reviewer | S | 指摘反映(最大 2 サイクル) | 1.V | ⬜ |
+| 1.1 | コミット本文(複数行)対応。`message` をそのまま `-m` 渡し(複数行 OK)、履歴の commit-side に subject 以外の本文を表示(`git show`/`%b` 由来) | builder | S | subject+空行+body のコミットを作成→ HistoryTab の詳細に本文が表示 | - | ✅ |
+| 1.2 | `merge` に `opts:{ noFf?; ffOnly?; message? }`。API/型同期。ブランチ context メニューの「マージ」を **--no-ff 既定** に | builder | M | --no-ff マージ→ graph に親 2 つのマージコミット。ff-only も選択可 | - | ✅ |
+| 1.3 | 直前コミットの取り消し(`reset --soft HEAD~1`)。ボタン + `useConfirm`(normal) | builder | S | 実行後 HEAD が 1 つ戻り、直前コミットの変更がステージ済みに戻る | 0.3 | ✅ |
+| 1.4 | 全変更破棄 / 全未追跡削除。tracked=`git restore`、untracked=選択で削除。`useConfirm`(danger、影響ファイル/行数明示) | builder | M | danger モーダル→ tracked 変更が消え、選択に応じ未追跡も削除。キャンセルで無変更 | 0.3 | ✅ |
+| 1.V | Phase 1 動作検証 | verifier | S | 上記 4 つを dev で実操作検証、1.4 の破壊範囲を重点確認 | 1.1-1.4 | ✅ |
+| 1.R | レビュー | reviewer | S | 指摘反映(最大 2 サイクル) | 1.V | ✅ |
 
 ## Phase 2: ハンク単位ステージ(P0、中核・高リスク)
 

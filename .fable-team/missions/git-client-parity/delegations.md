@@ -45,3 +45,9 @@ Dossier format (⤴ / non-convergence only):
 - 2026-07-20 22:41 | task 0.V | verifier(sonnet) | attempt 1 | ✅ accepted | API/パッチ実適用/build を実測 Verified。UI 目視は Conductor が browser で補完
 - 2026-07-20 22:41 | phase 0 gate | reviewer(opus) | attempt 1 | ✅ LGTM | must-fix 0 / recommended 1 / FYI 5
 - 2026-07-20 22:41 | task 0.1+0.2 | builder(sonnet) | attempt 2 | ✅ accepted | recommended #1 反映(64MB ガード)。Conductor が 70MB blob で発火を実測
+- 2026-07-20 23:02 | task 1.1 | builder(sonnet) | attempt 1 | ✅ accepted | commit-message API + HistoryTab body 表示。スモーク通過
+- 2026-07-20 23:02 | task 1.2 | builder(sonnet) | attempt 1 | ✅ accepted | merge opts + UI 既定 --no-ff。親 2 つ/FF 両挙動を実測
+- 2026-07-20 23:02 | task 1.3+1.4 | builder(sonnet) | attempt 1 | ✅ accepted | undo/discard-all。staged 不変・初回コミットガードを実測
+- 2026-07-20 23:22 | task 1.V | verifier(sonnet) | attempt 1 | ✅ accepted | 4 機能 + subdir 正規化を API 実測で全 Verified。UI 目視は Conductor 補完
+- 2026-07-20 23:22 | phase 1 gate | reviewer(opus) | attempt 1 | ✅ LGTM | must-fix 0 / recommended 1 / FYI 4
+- 2026-07-20 23:22 | task 1.1 | builder(sonnet) | attempt 2 | ✅ accepted | HistoryTab の 2 effect を統合し cancelled ガード追加(レース解消)

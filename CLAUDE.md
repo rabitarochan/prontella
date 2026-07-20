@@ -86,6 +86,14 @@ Every instruction to a subagent must include:
 
 Have subagents **return conclusions**. Do not let them bring back dumps of file contents.
 
+**Fresh spawn or continue**: every fresh subagent pays a cold start — it re-reads the rules,
+the references, and the target files before it produces anything (measured in the field:
+6–10 minutes and 0.3–0.8M freshly ingested (cache-creation) tokens per fresh builder on a
+large codebase; a continued agent starts producing immediately). For a follow-up task on the
+same artifacts, **continue the same agent via SendMessage** instead of spawning fresh. Spawn
+fresh when the value is fresh eyes — new design, production-critical changes, review — or
+when the agent's context has grown long enough to degrade.
+
 ## Playbooks
 
 Fable 5's practical knowledge ships with each playbook skill as `playbook.md`.

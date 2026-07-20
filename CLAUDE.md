@@ -24,7 +24,7 @@ The framework's internals are English; the user's experience is not.
 
 1. Check whether a mission in progress (`mission.md` line `Status: in progress`) exists under `.fable-team/missions/`
 2. If one exists, do not start working on your own — confirm: "Mission X is paused at Phase N. Resume it?"
-   (If the user explicitly invoked `/fable-team:resume`, resume immediately)
+   (If the user explicitly invoked `/fable-team:resume-mission`, resume immediately)
 
 ## Team Composition and Routing
 
@@ -101,7 +101,7 @@ Fable 5's practical knowledge ships with each playbook skill as `playbook.md`.
 
 | Situation | Conductor invokes via skill | How to pass to subagents |
 |---|---|---|
-| Debugging work | /fable-team:debug | playbook.md bundled with the debug skill (to debugger / builder) |
+| Debugging work | /fable-team:debug-mission | playbook.md bundled with the debug-mission skill (to debugger / builder) |
 | Behavior verification / test writing | /fable-team:verify | playbook.md bundled with the verify skill (to verifier; its "Test Design" section to builder on test-writing tasks) |
 | Writing a delegation brief / reporting results to the user | /fable-team:brief | playbook.md bundled with the brief skill (used by the Conductor itself) |
 | Judgment calls with no right answer | /fable-team:judge | playbook.md bundled with the judge skill (Conductor / architect) |

@@ -14,6 +14,14 @@ const CARRY_MAX = 400; // stripped chars carried over to match across chunk spli
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]/g;
 
+// DEC private modes worth tracking across scrollback trims: modes that change
+// how input is interpreted (bracketed paste, mouse tracking) and thus don't
+// self-heal on redraw the way visual state does, plus cursor visibility (25),
+// which the client's term.reset() forces back on regardless of prior state.
+const TRACKED_MODES = new Set([1, 9, 25, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 2004]);
+// eslint-disable-next-line no-control-regex
+const DECSET_RE = /\x1b\[\?([0-9;]+)([hl])/g;
+
 // NOTE: the Claude Code TUI positions text with cursor moves, so after ANSI
 // stripping spaces between words are often missing ("shift+tabtocycle").
 // Patterns below must tolerate that (\s* instead of literal spaces).
@@ -62,6 +70,8 @@ interface Session {
   proc: pty.IPty;
   scrollback: string;
   carry: string; // stripped tail carried into the next chunk's pattern scan
+  modes: Map<number, boolean>; // last seen state of TRACKED_MODES (true = set/h); unseen modes are absent
+  modeCarry: string; // raw tail carried into the next chunk's DECSET_RE scan
   sockets: Set<WebSocket>;
   status: AgentStatus;
   claudeDetected: boolean;
@@ -112,6 +122,8 @@ export class PtyManager {
       proc,
       scrollback: '',
       carry: '',
+      modes: new Map(),
+      modeCarry: '',
       sockets: new Set(),
       status: 'shell',
       claudeDetected: false,
@@ -150,7 +162,19 @@ export class PtyManager {
     const session = this.sessions.get(id);
     if (!session) return false;
     session.sockets.add(ws);
-    ws.send(JSON.stringify({ type: 'snapshot', data: session.scrollback }));
+    // Scrollback is trimmed to MAX_SCROLLBACK, so one-shot mode sequences sent
+    // at startup (bracketed paste, mouse tracking) can fall out of the window.
+    // The client resets the terminal before replaying the snapshot, so without
+    // re-asserting the tracked modes here, a reattach silently loses bracketed
+    // paste (multi-line pastes submit line-by-line) and mouse tracking (copy
+    // selection breaks). Reset ('l') states must be included too: some modes
+    // default to on (e.g. 25, cursor visibility), so a tracked "off" has to be
+    // re-sent to override the client's post-reset default.
+    const prefix = [...session.modes.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([mode, on]) => `\x1b[?${mode}${on ? 'h' : 'l'}`)
+      .join('');
+    ws.send(JSON.stringify({ type: 'snapshot', data: prefix + session.scrollback }));
     ws.send(JSON.stringify({ type: 'status', status: session.status }));
     ws.on('message', (raw) => {
       let msg: { type: string; data?: string; cols?: number; rows?: number };
@@ -271,6 +295,23 @@ export class PtyManager {
     session.lastOutputAt = Date.now();
     session.scrollback = (session.scrollback + data).slice(-MAX_SCROLLBACK);
     this.broadcast(session, { type: 'data', data });
+
+    // Track DEC private mode changes (raw, unstripped) so a reattach can replay
+    // them even after the sequence itself has scrolled out of `scrollback`.
+    // Scanning modeCarry + data re-covers the carried tail, but that's safe:
+    // set/reset assignments are idempotent and the carry precedes the new
+    // chunk, so re-applying it can't change the final state or its order.
+    const modeScan = session.modeCarry + data;
+    let modeMatch: RegExpExecArray | null;
+    DECSET_RE.lastIndex = 0;
+    while ((modeMatch = DECSET_RE.exec(modeScan)) !== null) {
+      const on = modeMatch[2] === 'h';
+      for (const param of modeMatch[1].split(';')) {
+        const n = Number(param);
+        if (TRACKED_MODES.has(n)) session.modes.set(n, on);
+      }
+    }
+    session.modeCarry = modeScan.slice(-64);
 
     // Scan carry + new chunk so phrases split across chunk boundaries still match.
     const scan = session.carry + data.replace(ANSI_RE, '');

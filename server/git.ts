@@ -436,6 +436,11 @@ export async function getCommitFiles(dir: string, hash: string): Promise<CommitF
   return files;
 }
 
+/** Full raw commit message (subject + blank line + body, if any) for a single commit. */
+export async function getCommitMessage(dir: string, hash: string): Promise<string> {
+  return runGit(dir, ['log', '-1', '--format=%B', hash]);
+}
+
 /** Content of a file at a revision (e.g. "HEAD", ":0" for the index), or null if absent. */
 export async function getFileAtRev(dir: string, rev: string, filePath: string): Promise<string | null> {
   try {
@@ -578,8 +583,19 @@ export async function deleteBranch(repoPath: string, branch: string, force = fal
   await runGit(repoPath, ['branch', force ? '-D' : '-d', branch]);
 }
 
-export async function merge(dir: string, branch: string): Promise<string> {
-  return runGit(dir, ['merge', '--no-edit', branch]);
+export async function merge(
+  dir: string,
+  branch: string,
+  opts: { noFf?: boolean; ffOnly?: boolean; message?: string } = {},
+): Promise<string> {
+  if (opts.noFf && opts.ffOnly) throw new Error('--no-ff と --ff-only は同時に指定できません');
+  const args = ['merge'];
+  if (opts.noFf) args.push('--no-ff');
+  if (opts.ffOnly) args.push('--ff-only');
+  if (opts.message) args.push('-m', opts.message);
+  else args.push('--no-edit');
+  args.push(branch);
+  return runGit(dir, args);
 }
 
 export async function mergeAbort(dir: string): Promise<void> {
@@ -655,4 +671,32 @@ export async function getOperationState(dir: string): Promise<GitOperation | nul
   if (exists('REVERT_HEAD')) return 'revert';
   if (exists('MERGE_HEAD')) return 'merge';
   return null;
+}
+
+// ---- undo ---------------------------------------------------------------------
+
+/**
+ * 直前のコミットを取り消す (`reset --soft HEAD~1`)。変更はステージ済みとして残る。
+ * 親を持たない初回コミットの場合は `HEAD~1` が存在しないため、実行前に
+ * `rev-parse --verify -q` で存在確認し、無ければ分かりやすい日本語エラーで reject する。
+ */
+export async function undoLastCommit(dir: string): Promise<void> {
+  try {
+    await runGit(dir, ['rev-parse', '--verify', '-q', 'HEAD~1']);
+  } catch {
+    throw new Error('直前のコミットがありません(初回コミットは取り消せません)');
+  }
+  await runGit(dir, ['reset', '--soft', 'HEAD~1']);
+}
+
+/**
+ * 作業ツリーの変更をすべて破棄する。tracked ファイルは `restore`(既定のソースは
+ * インデックス)で作業ツリーのみを戻し、ステージ済みの内容には触れない。
+ * includeUntracked のときは未追跡ファイル/ディレクトリーも `clean -fd` で削除する。
+ */
+export async function discardAll(dir: string, opts: { includeUntracked: boolean }): Promise<void> {
+  await runGit(dir, ['restore', '--', '.']);
+  if (opts.includeUntracked) {
+    await runGit(dir, ['clean', '-fd', '-q']);
+  }
 }

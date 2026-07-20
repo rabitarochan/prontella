@@ -246,6 +246,13 @@ app.get('/api/git/commit-files', asyncHandler(async (req, res) => {
   res.json(await git.getCommitFiles(dir, hash));
 }));
 
+app.get('/api/git/commit-message', asyncHandler(async (req, res) => {
+  const dir = requireKnownDir(req);
+  const hash = queryStr(req, 'hash');
+  if (!/^[0-9a-f]{4,40}$/i.test(hash)) throw new Error('不正なコミットハッシュです');
+  res.json({ message: await git.getCommitMessage(dir, hash) });
+}));
+
 app.get('/api/git/diff', asyncHandler(async (req, res) => {
   const dir = requireKnownDir(req);
   res.json({
@@ -312,6 +319,16 @@ app.post('/api/git/discard', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+app.post('/api/git/undo-commit', asyncHandler(async (req, res) => {
+  await git.undoLastCommit(bodyDir(req));
+  res.json({ ok: true });
+}));
+
+app.post('/api/git/discard-all', asyncHandler(async (req, res) => {
+  await git.discardAll(bodyDir(req), { includeUntracked: req.body.includeUntracked === true });
+  res.json({ ok: true });
+}));
+
 app.post('/api/git/fetch', asyncHandler(async (req, res) => {
   await git.fetchAll(bodyDir(req));
   res.json({ ok: true });
@@ -336,7 +353,14 @@ app.post('/api/git/branch-delete', asyncHandler(async (req, res) => {
 }));
 
 app.post('/api/git/merge', asyncHandler(async (req, res) => {
-  res.json({ result: await git.merge(bodyDir(req), String(req.body.branch)) });
+  const { noFf, ffOnly, message } = req.body ?? {};
+  res.json({
+    result: await git.merge(bodyDir(req), String(req.body.branch), {
+      noFf: !!noFf,
+      ffOnly: !!ffOnly,
+      message: typeof message === 'string' && message ? message : undefined,
+    }),
+  });
 }));
 
 app.post('/api/git/merge-abort', asyncHandler(async (req, res) => {

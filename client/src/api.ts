@@ -73,6 +73,8 @@ export const api = {
   },
   commitFiles: (dir: string, hash: string) =>
     request<CommitFile[]>(`/api/git/commit-files?dir=${q(dir)}&hash=${q(hash)}`),
+  commitMessage: (dir: string, hash: string) =>
+    request<{ message: string }>(`/api/git/commit-message?dir=${q(dir)}&hash=${q(hash)}`),
   stage: (dir: string, path: string) => post<void>('/api/git/stage', { dir, path }),
   unstage: (dir: string, path: string) => post<void>('/api/git/unstage', { dir, path }),
   commit: (dir: string, message: string, amend = false) =>
@@ -81,6 +83,9 @@ export const api = {
   unstageAll: (dir: string) => post<void>('/api/git/unstage-all', { dir }),
   discard: (dir: string, path: string, untracked: boolean) =>
     post<void>('/api/git/discard', { dir, path, untracked }),
+  undoLastCommit: (dir: string) => post<void>('/api/git/undo-commit', { dir }),
+  discardAll: (dir: string, includeUntracked: boolean) =>
+    post<void>('/api/git/discard-all', { dir, includeUntracked }),
   fetch: (dir: string) => post<void>('/api/git/fetch', { dir }),
   pull: (dir: string) => post<{ result: string }>('/api/git/pull', { dir }),
   push: (dir: string) => post<{ result: string }>('/api/git/push', { dir }),
@@ -88,7 +93,11 @@ export const api = {
     post<void>('/api/git/switch', { dir, branch, create }),
   deleteBranch: (dir: string, branch: string, force = false) =>
     post<void>('/api/git/branch-delete', { dir, branch, force }),
-  merge: (dir: string, branch: string) => post<{ result: string }>('/api/git/merge', { dir, branch }),
+  merge: (
+    dir: string,
+    branch: string,
+    opts?: { noFf?: boolean; ffOnly?: boolean; message?: string },
+  ) => post<{ result: string }>('/api/git/merge', { dir, branch, ...opts }),
   mergeAbort: (dir: string) => post<void>('/api/git/merge-abort', { dir }),
   stashList: (dir: string) => request<StashEntry[]>(`/api/git/stash?dir=${q(dir)}`),
   stashPush: (dir: string, message?: string) => post<void>('/api/git/stash', { dir, message }),

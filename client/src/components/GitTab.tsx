@@ -4,6 +4,7 @@ import { useDeck } from '../store';
 import type { BranchInfo, Repo, StashEntry, StatusFile, Worktree } from '../types';
 import BranchTree from './BranchTree';
 import ChangesTab from './ChangesTab';
+import { useConfirm } from './ConfirmDialog';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import DiffTabsPane, { diffTabKey, type DiffTab } from './DiffTabsPane';
 import HistoryTab from './HistoryTab';
@@ -14,6 +15,7 @@ const POLL_MS = 10_000;
 
 export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Worktree }) {
   const refreshDeck = useDeck((s) => s.refresh);
+  const { confirm: confirmDialog, dialog } = useConfirm();
   const [view, setView] = useState<GitView>('status');
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [stashes, setStashes] = useState<StashEntry[]>([]);
@@ -122,6 +124,23 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
     setBranchMenu({ x: e.clientX, y: e.clientY, branch });
   }, []);
 
+  const mergeBranch = async (b: BranchInfo, ffOnly: boolean) => {
+    const target = currentBranch ?? '現在のブランチ';
+    const ok = await confirmDialog({
+      title: 'マージ',
+      message: ffOnly
+        ? `'${b.name}' を ${target} に fast-forward のみでマージしますか?`
+        : `'${b.name}' を ${target} にマージしますか? (--no-ff)`,
+      confirmLabel: 'マージ',
+      severity: 'normal',
+    });
+    if (!ok) return;
+    void act(
+      () => api.merge(dir, b.name, ffOnly ? { ffOnly: true } : { noFf: true }),
+      'マージしました',
+    );
+  };
+
   const branchMenuItems = (b: BranchInfo): ContextMenuItem[] => {
     const usedElsewhere = !!b.worktreePath && b.worktreePath !== worktree.path.replace(/\\/g, '/');
     return [
@@ -132,14 +151,16 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
         onClick: () => void act(() => api.switchBranch(dir, b.name), `${b.name} に切り替えました`),
       },
       {
-        label: 'マージ',
+        label: `'${b.name}' を現在のブランチにマージ (--no-ff)`,
         icon: 'git-merge',
         disabled: busy,
-        onClick: () => {
-          if (confirm(`${b.name} を ${currentBranch ?? '現在のブランチ'} にマージしますか?`)) {
-            void act(() => api.merge(dir, b.name), 'マージしました');
-          }
-        },
+        onClick: () => void mergeBranch(b, false),
+      },
+      {
+        label: 'fast-forward のみでマージ',
+        icon: 'git-merge',
+        disabled: busy,
+        onClick: () => void mergeBranch(b, true),
       },
       {
         label: '削除',
@@ -320,6 +341,7 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
           onClose={() => setBranchMenu(null)}
         />
       )}
+      {dialog}
     </div>
   );
 }

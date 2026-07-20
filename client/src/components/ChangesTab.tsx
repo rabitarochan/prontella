@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { useDeck } from '../store';
 import type { StatusFile } from '../types';
@@ -18,6 +18,10 @@ export default function ChangesTab({
 }) {
   const refreshDeck = useDeck((s) => s.refresh);
   const { confirm: confirmDialog, dialog } = useConfirm();
+  // discardAll の confirm ダイアログ内チェックボックス state。ReactNode として一度きり
+  // 生成される message の中では useState の checked が再レンダー無しに追従しないため、
+  // 呼び出し側の ref で最新値を保持し、確定時に読み出す。
+  const discardUntrackedRef = useRef(false);
   const [files, setFiles] = useState<StatusFile[]>([]);
   const [merging, setMerging] = useState(false);
   const [commitMsg, setCommitMsg] = useState('');
@@ -68,6 +72,53 @@ export default function ChangesTab({
     });
     if (!ok) return;
     void act(() => api.discard(dir, file.path, file.untracked));
+  };
+
+  const undoLastCommit = async () => {
+    let lastCommitLine = '';
+    try {
+      const [last] = await api.log(dir, 1);
+      if (last) lastCommitLine = `\n\n直前のコミット: ${last.shortHash} ${last.subject}`;
+    } catch {
+      // 取得できなくても確認自体は続行する
+    }
+    const ok = await confirmDialog({
+      title: '直前のコミットを取り消す',
+      message: `直前のコミットを取り消しますか?(reset --soft HEAD~1)\n変更はステージ済みとして残ります。${lastCommitLine}`,
+      confirmLabel: '取り消す',
+      severity: 'normal',
+    });
+    if (!ok) return;
+    void act(() => api.undoLastCommit(dir));
+  };
+
+  const discardAllChanges = async () => {
+    const trackedCount = unstagedFiles.filter((f) => !f.untracked).length;
+    const untrackedCount = unstagedFiles.filter((f) => f.untracked).length;
+    discardUntrackedRef.current = false;
+    const ok = await confirmDialog({
+      title: 'すべての変更を破棄',
+      message: (
+        <>
+          <div>変更ファイル {trackedCount} 件の作業ツリーの変更を破棄します。</div>
+          <label className="amend-toggle">
+            <input
+              type="checkbox"
+              defaultChecked={false}
+              onChange={(e) => {
+                discardUntrackedRef.current = e.target.checked;
+              }}
+            />
+            未追跡ファイルも削除する ({untrackedCount} 件)
+          </label>
+          <div>※ 元に戻せません</div>
+        </>
+      ),
+      confirmLabel: '破棄',
+      severity: 'danger',
+    });
+    if (!ok) return;
+    void act(() => api.discardAll(dir, discardUntrackedRef.current));
   };
 
   const fileRow = (file: StatusFile, staged: boolean) => (
@@ -151,14 +202,24 @@ export default function ChangesTab({
           <div className="changes-section-head">
             <span>変更 ({unstagedFiles.length})</span>
             {unstagedFiles.length > 0 && (
-              <button
-                className="icon-btn"
-                disabled={busy}
-                title="すべてステージ"
-                onClick={() => void act(() => api.stageAll(dir))}
-              >
-                <span className="codicon codicon-add" />
-              </button>
+              <span className="changes-section-actions">
+                <button
+                  className="icon-btn"
+                  disabled={busy}
+                  title="すべて破棄"
+                  onClick={() => void discardAllChanges()}
+                >
+                  <span className="codicon codicon-trash" />
+                </button>
+                <button
+                  className="icon-btn"
+                  disabled={busy}
+                  title="すべてステージ"
+                  onClick={() => void act(() => api.stageAll(dir))}
+                >
+                  <span className="codicon codicon-add" />
+                </button>
+              </span>
             )}
           </div>
           {unstagedFiles.map((f) => fileRow(f, false))}
@@ -175,6 +236,9 @@ export default function ChangesTab({
             <input type="checkbox" checked={amend} onChange={(e) => setAmend(e.target.checked)} />
             直前のコミットを修正 (--amend)
           </label>
+          <button disabled={busy} onClick={() => void undoLastCommit()}>
+            直前のコミットを取り消す
+          </button>
           <button
             className="primary"
             disabled={busy || !commitMsg.trim() || (stagedFiles.length === 0 && !amend)}

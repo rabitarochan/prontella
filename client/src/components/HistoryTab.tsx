@@ -71,6 +71,13 @@ function GraphCell({ row }: { row: GraphRow }) {
   );
 }
 
+/** git log --format=%B の全文(subject + 空行 + body)から、1 行目(subject)を除いた本文だけを取り出す。 */
+function bodyFromMessage(message: string): string {
+  const idx = message.indexOf('\n');
+  if (idx === -1) return '';
+  return message.slice(idx + 1).replace(/^\n+/, '').trimEnd();
+}
+
 function RefChips({ refs }: { refs: string }) {
   if (!refs) return null;
   return (
@@ -105,6 +112,7 @@ export default function HistoryTab({ dir }: { dir: string }) {
   const [selected, setSelected] = useState<LogEntry | null>(null);
   const [commitFiles, setCommitFiles] = useState<CommitFile[] | null>(null);
   const [selectedFile, setSelectedFile] = useState<CommitFile | null>(null);
+  const [commitBody, setCommitBody] = useState('');
   const [error, setError] = useState('');
   const [cols, setCols] = useState<ColWidths>(loadCols);
 
@@ -126,15 +134,25 @@ export default function HistoryTab({ dir }: { dir: string }) {
 
   useEffect(() => {
     if (!selected) return;
+    let cancelled = false;
     setCommitFiles(null);
     setSelectedFile(null);
+    setCommitBody('');
     api
       .commitFiles(dir, selected.hash)
       .then((files) => {
+        if (cancelled) return;
         setCommitFiles(files);
         if (files.length > 0) setSelectedFile(files[0]);
       })
-      .catch((e: Error) => setError(e.message));
+      .catch((e: Error) => !cancelled && setError(e.message));
+    api
+      .commitMessage(dir, selected.hash)
+      .then(({ message }) => !cancelled && setCommitBody(bodyFromMessage(message)))
+      .catch((e: Error) => !cancelled && setError(e.message));
+    return () => {
+      cancelled = true;
+    };
   }, [dir, selected]);
 
   const graph = useMemo(() => (log ? layoutGraph(log) : []), [log]);
@@ -237,6 +255,7 @@ export default function HistoryTab({ dir }: { dir: string }) {
             <div className="commit-side">
               <div className="commit-head">
                 <div className="commit-subject">{selected.subject}</div>
+                {commitBody && <div className="commit-body">{commitBody}</div>}
                 <div className="commit-meta">
                   <span className="log-hash">{selected.shortHash}</span>
                   <span>{selected.author}</span>

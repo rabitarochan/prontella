@@ -21,3 +21,6 @@
 - [ ] 2026-07-14 | task: git-branch-tree | Success | 本体アプリが重くて開けないとき、対象コンポーネントだけを単独マウントする使い捨ての Vite ページ (client/*.html + entry.tsx) を立て、DOM を evaluate_script で直接アサートする検証が速くて確実だった
 - [ ] 2026-07-20 | task: terminal-clipboard | Surprise | ConPTY は子プロセスの DECSET を選別転送する: ?2004 (bracketed paste) と OSC 52 はホストへ通すが、マウストラッキング (?1002/?1006) は素の probe では飲み込んだ。「エスケープシーケンスは素通し」という前提は Windows では成立しない
 - [ ] 2026-07-20 | task: terminal-clipboard | Success | 別ポート (3799) にテストサーバーを立て、ページ内から side-WebSocket で PTY 入力を注入 + navigator.clipboard と WebSocket.send をモンキーパッチして観測する方式で、キーボードシミュレーション無しにクリップボード/ペーストの E2E 検証ができた
+- [ ] 2026-07-20 | task: non-git-dirs | Correction | 「非 git ディレクトリー対応」の初回プランで git repo の下位ディレクトリーを「一貫して非 git 扱い」に倒したが、ユーザーは下位ディレクトリーで作業することがあり Git 機能有効を要望。ディレクトリースコープの機能設計では root/subdir/none の 3 状態を最初から検討すべき
+- [ ] 2026-07-20 | task: non-git-dirs | Success | サーバー検証を PORT=3811 + USERPROFILE をスクラッチに差し替えて起動することで、稼働中インスタンス・実設定 (~/.claude-deck3/config.json) と完全隔離した API 検証ができた(config.ts が os.homedir() 起点なため)
+- [ ] 2026-07-20 | task: non-git-dirs | Friction | USERPROFILE を差し替えると Volta シムの node/npx が不安定になる(LocalAppData を見失う)。pinned node.exe で tsx の CLI (node_modules/tsx/dist/cli.mjs) を直接叩けば回避できる

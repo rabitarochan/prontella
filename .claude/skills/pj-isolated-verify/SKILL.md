@@ -42,6 +42,9 @@ description: claude-deck3 の動作検証を、ユーザーの実設定・実リ
    (Ctrl+S / Ctrl+P などコマンド系ショートカットは別経路のため press_key で通常どおり動く)
 4. **選択中 worktree の削除**は 4 秒ポーリングのファイルロックで `git worktree remove` が失敗する
    (既知の既存問題)。削除系の検証は別 worktree へ切替えてから行う
+5. **スクラッチは短パスに置く**: 深いスクラッチパス(~180 字)だと Windows の MAX_PATH で
+   `git rebase` が `Filename too long` で失敗し `rebase-merge` が中途半端に残る。フィクスチャは
+   短パス(例 `C:\vt5`)に作る(5.V で実測・切り分け済み。同一フィクスチャを短パスに置くだけで成功)
 
 ## 代替パターン(状況で使い分け)
 

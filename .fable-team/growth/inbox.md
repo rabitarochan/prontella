@@ -34,3 +34,6 @@
 - [x] 2026-07-21 | task: editor-state-persistence | Surprise | 選択中 worktree は 4 秒ポーリングがファイルハンドルを掴むためか Windows では git worktree remove が 500 で失敗する(force でも)。別 worktree へ切替後は成功。本機能と無関係の既存問題(verifier 発見、未修正)
 - [x] 2026-07-21 | mission: git-client-parity | Success | セッション中断で死んだ builder を SendMessage 再開し「まず自分の部分差分を git status/diff で検証→続行」パターンが機能。中断報告は失われてもトランスクリプトと作業ツリーから完全復帰できた
 - [x] 2026-07-21 | mission: git-client-parity | Success | フェーズゲート reviewer が並行編集によるハンク誤破棄を実 git で再現して検出(hunkCount のみの楽観ロックの盲点)。不可逆操作の楽観ロックは「数」でなく「対象の同一性」まで検証する — 設計原則として距離できる
+- 2026-07-21 | 隔離 USERPROFILE で Volta シムが死ぬ(builder は node.exe 実体 + tsx/dist/cli.mjs 直叩きで回避)— pj-isolated-verify への追記候補 [friction]
+- 2026-07-21 | E2E ゲートが実害バグを掘り当てた(PromptDialog 連続プロンプトの state 残留 — Promise ベース連続モーダルは request 毎の key 再マウントが安全パターン)。unit green でも UI 状態バグは E2E でしか出ない [success-pattern]
+- 2026-07-21 | E2E ゲート通過後に敵対的レビューが実害インジェクションを発見(rename に -f)— 自由入力を git 引数に渡す新規コードは「-- セパレーター」をチェックリスト化する価値あり [failure→pattern]

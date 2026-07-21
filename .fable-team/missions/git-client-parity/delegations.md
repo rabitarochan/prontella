@@ -69,3 +69,14 @@ Dossier format (⤴ / non-convergence only):
 - 2026-07-21 15:29 | task 3.3 仕上げ | builder(sonnet) | attempt 1(継続) | ✅ accepted | act() catch でも状態再取得。競合タブ無傷の根拠確認済み
 - 2026-07-21 15:38 | phase 3 gate | reviewer(opus) | attempt 1 | ✅ LGTM | must-fix 0 / recommended 2 / FYI 4(rec#1 はゲート内修正、rec#2 は債務許容)
 - 2026-07-21 15:40 | task 3.R rec#1 | builder(sonnet) | attempt 1(継続) | ✅ accepted | 競合行の + ボタン非表示(1 条件ラップ)。test 48 green
+- 2026-07-21 16:13 | task 4.1 | builder(sonnet) | attempt 1 | ✅ accepted | 隔離スモーク+typecheck+vitest 48 green。track フラグ拡張(新ルートなし)
+- 2026-07-21 16:21 | task 4.2 | builder(sonnet) | attempt 1 | ✅ accepted | 隔離スモーク(カレント含む rename・upstream 維持)+typecheck+vitest 48 green。PromptDialog 新規
+- 2026-07-21 16:29 | task 4.3 | builder(sonnet) | attempt 1 | ✅ accepted | lease 防護実証込み隔離スモーク+typecheck+vitest 48 green。setUpstream は UI 未使用(判断承認)
+- 2026-07-21 16:35 | task 4.4 | builder(sonnet) | attempt 1 | ✅ accepted | 隔離スモーク(bare 消滅+tracking ref 消滅・/ 分割)+typecheck+vitest 48 green。新ルート判断承認
+- 2026-07-21 16:45 | task 4.5 | builder(sonnet, 新規) | attempt 1 | ✅ accepted | 隔離スモーク(一覧/add/set-url/remove+追跡 ref 消滅)+typecheck+vitest 48 green。hover icon-btn 判断承認
+- 2026-07-21 17:17 | task 4.V | claude(sonnet) | attempt 1 | ✅ accepted | 8 項目 ✅(180 tool uses / 30 分)。実害バグ 1(PromptDialog 2 段目残留)+ UX 制約 1(カレント右クリック不可)発見 → ゲート内修正へ
+- 2026-07-21 17:22 | task 4.G(ゲート内修正 2 件) | builder(sonnet, 4.5 継続) | attempt 1 | ✅ accepted(コードレベル) | 原因確定+key 再マウント/カレント右クリック解禁。実機再確認は 4.V 継続へ
+- 2026-07-21 17:33 | task 4.G 実機再確認 | claude(sonnet, 4.V 継続) | attempt 1 | ✅ accepted | 4 項目 ✅(asset ハッシュ確認込み)。回帰なし
+- 2026-07-21 17:45 | task 4.R | reviewer(opus) | attempt 1 | ⚠ 要修正 | must-fix 1(rename インジェクション・実再現)/ rec 2 / FYI 5。攻めて壊れなかった箇所の証跡付き
+- 2026-07-21 17:55 | task 4.R 反映(サイクル 1) | builder(sonnet, 4.5 継続) | attempt 1 | ✅ accepted | 5 件すべて実 git 証拠付き。vitest 48→53。Conductor 再実行で green 確認
+- 2026-07-21 18:00 | task 4.R 修正確認(ゲート判定) | reviewer(opus, 継続) | attempt 1 | ✅ LGTM(ゲート通過) | must-fix 0 残 / rec 0 残 / FYI 1(フィクスチャ実名 → Conductor が即時対応)。Phase 4 ゲートクローズ

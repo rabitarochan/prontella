@@ -192,3 +192,83 @@
 - **Learned**:(事実)競合行の discard ボタンは reviewer 指摘外のため残置(pre-existing 挙動)。持ち越し債務一覧は state.md に集約
 - **Decisions and rationale**: Phase 3 は 3.1〜3.3b + ゲート内修正 2 件(act() catch 再取得 / + ボタン抑止)で完了。次フェーズ(Phase 4 or 2.4)はユーザー判断。本セッションのコンテキストが長大なため、次フェーズは新セッション推奨
 - **Next**: ユーザーへ中間報告 + コミット提案(feat + chore の 2 コミット)。再開は /fable-team:resume-mission
+
+## 2026-07-21 15:57 — Conductor (fable, 新セッション)
+
+- **Did**: /fable-team:resume-mission で復帰。現実照合: 作業ツリークリーン / Phase 3 コミット済み(ac27473 feat + f8e213e chore)+ grow 第 1 回(13f8a57)完了 / vitest 48 件 green を再実行で確認。state.md の「コミット提案中」を実績(コミット済み)に修正
+- **Next**: ユーザー選択待ち — Phase 4(リモート/ブランチ操作、推奨)or 2.4(行単位選択)
+
+## 2026-07-21 16:13 — Conductor (fable)
+
+- **Did**: ユーザー選択で **Phase 4(リモート/ブランチ操作)開始**。4.1(リモートブランチ→ローカル追跡ブランチ作成+切替)を新規 builder に委任し受入。既存 `POST /api/git/switch` を `track` フラグで拡張(新ルート増やさず)+ `switchBranchTracking`(`git switch --track`、ローカル名自動導出)+ GitTab に `remoteBranchMenuItems`(「チェックアウト」1 項目)を新設し remotes 側 BranchTree に onContextMenu 配線。隔離スモーク: 追跡作成+切替(branch -vv で upstream 確認)✅ / 同名ローカル既存時は 500 `{error}` でサーバー無事・HEAD 無傷 ✅。typecheck・vitest 48 green。スポットチェック: 3 層(git.ts L619 / index.ts L448 / api.ts L111 / GitTab L264・L466)の配線を grep で確認
+- **Learned**:(事実)origin/HEAD は listBranches() の既存フィルター(`endsWith('/HEAD')`)で除外済み(4.1 brief の懸念は杞憂)/(事実)隔離 USERPROFILE では Volta シムが動かない — builder は node.exe 実体 + tsx/dist/cli.mjs 直叩きで回避
+- **Decisions and rationale**: エンドポイント新設せず track フラグ拡張 — merge(noFf/ffOnly)等「1 ルート+フラグ」のコードベース流儀に一致(builder の判断を承認)
+- **Next**: 同 builder 継続(SendMessage)で 4.2(branch rename)
+
+## 2026-07-21 16:21 — Conductor (fable)
+
+- **Did**: 4.2(ブランチ rename)を受入(同 builder 継続、attempt 1)。`renameBranch`(`branch -m`、-M 不使用)+ `POST /api/git/branch-rename` + api.renameBranch + GitTab「名前を変更…」。汎用入力ダイアログが無かったため **PromptDialog.tsx + usePrompt() を新規作成**(ConfirmDialog と同型の Promise ベース、新規 CSS なし・既存 modal クラス再利用)。隔離スモーク: 非カレント/カレント両方の rename ✅・upstream 維持 ✅ / 既存名衝突は 500 `{error}` で無傷 ✅。typecheck・vitest 48 green。スポットチェック: branch-rename ルート/PromptDialog/GitTab 配線を grep で確認
+- **Learned**:(事実)`branch -m` はカレントブランチでも動き、HEAD が追随・upstream 設定も維持される(隔離スモーク実測)
+- **Decisions and rationale**: builder 判断を承認 — (1) rename も「切り替え」「削除」と同じく他 worktree 使用中(usedElsewhere)は無効化(メニュー一貫性・安全側)(2) メニュー位置は削除の直前(破壊的操作の手前に非破壊を並べる)。PromptDialog は 0.R 持ち越し FYI「useConfirm resolver」と同型の解を入力にも展開した形で妥当
+- **Next**: 同 builder 継続で 4.3(force-with-lease push / pull --rebase / upstream 設定)委任済み。受入後 4.4(リモートブランチ削除)
+
+## 2026-07-21 16:29 — Conductor (fable)
+
+- **Did**: 4.3(upstream 付き push / force-with-lease push / pull --rebase)を受入(同 builder 継続、attempt 1)。push/pull をオプション拡張(既存自動 -u フォールバック温存)+ 既存ルートのフラグ拡張 + WorktreeView のプル/プッシュボタン右クリックメニュー(ContextMenu 再利用)。force push は ConfirmDialog(danger)経由。隔離スモーク: amend→通常 push 拒否→with-lease 成功 ✅ / **lease 防護実証**(別クローン先行 + fetch なし → stale info 拒否・origin 無傷)✅ / pull --rebase で発散→線形化 ✅ / rebase 競合時もサーバー無事+Phase 3 operation バナー検出が拾う(ボーナス確認)✅ / bare `--force` 不存在 grep ✅(push 系は --force-with-lease のみ。L538 は worktree remove の既存)。typecheck・vitest 48 green。スポットチェック: WorktreeView の danger 確認・lease 配線を grep で確認
+- **Learned**:(事実)pull --rebase の競合は既存の operation 検出(rebase 進行中)が自然に拾う — 4.V で UI 遷移まで確認する
+- **Decisions and rationale**: builder 判断を承認 — (1) UI トリガーは右クリック(通常クリック挙動不変・最小構成)+ title に右クリックヒント追記 (2) setUpstream はサーバー/API 層のみで UI 未使用(既存の自動 -u 公開で足りる)。4.R で妥当性を再確認する
+- **Next**: 同 builder 継続で 4.4(リモートブランチ削除)委任済み。受入後 4.5(リモート管理 UI — builder 文脈が長ければ新規スポーン)
+
+## 2026-07-21 16:35 — Conductor (fable)
+
+- **Did**: 4.4(リモートブランチ削除)を受入(同 builder 継続、attempt 1)。`deleteRemoteBranch`(表示名を最初の `/` で remote/branch に分割 → `push <remote> --delete <branch>`、NETWORK_TIMEOUT)+ 新規ルート `POST /api/git/branch-delete-remote` + GitTab `remoteBranchMenuItems` に「リモートブランチを削除…」(ConfirmDialog danger)。隔離スモーク: bare 側消滅+ローカル remote-tracking ref 自動消滅 ✅(`feature/x` の `/` 分割も正しい)/ 存在しない ref は 500 `{error}` で無事 ✅。typecheck・vitest 48 green。スポットチェック: 3 層配線を grep で確認
+- **Decisions and rationale**: builder のルート設計判断を承認 — `branch-delete` のフラグ拡張ではなく新ルート。「1 ルート+フラグ」前例は同一 git サブコマンドのバリエーションに限られ、今回は基盤コマンド自体が別物(`branch -d` vs `push --delete`、タイムアウト特性も異なる)という線引きは明快で、今後の判断基準としても筋が良い
+- **Next**: 4.5(リモート管理 UI、M)は**新規 builder にスポーン**(現 builder は 4 タスク完遂で文脈 ~167k トークン — 劣化域に入る前に切替。state.md の方針どおり)
+
+## 2026-07-21 16:45 — Conductor (fable)
+
+- **Did**: 4.5(リモート管理)を受入(新規 builder、attempt 1)。`RemoteInfo` + `listRemotes/addRemote/removeRemote/setRemoteUrl`(`git remote -v` の fetch/push 2 行畳み込みパース)+ `GET /api/git/remotes` / `POST remote-add|remote-remove|remote-set-url` + types.ts 手動同期 + GitTab「リモート」節(ヘッダー追加ボタン、一覧行はスタッシュ行と同型の hover icon-btn、追加は name→URL の 2 段 PromptDialog、削除は ConfirmDialog danger + 影響説明文言)。隔離スモーク: 一覧/add→追跡 ref 生成/set-url/remove→追跡 ref 消滅 ✅ / 重複 add・不在 remove は 500 で無事 ✅。typecheck・vitest 48 green。実リポジトリー・実 config 無傷をタイムスタンプで確認(builder の報告習慣として良い)。スポットチェック: RemoteInfo の 3 層+GitTab 配線を grep で確認
+- **Decisions and rationale**: builder 判断を承認 — リモート行操作は ContextMenu でなく hover icon-btn(2 操作のみで座標 state を増やさない・スタッシュ行と統一)/ 2 段プロンプト採用(最小構成優先)。**Phase 4 実装タスク(4.1〜4.5)全完了** — フェーズゲートへ
+- **Next**: 4.V(ブラウザー E2E、隔離環境)を verifier に委任 → 4.R(reviewer、Opus)
+
+## 2026-07-21 17:17 — Conductor (fable)
+
+- **Did**: 4.V(ブラウザー E2E、隔離環境 PORT=3799 + 新規スクラッチ)を受入。8 項目すべて ✅ — リモートブランチ checkout(branch -vv 裏取り)/ rename(upstream 維持)/ force-with-lease push(キャンセル無変更→承認で bare 反映、danger 視認)/ pull --rebase(線形化 + 競合時 rebase バナー→中止で完全復元)/ リモートブランチ削除(UI・bare 両方消滅)/ リモート管理(add/set-url/remove)/ 回帰(status・diff・履歴、typecheck・vitest 48)/ bare --force 不存在 grep
+- **Learned**:(発見・実害バグ)**PromptDialog の連続 2 段プロンプトで 2 段目に前段の入力値が残留**(setRequest(null)→setRequest(next) が同一バッチで unmount を経ず、useState(defaultValue) が再初期化されない)。「追加」をそのまま押すと URL=リモート名で誤登録される実害を実機確認 /(発見・UX 制約)BranchTree が !isCurrent で右クリックを塞ぐため、**カレントブランチの rename に UI から到達できない**(4.2 でサーバー側はカレント rename 検証済み — 実装済み能力が UI で塞がれている)/(気付き・既知性未確認)diff タブ→履歴切替で Monaco "TextModel got disposed" コンソールエラー(見た目の破綻なし。Phase 4 起因か未確認)
+- **Decisions and rationale**: ゲート内修正 2 件を 4.5 builder の継続で実施 — (1) PromptDialog の request 毎再初期化(実害バグ、must-fix)(2) カレントブランチの右クリック解禁 + 項目別 disabled(切替・マージ・削除は不可、rename のみ有効。4.2 の実装意図を UI まで通す)。Monaco エラーは Phase 4 起因か不明のため修正せず記録 → 4.R の判断材料に載せる
+- **Next**: ゲート内修正の受入(PromptDialog は 4.V エージェントで実機再確認)→ 4.R(reviewer、Opus)
+
+## 2026-07-21 17:22 — Conductor (fable)
+
+- **Did**: ゲート内修正 2 件を受入(4.5 builder 継続、attempt 1、コードレベル)。(1) PromptDialog: 原因を確定 — 連続 await では resolve 継続のマイクロタスクが setRequest(null) のコミット前に走り、null→次リクエストが同一バッチ化されて fiber 再利用・useState(defaultValue) 不発。修正は usePrompt に requestId カウンター + `key={requestId.current}` の強制再マウント(バッチング挙動に依存しない頑健な形)。(2) BranchTree の !isCurrent ガード撤去 + branchMenuItems の切替/マージ 2 種/削除に `|| b.current` disabled(rename のみカレントで有効)。リモートメニューへの影響なし。typecheck・vitest 48 green。スポットチェック: key 配線と b.current disabled 4 箇所を grep で確認
+- **Decisions and rationale**: 修正 1 の実機挙動(2 段目が空欄)とカレント右クリックのメニュー状態は 4.V エージェントの継続で再確認する(UI 状態バグは実機でしか閉じられない — 今回の教訓そのもの)
+- **Next**: 実機再確認 → 4.R(reviewer、Opus)
+
+## 2026-07-21 17:33 — Conductor (fable)
+
+- **Did**: ゲート内修正 2 件の実機再確認を受入(4.V エージェント継続)。新規スクラッチ + ビルド後 asset ハッシュの差し替え確認まで行った上で: 2 段プロンプト 2 段目が空欄(evaluate_script で実値空文字)✅ / URL 変更の defaultValue 非退行 ✅ / カレント右クリックで rename のみ有効(DOM の disabled 属性確認)+ 実 rename 成功・upstream 維持 ✅ / 非カレントの全項目有効(回帰なし)✅。後始末・実環境無傷も確認
+- **Next**: 4.R(reviewer、Opus、新規)— Phase 4 全変更の敵対的レビュー
+
+## 2026-07-21 17:45 — Conductor (fable)
+
+- **Did**: 4.R(reviewer、Opus)受入。判定 ⚠ 要修正 — **must-fix 1**: renameBranch の引数インジェクション(新名 `-f` → `git branch -m feature -f` が move+force 解釈され、カレントを feature に改名+既存 feature を force 上書き破壊、exit 0 + 偽成功トースト。実 git 再現済み。`--` セパレーター慣習の新規分適用漏れ)/ **recommended 2**: remote add/remove/set-url の `--` 不在(exit 129 の cryptic エラー、非破壊)・listRemotes の `(\S+)` が空白入り Windows パス URL を取りこぼし一覧から脱落 / **FYI 5**: switchBranchTracking・deleteRemoteBranch の防御的 `--` / PromptDialog の Promise リーク(unmount 時 resolve 漏れ)/ フォーカストラップ無し(ConfirmDialog と同挙動)/ 新規 git 関数の単体テスト無し / 複数 pushurl の畳み込み
+- **Learned**:(反例実証)`git branch -m` は `--` 無しだと `-` 始まり positional をオプション解釈する — 検証ゲート(E2E)は正常系+想定エラー系を通しても敵対的入力は通らない。E2E と敵対的レビューは別の網
+- **Decisions and rationale**: 要判断 2 件の reviewer 意見を採択 — (a) Monaco "TextModel got disposed" は **Phase 4 起因でない既存問題**(diff 対象外ファイル)→ 持ち越し債務に記録、ゲート非ブロッカー (b) **setUpstream は死蔵コードとして削除**(UI 呼び出し無し + 自動 -u フォールバックと完全重複。bloat is death)。修正サイクル 1 を 4.5 builder 継続で実施(must-fix + recommended 2 + 防御的 `--` + setUpstream 削除 + listRemotes パーサー抽出とテスト)
+- **Next**: 修正受入 → reviewer 継続で修正確認 → ゲートクローズ
+
+## 2026-07-21 17:55 — Conductor (fable)
+
+- **Did**: 4.R 指摘反映サイクル 1 を受入(4.5 builder 継続、attempt 1)。(1) must-fix: `branch -m --`(新名 `-f` は 500 拒否・両ブランチ無傷、通常 rename 正常 — API 経由で実証)(2) remote add/remove/set-url に `--`(各コマンドの受理を個別に実 git 確認)(3) listRemotes を純関数 `parseRemotesOutput` に抽出 + 正規表現修正(空白入り Windows パス URL を捕捉)+ **vitest 5 ケース追加(48→53)**(4) 防御的 `--` を switch --track / push --delete にも(受理を実測してから採用)(5) setUpstream 死蔵コード削除(呼び出しゼロ確認済み・自動 -u フォールバック温存)。Conductor スポットチェック: vitest 53 green・typecheck green・`--` 6 箇所を grep 確認
+- **Learned**:(事実・builder ベースライン実測)`git remote add -foo <url>` は `-f` が `--fetch` 短縮形と誤認され**意図せず fetch が走る**リスクがあった — recommended 扱いだった remote 系 `--` も実は挙動誘発の芽があった
+- **Next**: reviewer 継続で修正確認 → ゲートクローズ(checkpoint + コミット提案 + ユーザー報告)
+
+## 2026-07-21 18:00 — Conductor (fable)
+
+- **Did**: **Phase 4 ゲートクローズ**。reviewer の修正確認(サイクル 1)で ✅ LGTM — 再攻撃(`-f`/`-M`/`-D`/`-c`/`-C`/`--force`/`-D=x`)全拒否・両ブランチのハッシュ不変 / remote 系のオプション注入不成立 / parseRemotesOutput の誤マッチなし(テストは仕様検証で写経でない、との評価)/ setUpstream 残存参照ゼロ / 回帰なし。FYI 1 件(テストフィクスチャの実ユーザー名パス)は Conductor が直接差し替え(asamizu→dev)、vitest 53 green を再確認。Phase 4 は 4.1〜4.5 + ゲート内修正 2 件 + レビュー反映 5 件で完了
+- **Decisions and rationale**: フェーズ境界で停止。次フェーズ(Phase 5 履歴操作 or 2.4 行単位選択)はユーザー判断。コミットは feat + chore の 2 コミット構成を提案(ユーザー承認待ち)。本セッションのコンテキストが長くなってきたため次フェーズは新セッション推奨
+- **Next**: ユーザーへ中間報告 + コミット提案。再開は /fable-team:resume-mission
+
+## 2026-07-21 18:11 — Conductor (fable)
+
+- **Did**: ユーザー承認により Phase 4 を確定: 318f5eb feat(git) リモート/ブランチ操作一式(9 files, +602/-27、PromptDialog 新規)。ユーザー選択で**次フェーズは Phase 5(履歴操作)**。本チェックポイントを chore コミットとして続けて実施
+- **Next**: 新セッションで /fable-team:resume-mission → Phase 5(5.1 reset / 5.2 cherry-pick / 5.3 revert / 5.4 rebase → 5.V → 5.R)

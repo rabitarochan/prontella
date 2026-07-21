@@ -140,13 +140,13 @@ worktree を任意コミット/detached から作成、format-patch/am、bisect�
 
 | # | タスク | 担当 | サイズ | 観測可能な完了基準 | 依存 | 状態 |
 |---|---|---|---|---|---|---|
-| 4.1 | (P0-7)リモートブランチ→ローカル追跡ブランチ作成+切替(`switch --track` / DWIM)。BranchTree リモート context に「チェックアウト」 | builder | S | `origin/foo` を右クリック→チェックアウトで local `foo` が tracking で作成・切替 | - | ⬜ |
-| 4.2 | (P1-7)ブランチ rename(`branch -m old new`)。context メニュー + 入力 | builder | S | rename 後 branches 一覧に反映 | - | ⬜ |
-| 4.3 | (P1-5)upstream 設定 + **force-with-lease** push + pull --rebase。push `{force?:'with-lease';setUpstream?}`、pull `{rebase?}`。force は danger モーダル | builder | S | force-with-lease push がテストリモートに通る。コード上 bare `--force` 不使用を確認 | 0.3 | ⬜ |
-| 4.4 | (P1-6)リモートブランチ削除(`push origin --delete`)。context メニュー、danger モーダル | builder | S | `origin/foo` 削除がテストリモートに反映 | 0.3 | ⬜ |
-| 4.5 | (P1-8)リモート管理(remote add/remove/set-url + 一覧)。サイドバー「リモート」に管理 UI | builder | M | add/set-url/remove が `git remote -v` に反映(dev) | - | ⬜ |
-| 4.V | Phase 4 動作検証 | verifier | M | 各操作を(必要ならローカル bare リポジトリで)検証、破壊系の danger モーダルを確認 | 4.1-4.5 | ⬜ |
-| 4.R | レビュー | reviewer | S | 指摘反映 | 4.V | ⬜ |
+| 4.1 | (P0-7)リモートブランチ→ローカル追跡ブランチ作成+切替(`switch --track` / DWIM)。BranchTree リモート context に「チェックアウト」 | builder | S | `origin/foo` を右クリック→チェックアウトで local `foo` が tracking で作成・切替 | - | ✅ |
+| 4.2 | (P1-7)ブランチ rename(`branch -m old new`)。context メニュー + 入力 | builder | S | rename 後 branches 一覧に反映 | - | ✅ |
+| 4.3 | (P1-5)upstream 設定 + **force-with-lease** push + pull --rebase。push `{force?:'with-lease';setUpstream?}`、pull `{rebase?}`。force は danger モーダル | builder | S | force-with-lease push がテストリモートに通る。コード上 bare `--force` 不使用を確認 | 0.3 | ✅ |
+| 4.4 | (P1-6)リモートブランチ削除(`push origin --delete`)。context メニュー、danger モーダル | builder | S | `origin/foo` 削除がテストリモートに反映 | 0.3 | ✅ |
+| 4.5 | (P1-8)リモート管理(remote add/remove/set-url + 一覧)。サイドバー「リモート」に管理 UI | builder | M | add/set-url/remove が `git remote -v` に反映(dev) | - | ✅ |
+| 4.V | Phase 4 動作検証 | verifier | M | 各操作を(必要ならローカル bare リポジトリで)検証、破壊系の danger モーダルを確認 | 4.1-4.5 | ✅ |
+| 4.R | レビュー | reviewer | S | 指摘反映 | 4.V | ✅ |
 
 > 並列: 4.1/4.2/4.5 は相互独立、4.3/4.4 は 0.3 依存で並列可。
 

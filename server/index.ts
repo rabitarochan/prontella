@@ -467,6 +467,61 @@ app.post('/api/git/merge-abort', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// 進行中操作 (merge/rebase/cherry-pick/revert) の continue/abort/skip。kind/action は
+// ホワイトリスト外を弾いて 400 を返す必要があるため、asyncHandler(常に 500)は使わず
+// POST /api/git/apply-hunks と同様に自前で包む。
+const OPERATION_KINDS: readonly git.GitOperation[] = ['merge', 'rebase', 'cherry-pick', 'revert'];
+const OPERATION_ACTIONS: readonly git.GitOperationAction[] = ['continue', 'abort', 'skip'];
+
+app.post('/api/git/operation', (req, res) => {
+  handleOperationAction(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+async function handleOperationAction(req: express.Request, res: express.Response): Promise<void> {
+  const dir = bodyDir(req);
+  const kind = String(req.body.kind ?? '');
+  const action = String(req.body.action ?? '');
+  if (!OPERATION_KINDS.includes(kind as git.GitOperation)) {
+    res.status(400).json({ error: `不正な kind です: ${kind}` });
+    return;
+  }
+  if (!OPERATION_ACTIONS.includes(action as git.GitOperationAction)) {
+    res.status(400).json({ error: `不正な action です: ${action}` });
+    return;
+  }
+  if (action === 'skip' && kind === 'merge') {
+    res.status(400).json({ error: 'merge に --skip は存在しません' });
+    return;
+  }
+  await git.operationAction(dir, kind as git.GitOperation, action as git.GitOperationAction);
+  res.json({ ok: true });
+}
+
+// 競合ファイルの ours/theirs 採用。side は operation 同様ホワイトリスト外を 400 で弾く必要が
+// あるため asyncHandler は使わず自前で包む。
+const CONFLICT_SIDES: readonly git.ConflictSide[] = ['ours', 'theirs'];
+
+app.post('/api/git/resolve-side', (req, res) => {
+  handleResolveSide(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+async function handleResolveSide(req: express.Request, res: express.Response): Promise<void> {
+  const dir = bodyDir(req);
+  const filePath = String(req.body.path ?? '');
+  if (!filePath) throw new Error('path が必要です');
+  const side = String(req.body.side ?? '');
+  if (!CONFLICT_SIDES.includes(side as git.ConflictSide)) {
+    res.status(400).json({ error: `不正な side です: ${side}` });
+    return;
+  }
+  await git.resolveConflictSide(dir, filePath, side as git.ConflictSide);
+  res.json({ ok: true });
+}
+
 app.get('/api/git/stash', asyncHandler(async (req, res) => {
   res.json(await git.stashList(requireKnownDir(req)));
 }));

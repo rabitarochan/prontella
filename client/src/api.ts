@@ -2,10 +2,12 @@ import type {
   BranchInfo,
   BranchStatus,
   CommitFile,
+  ConflictSide,
   DiffHunksResult,
   DiffPair,
   FileContent,
   GitOperation,
+  GitOperationAction,
   LogEntry,
   Repo,
   SearchTextResponse,
@@ -113,6 +115,10 @@ export const api = {
     opts?: { noFf?: boolean; ffOnly?: boolean; message?: string },
   ) => post<{ result: string }>('/api/git/merge', { dir, branch, ...opts }),
   mergeAbort: (dir: string) => post<void>('/api/git/merge-abort', { dir }),
+  operationAction: (dir: string, kind: GitOperation, action: GitOperationAction) =>
+    post<void>('/api/git/operation', { dir, kind, action }),
+  resolveSide: (dir: string, path: string, side: ConflictSide) =>
+    post<void>('/api/git/resolve-side', { dir, path, side }),
   stashList: (dir: string) => request<StashEntry[]>(`/api/git/stash?dir=${q(dir)}`),
   stashPush: (dir: string, message?: string) => post<void>('/api/git/stash', { dir, message }),
   stashApply: (dir: string, ref: string, pop: boolean) =>

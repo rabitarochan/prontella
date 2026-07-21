@@ -7,7 +7,12 @@ const US = '\x1f'; // unit separator for log formatting
 // runGit(execFile の maxBuffer)と runGitInput(手動の累積バイト数ガード)で共有する出力上限
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
-export function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise<string> {
+export function runGit(
+  cwd: string,
+  args: string[],
+  timeoutMs = 30_000,
+  extraEnv?: NodeJS.ProcessEnv,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       'git',
@@ -20,7 +25,9 @@ export function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise
         windowsHide: true,
         timeout: timeoutMs,
         // Fail fast instead of hanging when a remote asks for credentials.
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+        // extraEnv: 呼び出し元が個別コマンド向けに env を上書きしたいケース用
+        // (例: operationAction の GIT_EDITOR=true でエディター起動を抑止)。
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...extraEnv },
       },
       (err, stdout, stderr) => {
         if (err) reject(new Error(stderr.trim() || err.message));
@@ -554,6 +561,19 @@ export async function discardFile(dir: string, filePath: string): Promise<void> 
   await runGit(dir, ['restore', '--', filePath]);
 }
 
+export type ConflictSide = 'ours' | 'theirs';
+
+/**
+ * 競合ファイルを ours/theirs いずれかで解決する。`checkout --ours|--theirs` は index の
+ * 該当 stage(:2 / :3)の内容を作業ツリーへ復元するだけで index 自体(競合マーカーの
+ * 元になっている stage :1/:2/:3 のエントリー)は更新しない。続けて `add` することで
+ * stage を単一化し、マーカー解消・staged 済み状態にする。
+ */
+export async function resolveConflictSide(dir: string, filePath: string, side: ConflictSide): Promise<void> {
+  await runGit(dir, ['checkout', `--${side}`, '--', filePath]);
+  await runGit(dir, ['add', '--', filePath]);
+}
+
 export async function commit(dir: string, message: string, amend = false): Promise<string> {
   const args = ['commit', '-m', message];
   if (amend) args.push('--amend');
@@ -682,6 +702,26 @@ export async function getOperationState(dir: string): Promise<GitOperation | nul
   if (exists('REVERT_HEAD')) return 'revert';
   if (exists('MERGE_HEAD')) return 'merge';
   return null;
+}
+
+export type GitOperationAction = 'continue' | 'abort' | 'skip';
+
+// merge には `git merge --skip` が存在しない(rebase/cherry-pick/revert は逐次コミット列を
+// 飛ばす概念があるが、merge は単一のマージコミットしか作らないため「1 個飛ばす」がない)。
+const OPERATION_SKIP_UNSUPPORTED: readonly GitOperation[] = ['merge'];
+
+/**
+ * 進行中の操作(merge/rebase/cherry-pick/revert)に対する continue/abort/skip。
+ * `--continue` はコミットメッセージエディターを開こうとする(4 種いずれも)ため、
+ * GIT_EDITOR=true(即成功で閉じる疑似エディター)を渡して非対話のまま既定メッセージで
+ * コミットさせる。abort/skip はエディターを開かないため素通し。
+ */
+export async function operationAction(dir: string, kind: GitOperation, action: GitOperationAction): Promise<void> {
+  if (action === 'skip' && OPERATION_SKIP_UNSUPPORTED.includes(kind)) {
+    throw new Error(`${kind} に --skip は存在しません`);
+  }
+  const extraEnv = action === 'continue' ? { GIT_EDITOR: 'true' } : undefined;
+  await runGit(dir, [kind, `--${action}`], 30_000, extraEnv);
 }
 
 // ---- undo ---------------------------------------------------------------------

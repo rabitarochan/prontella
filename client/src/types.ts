@@ -14,6 +14,13 @@ export interface BranchStatus {
 // server/git.ts の GitOperation と手動同期(共有型機構がないため)
 export type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'revert';
 
+// server/git.ts の GitOperationAction と手動同期(共有型機構がないため)。merge に
+// 'skip' を渡すと 400(POST /api/git/operation 参照)。
+export type GitOperationAction = 'continue' | 'abort' | 'skip';
+
+// server/git.ts の ConflictSide と手動同期(共有型機構がないため)
+export type ConflictSide = 'ours' | 'theirs';
+
 export interface Worktree {
   path: string;
   head: string;

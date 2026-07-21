@@ -1172,6 +1172,31 @@ button.statusbar-menu-item:hover:not(:disabled) {
   flex: 1;
   min-width: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.git-main-content {
+  flex: 1;
+  min-height: 0;
+}
+.operation-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--yellow);
+  border-radius: 6px;
+  color: var(--yellow);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.operation-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
 }
 .git-section-head {
   display: flex;
@@ -1594,6 +1619,57 @@ button.context-menu-item:hover:not(:disabled) {
 .hunk-chip-actions {
   flex: none;
   display: flex;
+}
+
+/* ---- conflict resolve pane (ConflictResolvePane: 競合ファイルの ours/theirs/both 解決) ---- */
+
+.conflict-pane-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.conflict-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--fg-dim);
+  flex: none;
+}
+.conflict-marker-count {
+  flex-shrink: 0;
+  color: var(--yellow);
+}
+.conflict-marker-count.ok {
+  color: var(--green);
+}
+.conflict-toolbar-msg {
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: pre-wrap;
+}
+.conflict-chip-actions {
+  gap: 4px;
+}
+.conflict-editor-host {
+  flex: 1;
+  min-height: 0;
+}
+.conflict-actions-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  flex: none;
+}
+.conflict-actions-left {
+  display: flex;
+  gap: 6px;
 }
 
 /* ---- terminal panel (2 段目タブ: セッションごと) ---- */

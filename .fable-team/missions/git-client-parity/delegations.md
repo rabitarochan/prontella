@@ -61,3 +61,11 @@ Dossier format (⤴ / non-convergence only):
 - 2026-07-21 13:59 | phase 2 gate | reviewer(opus) | attempt 1 | ✅ LGTM | must-fix 0 / recommended 2 / FYI 3(rec#1 はゲート内修正へ格上げ)
 - 2026-07-21 14:26 | task 2.2+2.3 rec#1 | builder(sonnet) | attempt 1(中断再開) | ✅ accepted | header 同一性ロック追加。再現シナリオ 409・誤爆なし・偽 409 なしを実測
 - 2026-07-21 14:29 | phase 2 gate | reviewer(opus) | attempt 2(修正確認) | ✅ LGTM | rec#1 解消を確認。must-fix 0。ゲート通過
+- 2026-07-21 14:39 | task 3.1 | builder(sonnet) | attempt 1 | ✅ accepted | operation API + GIT_EDITOR 抑止。スモーク 5 本(abort/continue/skip/400/非進行 500)実測
+- 2026-07-21 14:48 | task 3.2 | builder(sonnet) | attempt 1(継続) | ✅ accepted | resolve-side API。ours/theirs 内容一致・staged 化を実測。no-op 200 の発見を報告
+- 2026-07-21 14:54 | task 3.3a | builder(sonnet) | attempt 1(+追加指示 1 回) | ✅ accepted | operation バナー + 旧バナー重複解消。confirm → ConfirmDialog 強化
+- 2026-07-21 15:12 | task 3.3b | builder(sonnet) | attempt 1(継続) | ✅ accepted | ConflictResolvePane + conflictBlocks(vitest12)。encoding 維持保存→stage。test 48 green
+- 2026-07-21 15:27 | task 3.V | claude(sonnet) | attempt 1 | ✅ accepted | ゲート 9 項目 E2E 全 ✅。act() の失敗時 stale 表示(最大 10 秒)を発見
+- 2026-07-21 15:29 | task 3.3 仕上げ | builder(sonnet) | attempt 1(継続) | ✅ accepted | act() catch でも状態再取得。競合タブ無傷の根拠確認済み
+- 2026-07-21 15:38 | phase 3 gate | reviewer(opus) | attempt 1 | ✅ LGTM | must-fix 0 / recommended 2 / FYI 4(rec#1 はゲート内修正、rec#2 は債務許容)
+- 2026-07-21 15:40 | task 3.R rec#1 | builder(sonnet) | attempt 1(継続) | ✅ accepted | 競合行の + ボタン非表示(1 条件ラップ)。test 48 green

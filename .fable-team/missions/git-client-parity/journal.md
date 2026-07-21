@@ -133,3 +133,62 @@
 - **Learned**:(事実)header 完全一致は「先行ハンクの並行編集で行番号だけずれた」場合も 409 になる(保守的だが誤適用ゼロの安全側 — 対応不要と判定)。持ち越し債務: request() のステータス保持(恒久 409 判定)/ SJIS 表示エンコーディング(アプリ横断)/ 選択中 worktree の削除失敗(Windows ロック、editor-persistence 検証で発見)
 - **Decisions and rationale**: Phase 2 ゲートは 2.1〜2.3 で判定(plan の規定どおり)。2.4(行単位選択、P1)はゲート外のため未着手のまま — 次を 2.4 にするか Phase 3(コンフリクト解決、P0)にするかはユーザー判断
 - **Next**: checkpoint(この記録)→ ユーザーへ中間報告 + コミット提案。再開時はユーザーの選択(2.4 or Phase 3)から
+
+## 2026-07-21 14:33 — Conductor (fable)
+
+- **Did**: ユーザー承認により Phase 2 を 2 コミットで確定: 849b38e feat(git) ハンク単位ステージ一式(13 files, +978)/ 77d827c chore(fable-team) チェックポイント。作業ツリークリーン。ユーザー選択で **Phase 3(コンフリクト解決)開始** — 3.1(operation continue/abort/skip API)を builder に委任
+- **Decisions and rationale**: 3.1 と 3.2 は同一ファイル(git.ts/index.ts/api.ts)を触るため並列にせず、同じ builder の SendMessage 継続で順次実施(領域分割並列より安全側)。UI(3.3a/3.3b)は 3.1/3.2 受入後
+- **Next**: 3.1 受入 → 同 builder 継続で 3.2(ours/theirs 採用)→ 3.3a(バナー一般化)/ 3.3b(競合エディター UI)
+
+## 2026-07-21 14:39 — Conductor (fable)
+
+- **Did**: 3.1(operation continue/abort/skip API)を受入。runGit に追加的 extraEnv 引数(後方互換)、continue 時のみ GIT_EDITOR=true でエディター抑止。merge+skip はサービス層(throw)とルート層(400)の二重防御。HTTP スモーク 5 本全通過(abort 復元 / continue で非対話マージコミット / rebase skip / 400 系 / 非進行時 500 でクラッシュなし)。typecheck・vitest 36 green
+- **Learned**:(事実)merge/rebase/cherry-pick/revert の --continue はすべてエディターを開こうとする — GIT_EDITOR=true で既定メッセージの非対話コミットになる(実測)
+- **Decisions and rationale**: 3.2 の任意項目「stages :1/:2/:3 エンドポイント」は実装しない(3.3b はマーカーパースで進める。必要になったら別タスク — YAGNI)
+- **Next**: 3.2(ours/theirs 採用)を同 builder 継続で実施中 → 受入後 3.3a(バナー一般化)と 3.3b(競合エディター UI)
+
+## 2026-07-21 14:48 — Conductor (fable)
+
+- **Did**: 3.2(ours/theirs 採用)を受入。resolveConflictSide(checkout --ours/--theirs -- path → add -- path、discardFile と同じ -- セパレーター慣習)+ POST /api/git/resolve-side(side ホワイトリスト 400)。スモーク: ours/theirs とも内容一致・staged 化・conflicted 減算 / 未知パス 500 でサーバー無事 / 不正 side 400。typecheck・vitest 36 green
+- **Learned**:(事実)builder 発見 2 件: (1) **非競合の追跡ファイルへの checkout --ours は exit 0 の無害 no-op**(resolve-side は 200 を返すが何もしない)— 3.3b の UI は「競合ファイルにのみボタンを出す」自然な設計で足りるが記録。(2) USERPROFILE 隔離で ~/.gitconfig(core.autocrlf=false)が隠れ、システム既定 autocrlf=true に落ちて CRLF 混入の赤ニシン — 隔離検証ではスクラッチリポジトリーに実環境相当の git config を明示するべき
+- **Decisions and rationale**: 3.3a(バナー)→ 3.3b(競合エディター)は同一 GitTab.tsx を触るため新規 builder 1 体の順次継続で実施
+- **Next**: 3.3a 受入 → 同 builder 継続で 3.3b → 3.V(3 経路 + abort 復元)→ 3.R
+
+## 2026-07-21 14:54 — Conductor (fable)
+
+- **Did**: 3.3a(オペレーションバナー一般化)を受入。GitTab に operation ベースの汎用バナー(種別ラベル / 続行・スキップ・中止、merge はスキップ非表示、abort は ConfirmDialog danger、act() のエラー流儀)。builder の正直な報告により旧マージバナーの所在が ChangesTab.tsx と判明 → 追加指示で重複解消(旧バナー削除。機能は git コマンドレベルで同一、confirm → ConfirmDialog に強化。merging state は placeholder ガードで使用が残るため維持)
+- **Learned**:(事実)brief の「GitTab にバナーがある」前提が誤っていた(実際は ChangesTab)— builder が constraints を守って手を出さず報告してきたのは正しい振る舞い(境界規律の成功例)
+- **Decisions and rationale**: api.mergeAbort は未使用化したが定義は残置(api.ts はタスク範囲外。後続の掃除で判断)
+- **Next**: 3.3b(競合エディター UI — ブロック毎 ours/theirs/both + ファイル全体採用 + マーカーカウンター + 解決済み→stage)を同 builder 継続で実施中 → 受入後 3.V
+
+## 2026-07-21 15:12 — Conductor (fable)
+
+- **Did**: 3.3b(競合解決 UI)を受入。conflictBlocks.ts(純関数パース + ours/theirs/both、diff3 対応、vitest 12 件)+ ConflictResolvePane(書き込み可能 Monaco、encoding/BOM 維持保存 → stage、残競合カウンター、ファイル全体採用は ConfirmDialog + 未保存編集警告)。入口は既存 diff タブ機構への相乗り(WorkTab 判別共用型)。競合タブは gen/reloadKey 強制再マウント対象外(未保存の解決作業を守る設計判断 — 妥当)。typecheck・vitest 48(+12)・build green
+- **Learned**:(事実)builder 指摘: 競合ファイル行の既存「ステージ」個別ボタンはマーカー付きのまま誤ステージできる(実装前からの挙動)— 3.R の判断材料に載せる
+- **Decisions and rationale**: 3.V はブラウザー E2E(3 経路 + continue/abort + rebase バナー)を新規 claude(sonnet) エージェントに委任(隔離パターンは確立済み、autocrlf の罠も brief に織り込み)
+- **Next**: 3.V 受入 → 3.R reviewer(競合パース正確性 + マーカー付き誤ステージの扱い + 409 債務の再確認)
+
+## 2026-07-21 15:27 — Conductor (fable)
+
+- **Did**: 3.V(ブラウザー E2E)を受入。ゲート要件 9 項目すべて ✅ — マージ進行中バナー(merge はスキップ非表示)/ ファイル全体 ours(ours=HEAD のため staged diff 無しは git 仕様どおり)/ theirs / ブロック毎手動 ours+both(カウンター 2→1→0、both は ours→theirs 順)/ continue でマージコミット生成・バナー消滅 / abort で完全復元(ファイル内容・HEAD・MERGE_HEAD 消失)/ rebase バナー(スキップ表示)+ 中止復元 / 回帰(非競合は diff タブ、解決済みボタンの無効条件)/ vitest 48・typecheck green
+- **Learned**:(事実)発見 1 件: merge が競合で非ゼロ終了した直後、GitTab の act() が catch で load()/refreshDeck() を呼ばず、バナー・競合一覧が次回ポーリング(最大 10 秒)まで遅延(自己修復するが UX 上気付きにくい。サーバーも競合発生を 500 で返す)
+- **Decisions and rationale**: act() の catch でも状態再取得する小修正を 3.3 系 builder の継続で実施(競合は「エラー」でなく「状態変化」)。サーバー側の 500 → 明示レスポンス化は過剰と判断し見送り(クライアント側の再取得で UX は解消)
+- **Next**: 小修正受入 → 3.R reviewer(conflictBlocks パース正確性 + マーカー付き誤ステージ既存挙動 + act() 修正の妥当性)
+
+## 2026-07-21 15:29 — Conductor (fable)
+
+- **Did**: act() の catch 修正を受入(失敗時も load/refreshDeck/reloadKey の 3 点セット — merge 競合失敗直後の stale 表示を解消)。競合解決タブは reloadKey/gen を key に使わない設計のため未保存編集は無傷(コードで確認)。ChangesTab 再マウントによるコミットメッセージ下書き喪失は成功パスに既存のトレードオフで新規退行なし。typecheck・vitest 48 green
+- **Next**: 3.R reviewer(Opus)実行中 — 重点: conflictBlocks パース正確性(内容に正当なマーカー様行があるケース含む)/ WorkTab リファクタの Phase 2 回帰 / 要判断 2 件(マーカー付き誤ステージ既存挙動、競合 500 レスポンス)
+
+## 2026-07-21 15:38 — Conductor (fable)
+
+- **Did**: 3.R(reviewer、Opus)受入。判定 ✅ LGTM(must-fix 0 / recommended 2 / FYI 4)。競合解決の中核(パース・pushEditOperations・encoding/BOM round-trip・サーバーホワイトリスト・extraEnv の他呼び出し不変・Phase 2 回帰なし・act() 修正で未保存解決作業が無傷)は攻撃しても不崩。「黙って壊す経路なし」
+- **Learned**:(事実)recommended #1: 競合行の個別ステージ(+)ボタンでマーカー付き誤ステージ可能(既存 footgun)→ ゲート内修正へ。#2: merge 競合の 500 レスポンスは債務として許容(git エラー構造化の際にまとめて回収)。FYI(原理的限界として記録): 本文に列 0 の `=======` を正当に含む競合ではブロック区切りを誤認し得る — マーカーベース解析全般の共通限界。非サイレント(可視・undo 可・「解決済み」は blocks=0 ゲート・権威データ経由の全体採用が代替)なので許容
+- **Next**: + ボタン抑止の小修正受入 → Phase 3 ゲートクローズ(checkpoint + コミット提案 + ユーザー中間報告)
+
+## 2026-07-21 15:40 — Conductor (fable)
+
+- **Did**: **Phase 3 ゲートクローズ**。3.R rec#1 の修正を受入 — ChangesTab の競合行で個別ステージ(+)ボタンを非表示(!file.conflicted ラップのみ、非競合行は不変。競合ファイルは常に unstaged 側のみに出る設計のため + ボタンだけが対象 = reviewer 指摘とちょうど一致)。typecheck・vitest 48 green
+- **Learned**:(事実)競合行の discard ボタンは reviewer 指摘外のため残置(pre-existing 挙動)。持ち越し債務一覧は state.md に集約
+- **Decisions and rationale**: Phase 3 は 3.1〜3.3b + ゲート内修正 2 件(act() catch 再取得 / + ボタン抑止)で完了。次フェーズ(Phase 4 or 2.4)はユーザー判断。本セッションのコンテキストが長大なため、次フェーズは新セッション推奨
+- **Next**: ユーザーへ中間報告 + コミット提案(feat + chore の 2 コミット)。再開は /fable-team:resume-mission

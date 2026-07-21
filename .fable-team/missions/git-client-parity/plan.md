@@ -125,12 +125,12 @@ worktree を任意コミット/detached から作成、format-patch/am、bisect�
 
 | # | タスク | 担当 | サイズ | 観測可能な完了基準 | 依存 | 状態 |
 |---|---|---|---|---|---|---|
-| 3.1 | 進行中オペレーションの continue/abort/skip。`merge/rebase/cherry-pick/revert` の各 `--continue/--abort/--skip`。API `POST /api/git/operation {dir,kind,action}`。0.2 と接続 | builder | M | マージ中に continue/abort が効く(dev) | 0.2 | ⬜ |
-| 3.2 | 競合ファイルの ours/theirs 採用。`checkout --ours/--theirs -- path` + `add`。(任意で stages `:1/:2/:3` 取得エンドポイント) | builder | S | 競合ファイルに ours 採用 → マーカー消えて staged | 0.2 | ⬜ |
-| 3.3a | 競合バナー一般化(operation 種別表示 + continue/abort/skip)。既存 merge-banner を置換 | builder | S | rebase/cherry-pick 中でも正しい種別と操作ボタンが出る(dev) | 3.1 | ⬜ |
-| 3.3b | 書き込み可能 Monaco で競合ファイル編集(**encoding 対応の既存 `files.ts` read/save 経路を再利用**)+ 競合ブロック毎 ours/theirs/both + 残マーカーカウンタ + 「解決済み(git add)」 | builder | M | 競合を編集で解決→マーカー 0 →解決済み→ continue でコミット | 3.1, 3.2 | ⬜ |
-| 3.V | Phase 3 動作検証 | verifier | M | ours/theirs/手動編集の 3 経路 + abort 復元を検証 | 3.3b | ⬜ |
-| 3.R | レビュー | reviewer | S | 指摘反映 | 3.V | ⬜ |
+| 3.1 | 進行中オペレーションの continue/abort/skip。`merge/rebase/cherry-pick/revert` の各 `--continue/--abort/--skip`。API `POST /api/git/operation {dir,kind,action}`。0.2 と接続 | builder | M | マージ中に continue/abort が効く(dev) | 0.2 | ✅ |
+| 3.2 | 競合ファイルの ours/theirs 採用。`checkout --ours/--theirs -- path` + `add`。(任意で stages `:1/:2/:3` 取得エンドポイント) | builder | S | 競合ファイルに ours 採用 → マーカー消えて staged | 0.2 | ✅ |
+| 3.3a | 競合バナー一般化(operation 種別表示 + continue/abort/skip)。既存 merge-banner を置換 | builder | S | rebase/cherry-pick 中でも正しい種別と操作ボタンが出る(dev) | 3.1 | ✅ |
+| 3.3b | 書き込み可能 Monaco で競合ファイル編集(**encoding 対応の既存 `files.ts` read/save 経路を再利用**)+ 競合ブロック毎 ours/theirs/both + 残マーカーカウンタ + 「解決済み(git add)」 | builder | M | 競合を編集で解決→マーカー 0 →解決済み→ continue でコミット | 3.1, 3.2 | ✅ |
+| 3.V | Phase 3 動作検証 | verifier | M | ours/theirs/手動編集の 3 経路 + abort 復元を検証 | 3.3b | ✅ |
+| 3.R | レビュー | reviewer | S | 指摘反映 | 3.V | ✅ |
 
 > 補足: 3.3(競合 UI)は L のため 3.3a/3.3b に分割。3.2 は 3.3b と並行着手可。
 

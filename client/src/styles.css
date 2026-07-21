@@ -586,6 +586,12 @@ textarea:focus {
   font-size: 12px;
   color: var(--green);
 }
+.editor-warning {
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--yellow);
+  border-bottom: 1px solid var(--border);
+}
 .editor-host {
   flex: 1;
   min-height: 0;
@@ -1513,7 +1519,6 @@ button.context-menu-item:hover:not(:disabled) {
   flex: 1;
   min-height: 0;
 }
-
 /* ---- terminal panel (2 段目タブ: セッションごと) ---- */
 
 .term-panel {
@@ -1569,7 +1574,7 @@ button.context-menu-item:hover:not(:disabled) {
 .xterm-container {
   position: absolute;
   inset: 0;
-  padding: 4px 0 0 8px;
+  padding: 0 0 0 8px;
 }
 
 /* ---- modal ---- */

@@ -37,7 +37,7 @@ export default function TileWorkspace({
     <div className="tile-workspace">
       {visited.has('files') && (
         <div className="tile-view" style={{ display: leaf.view === 'files' ? undefined : 'none' }}>
-          <FilesTab root={worktree.path} />
+          <FilesTab root={worktree.path} leafId={leaf.id} />
         </div>
       )}
       {visited.has('git') && (

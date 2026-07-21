@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../api';
 import { useDeck } from '../store';
+import { removeWorktreeLocalState } from '../editorState';
 import type { Repo } from '../types';
 import StatusBadge from './StatusBadge';
 import AddWorktreeModal from './AddWorktreeModal';
@@ -31,13 +32,28 @@ export default function Sidebar() {
     if (!confirm(`Worktree を削除しますか?\n${path}\n\n※ ディレクトリーごと削除されます`)) return;
     try {
       await api.removeWorktree(repo.id, path, false);
+      // select(null) は WorktreeView を unmount させ、FilesTab の cleanup flush が
+      // editorState キーを再生成してしまう。その flush は refresh() のネットワーク
+      // 往復中にコミットされるため、ローカル掃除は select → refresh の後(最後)に
+      // 行う必要がある。順序を変えると削除したはずのキーが復活する。
       if (selected?.worktreePath === path) select(null);
       await refresh();
+      removeWorktreeLocalState(path);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (confirm(`削除に失敗しました:\n${message}\n\n未コミットの変更ごと強制削除しますか?`)) {
-        await api.removeWorktree(repo.id, path, true).catch((err: Error) => setError(err.message));
+        let succeeded = false;
+        try {
+          await api.removeWorktree(repo.id, path, true);
+          succeeded = true;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+        // 通常パスと同じ順序制約(select → refresh → ローカル掃除)。失敗時は
+        // worktree がまだ存在するので選択解除もローカル掃除も行わない。
+        if (succeeded && selected?.worktreePath === path) select(null);
         await refresh();
+        if (succeeded) removeWorktreeLocalState(path);
       }
     }
   };

@@ -6,9 +6,13 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { api } from '../api';
+import { useConfirm } from './ConfirmDialog';
+import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import { layoutGraph, laneColor, type GraphRow } from '../graph';
-import type { CommitFile, LogEntry } from '../types';
+import type { CommitFile, GitOperation, LogEntry, ResetMode } from '../types';
 import DiffPane from './DiffPane';
+
+const RESET_MODES: readonly ResetMode[] = ['soft', 'mixed', 'hard'];
 
 const ROW_H = 28;
 const LANE_W = 14;
@@ -106,7 +110,31 @@ function RefChips({ refs }: { refs: string }) {
   );
 }
 
-export default function HistoryTab({ dir }: { dir: string }) {
+export default function HistoryTab({
+  dir,
+  operation,
+  busy,
+  dirty,
+  untracked,
+  onAct,
+}: {
+  dir: string;
+  /** 進行中の merge/rebase 等。非 null の間は reset メニューを disabled にする(リスク R7)。 */
+  operation: GitOperation | null;
+  /** GitTab 側の busy(act() 実行中)。operation を作らない reset 実行中などにも commitMenuItems
+   * を disabled にするため必要 — operation だけを見ていると、その窓で別コミットへの操作が
+   * 並走して git の index.lock 起因のエラーになり得る(Phase 5 ゲート 5.R 指摘)。 */
+  busy: boolean;
+  /** worktree.status 由来の未コミット変更件数(staged+unstaged のみ、tracked)。hard reset の
+   * 確認文言用 — `git reset --hard` は untracked ファイルを削除しないため untracked は含めない
+   * (Phase 5 ゲート 5.V 指摘: 含めると実際に失われる件数より過大表示になる)。 */
+  dirty: number;
+  /** worktree.status 由来の未追跡ファイル件数。hard reset でも保持される旨の案内文言用。 */
+  untracked: number;
+  /** GitTab.act() をそのまま受け取る — busy/message 表示と reset 後の 3 点セット
+   * (load + refreshDeck + reloadKey++、成功/失敗いずれも)を GitTab 側に一本化するため。 */
+  onAct: (fn: () => Promise<unknown>, successMsg?: string) => void;
+}) {
   const [log, setLog] = useState<LogEntry[] | null>(null);
   const [showAll, setShowAll] = useState(true);
   const [selected, setSelected] = useState<LogEntry | null>(null);
@@ -115,6 +143,8 @@ export default function HistoryTab({ dir }: { dir: string }) {
   const [commitBody, setCommitBody] = useState('');
   const [error, setError] = useState('');
   const [cols, setCols] = useState<ColWidths>(loadCols);
+  const [commitMenu, setCommitMenu] = useState<{ x: number; y: number; entry: LogEntry } | null>(null);
+  const { confirm: confirmDialog, dialog } = useConfirm();
 
   useEffect(() => {
     try {
@@ -191,6 +221,80 @@ export default function HistoryTab({ dir }: { dir: string }) {
     window.addEventListener('mouseup', onUp);
   };
 
+  // reset は非破壊 (soft/mixed) でも history の見た目が変わる操作のため、3 モードとも
+  // ConfirmDialog を経由する (soft/mixed は severity: 'normal'、hard のみ 'danger')。
+  const doReset = async (entry: LogEntry, mode: ResetMode) => {
+    const ok = await confirmDialog({
+      title: `Reset (${mode})`,
+      message: (
+        <>
+          <div>
+            HEAD を {entry.shortHash} ({entry.subject}) まで戻します ({mode})。
+          </div>
+          {mode === 'hard' && dirty > 0 && <div>※ 未コミットの変更 {dirty} 件が失われます。</div>}
+          {mode === 'hard' && untracked > 0 && (
+            <div>※ 未追跡ファイル {untracked} 件は保持されます。</div>
+          )}
+          {mode === 'hard' && <div>※ 元に戻せません</div>}
+        </>
+      ),
+      confirmLabel: 'Reset',
+      severity: mode === 'hard' ? 'danger' : 'normal',
+    });
+    if (!ok) return;
+    onAct(() => api.reset(dir, entry.hash, mode), `${entry.shortHash} まで reset しました (${mode})`);
+  };
+
+  // cherry-pick は競合し得るが git 自身が非破壊的に扱う (作業ツリーが cherry-pick 進行中の
+  // 状態に入るだけで、続行/中止は GitTab の operation バナー (Phase 3) が受け止める) ため
+  // severity は 'normal'。
+  const doCherryPick = async (entry: LogEntry) => {
+    const ok = await confirmDialog({
+      title: 'チェリーピック',
+      message: `'${entry.shortHash}' (${entry.subject}) を現在のブランチに適用しますか?`,
+      confirmLabel: 'チェリーピック',
+      severity: 'normal',
+    });
+    if (!ok) return;
+    onAct(() => api.cherryPick(dir, entry.hash), `${entry.shortHash} をチェリーピックしました`);
+  };
+
+  // revert も cherry-pick と同様、競合しても git 自身が進行中状態 (REVERT_HEAD) に留め置く
+  // だけの非破壊操作なので severity は 'normal'。マージコミットは -m 未対応のため git 自身の
+  // エラーがそのまま表示される (スコープ外、ブリーフ参照)。
+  const doRevert = async (entry: LogEntry) => {
+    const ok = await confirmDialog({
+      title: 'リバート',
+      message: `'${entry.shortHash}' (${entry.subject}) を打ち消すコミットを作成しますか?`,
+      confirmLabel: 'リバート',
+      severity: 'normal',
+    });
+    if (!ok) return;
+    onAct(() => api.revert(dir, entry.hash), `${entry.shortHash} をリバートしました`);
+  };
+
+  const commitMenuItems = (entry: LogEntry): ContextMenuItem[] => [
+    ...RESET_MODES.map((mode) => ({
+      label: `ここまで reset (${mode})…`,
+      icon: 'discard',
+      disabled: busy || !!operation,
+      danger: mode === 'hard',
+      onClick: () => void doReset(entry, mode),
+    })),
+    {
+      label: 'このコミットをチェリーピック…',
+      icon: 'git-commit',
+      disabled: busy || !!operation,
+      onClick: () => void doCherryPick(entry),
+    },
+    {
+      label: 'このコミットをリバート…',
+      icon: 'reply',
+      disabled: busy || !!operation,
+      onClick: () => void doRevert(entry),
+    },
+  ];
+
   if (error) return <div className="placeholder">⚠ {error}</div>;
 
   return (
@@ -223,6 +327,10 @@ export default function HistoryTab({ dir }: { dir: string }) {
                 className={`graph-row ${selected?.hash === entry.hash ? 'selected' : ''}`}
                 style={{ height: ROW_H, minWidth: totalW }}
                 onClick={() => setSelected(entry)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setCommitMenu({ x: e.clientX, y: e.clientY, entry });
+                }}
               >
                 <div className="graph-cell" style={colStyle('tree')}>
                   <GraphCell row={graph[i]} />
@@ -298,6 +406,15 @@ export default function HistoryTab({ dir }: { dir: string }) {
           </>
         )}
       </div>
+      {commitMenu && (
+        <ContextMenu
+          x={commitMenu.x}
+          y={commitMenu.y}
+          items={commitMenuItems(commitMenu.entry)}
+          onClose={() => setCommitMenu(null)}
+        />
+      )}
+      {dialog}
     </div>
   );
 }

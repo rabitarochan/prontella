@@ -859,3 +859,60 @@ export async function discardAll(dir: string, opts: { includeUntracked: boolean 
     await runGit(dir, ['clean', '-fd', '-q']);
   }
 }
+
+export type ResetMode = 'soft' | 'mixed' | 'hard';
+
+/**
+ * HEAD (と現在のブランチ) を任意のコミットへ reset する (履歴タブのコミット行から)。
+ * mode/hash のホワイトリスト・形式検証は呼び出し元 (POST /api/git/reset) の責務 — この
+ * 関数自身は検証しない (operationAction/resolveConflictSide と同じ分担)。`<hash> --` の
+ * ように `--` セパレーターは付けない: `git reset <commit> --` は「パス形式」(HEAD を動かさず
+ * ファイルだけ index に戻す別コマンド) に解釈が変わるため、意図した「HEAD を動かす reset」に
+ * ならない (実 git で確認済み)。hash はホスト側で `/^[0-9a-f]{4,40}$/i` 検証済みの前提であり、
+ * `-` 始まりの値がオプションとして誤解釈される余地はない。
+ */
+export async function resetToCommit(dir: string, hash: string, mode: ResetMode): Promise<void> {
+  await runGit(dir, ['reset', `--${mode}`, hash]);
+}
+
+/**
+ * 指定コミットを現在のブランチへ cherry-pick する。hash の形式検証
+ * (`/^[0-9a-f]{4,40}$/i`) は呼び出し元 (POST /api/git/cherry-pick) の責務 — この関数自身は
+ * 検証しない (resetToCommit と同じ分担)。競合時は git 自身が非ゼロ終了し (作業ツリーは
+ * CHERRY_PICK_HEAD が残る進行中状態になる) — runGit の例外化で呼び出し元は 500 {error} を
+ * 返すだけでよく、進行中操作の検出/中止は getOperationState / operationAction (Phase 3) が
+ * 既に担っている。
+ */
+export async function cherryPick(dir: string, hash: string): Promise<void> {
+  await runGit(dir, ['cherry-pick', hash]);
+}
+
+/**
+ * 指定コミットを打ち消す打ち消しコミットを作る (`revert --no-edit`)。hash の形式検証は
+ * cherryPick と同じく呼び出し元 (POST /api/git/revert) の責務。`--no-edit` はコミット
+ * メッセージエディターを開かず既定のメッセージ (`Revert "..."`) でそのままコミットする
+ * (cherry-pick 側は追加コミットではなく既存メッセージを引き継ぐため元々エディターを
+ * 開かないが、revert は既定でエディターを開こうとするため明示的に付与する)。競合時は
+ * git 自身が非ゼロ終了し (作業ツリーは REVERT_HEAD が残る進行中状態になる)、続行/中止の
+ * 検出は cherry-pick と同じく getOperationState / operationAction (Phase 3) が担う。
+ * マージコミットの revert には `-m <parent番号>` が必須だが対応はスコープ外 — 未対応のまま
+ * 渡した場合の git 自身のエラー (`error: commit ... is a merge but no -m option was given`)
+ * がそのまま呼び出し元の 500 {error} としてユーザーに見える。
+ */
+export async function revertCommit(dir: string, hash: string): Promise<void> {
+  await runGit(dir, ['revert', '--no-edit', hash]);
+}
+
+/**
+ * 現在のブランチを指定ブランチ (onto) の上に rebase する (`git rebase <onto>`)。onto の
+ * 先頭 `-` 拒否 (引数インジェクション対策) は呼び出し元 (POST /api/git/rebase) の責務 — この
+ * 関数自身は検証しない (resetToCommit/cherryPick/revertCommit と同じ分担)。ハッシュと違い
+ * ブランチ名は `/` や `.` を含み得るため hash 系のような固定書式のホワイトリスト検証はできず、
+ * 先頭 `-` 拒否のみが主防壁になる (`--` セパレーターは実 git で挙動を確認できていないため
+ * 付けない)。競合時は git 自身が非ゼロ終了し (作業ツリーは rebase-merge/rebase-apply が
+ * 残る進行中状態になる)、続行/中止の検出は cherry-pick/revert と同じく getOperationState /
+ * operationAction (Phase 3) が担う。
+ */
+export async function rebaseOnto(dir: string, onto: string): Promise<void> {
+  await runGit(dir, ['rebase', onto]);
+}

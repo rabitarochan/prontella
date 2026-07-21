@@ -11,6 +11,7 @@ import type {
   LogEntry,
   RemoteInfo,
   Repo,
+  ResetMode,
   SearchTextResponse,
   StashEntry,
   StatusFile,
@@ -101,6 +102,10 @@ export const api = {
   discard: (dir: string, path: string, untracked: boolean) =>
     post<void>('/api/git/discard', { dir, path, untracked }),
   undoLastCommit: (dir: string) => post<void>('/api/git/undo-commit', { dir }),
+  reset: (dir: string, hash: string, mode: ResetMode) => post<void>('/api/git/reset', { dir, hash, mode }),
+  cherryPick: (dir: string, hash: string) => post<void>('/api/git/cherry-pick', { dir, hash }),
+  revert: (dir: string, hash: string) => post<void>('/api/git/revert', { dir, hash }),
+  rebase: (dir: string, onto: string) => post<void>('/api/git/rebase', { dir, onto }),
   discardAll: (dir: string, includeUntracked: boolean) =>
     post<void>('/api/git/discard-all', { dir, includeUntracked }),
   fetch: (dir: string) => post<void>('/api/git/fetch', { dir }),

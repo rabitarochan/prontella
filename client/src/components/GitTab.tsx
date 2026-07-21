@@ -224,6 +224,24 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
     );
   };
 
+  // rebase は現在のブランチのコミット列を書き換える操作だが、競合しても abort で rebase 前の
+  // HEAD に完全復元できる (Phase 3 の operation 検出が担う) ため danger ではなく normal 確認に
+  // する (merge と同じ扱い)。進行中 operation があるとブランチメニューからの多重実行を防ぐため
+  // disabled にする (branchMenuItems 側)。
+  const rebaseOntoBranch = async (b: BranchInfo) => {
+    const target = currentBranch ?? '現在のブランチ';
+    const ok = await confirmDialog({
+      title: 'リベース',
+      message:
+        `${target} のコミットを '${b.name}' の上に付け替えます。\n` +
+        '競合した場合は競合解決画面に移ります。',
+      confirmLabel: 'リベース',
+      severity: 'normal',
+    });
+    if (!ok) return;
+    void act(() => api.rebase(dir, b.name), `${b.name} にリベースしました`);
+  };
+
   // 進行中操作 (merge/rebase/cherry-pick/revert) の続行/中止/スキップ。abort は破壊的操作
   // (作業ツリーを操作開始前の状態に戻す) のため ConfirmDialog(danger) を経由し、
   // continue/skip は git 自身が競合未解決なら拒否するフェイルセーフのため確認なしで実行する。
@@ -271,6 +289,12 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
         icon: 'git-merge',
         disabled: busy || b.current,
         onClick: () => void mergeBranch(b, true),
+      },
+      {
+        label: '現在のブランチをこのブランチにリベース…',
+        icon: 'git-branch',
+        disabled: busy || b.current || operation != null,
+        onClick: () => void rebaseOntoBranch(b),
       },
       {
         label: '名前を変更…',
@@ -373,6 +397,12 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
     (worktree.status?.staged ?? 0) +
     (worktree.status?.unstaged ?? 0) +
     (worktree.status?.untracked ?? 0);
+  // hard reset (`git reset --hard`) は untracked ファイルを削除しない (実 git で確認済み) ため、
+  // HistoryTab の hard reset 警告件数には untracked を含めない (sidebar の `dirty` バッジは
+  // 「作業ツリーに何かある」という広い指標のままでよく、意味が異なるので別変数にする。
+  // Phase 5 ゲート 5.V の指摘: untracked 込みだと実際に失われる件数より過大表示になっていた)。
+  const resetLossCount = (worktree.status?.staged ?? 0) + (worktree.status?.unstaged ?? 0);
+  const untrackedCount = worktree.status?.untracked ?? 0;
 
   const sectionHead = (
     title: string,
@@ -585,7 +615,15 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
               />
             </div>
           ) : (
-            <HistoryTab key={`h${reloadKey}`} dir={dir} />
+            <HistoryTab
+              key={`h${reloadKey}`}
+              dir={dir}
+              operation={operation}
+              busy={busy}
+              dirty={resetLossCount}
+              untracked={untrackedCount}
+              onAct={act}
+            />
           )}
         </div>
       </div>

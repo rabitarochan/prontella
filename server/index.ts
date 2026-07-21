@@ -428,6 +428,98 @@ app.post('/api/git/discard-all', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// 履歴タブから任意コミットへの reset。mode はホワイトリスト外、hash は形式不一致でそれぞれ
+// 400 を返す必要があるため asyncHandler (常に 500) ではなく自前で包む
+// (POST /api/git/operation と同じパターン)。hash の形式検証 (`/^[0-9a-f]{4,40}$/i`) が
+// 引数インジェクションに対する主防壁 (server/git.ts の resetToCommit 参照)。
+const RESET_MODES: readonly git.ResetMode[] = ['soft', 'mixed', 'hard'];
+
+app.post('/api/git/reset', (req, res) => {
+  handleReset(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+async function handleReset(req: express.Request, res: express.Response): Promise<void> {
+  const dir = bodyDir(req);
+  const hash = String(req.body.hash ?? '');
+  if (!/^[0-9a-f]{4,40}$/i.test(hash)) {
+    res.status(400).json({ error: '不正なコミットハッシュです' });
+    return;
+  }
+  const mode = String(req.body.mode ?? '');
+  if (!RESET_MODES.includes(mode as git.ResetMode)) {
+    res.status(400).json({ error: `不正な mode です: ${mode}` });
+    return;
+  }
+  await git.resetToCommit(dir, hash, mode as git.ResetMode);
+  res.json({ ok: true });
+}
+
+// 履歴タブから任意コミットの cherry-pick。hash の形式検証は POST /api/git/reset と同じ理由
+// (引数インジェクション対策が主目的) で asyncHandler ではなく自前で包む。競合等の git 自身の
+// エラーは通常どおり catch -> 500 {error} でよい (作業ツリーは cherry-pick 進行中の状態に
+// 入るが、その検出/中止は GET /api/git/status の operation と POST /api/git/operation が担う)。
+app.post('/api/git/cherry-pick', (req, res) => {
+  handleCherryPick(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+async function handleCherryPick(req: express.Request, res: express.Response): Promise<void> {
+  const dir = bodyDir(req);
+  const hash = String(req.body.hash ?? '');
+  if (!/^[0-9a-f]{4,40}$/i.test(hash)) {
+    res.status(400).json({ error: '不正なコミットハッシュです' });
+    return;
+  }
+  await git.cherryPick(dir, hash);
+  res.json({ ok: true });
+}
+
+// 履歴タブから任意コミットの revert。cherry-pick と同一パターン (hash 形式検証のみ 400、
+// 競合等の git 自身のエラー (マージコミットの -m 未指定含む) は catch -> 500 {error})。
+app.post('/api/git/revert', (req, res) => {
+  handleRevert(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+async function handleRevert(req: express.Request, res: express.Response): Promise<void> {
+  const dir = bodyDir(req);
+  const hash = String(req.body.hash ?? '');
+  if (!/^[0-9a-f]{4,40}$/i.test(hash)) {
+    res.status(400).json({ error: '不正なコミットハッシュです' });
+    return;
+  }
+  await git.revertCommit(dir, hash);
+  res.json({ ok: true });
+}
+
+// ブランチサイドバーから現在のブランチを選択ブランチ (onto) の上に rebase。onto はハッシュと
+// 異なり `/` や `.` を含み得るブランチ名のため hash 系のような固定書式検証はできず、先頭 `-`
+// のみ 400 で拒否する (引数インジェクション対策の主防壁。server/git.ts の rebaseOnto 参照)。
+// この理由で asyncHandler (常に 500) ではなく reset/cherry-pick/revert と同じ自前ラップにする。
+// 競合等の git 自身のエラーは通常どおり catch -> 500 {error} でよい (作業ツリーは rebase
+// 進行中の状態に入るが、その検出/中止は GET /api/git/status の operation と
+// POST /api/git/operation が担う)。
+app.post('/api/git/rebase', (req, res) => {
+  handleRebase(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+async function handleRebase(req: express.Request, res: express.Response): Promise<void> {
+  const dir = bodyDir(req);
+  const onto = String(req.body.onto ?? '');
+  if (!onto || onto.startsWith('-')) {
+    res.status(400).json({ error: `不正な onto です: ${onto}` });
+    return;
+  }
+  await git.rebaseOnto(dir, onto);
+  res.json({ ok: true });
+}
+
 app.post('/api/git/fetch', asyncHandler(async (req, res) => {
   await git.fetchAll(bodyDir(req));
   res.json({ ok: true });
@@ -493,16 +585,33 @@ app.post('/api/git/remote-set-url', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.post('/api/git/merge', asyncHandler(async (req, res) => {
+// branch の空/先頭 `-` ガードは reviewer 指摘 (5.R) による予防的追加 — 現行 git では単独オプション
+// は引数不足エラー、strategy 系は値自体が検証されるため実害は実証されていないが、Phase 5 で
+// 新設した reset/cherry-pick/revert/rebase の 4 ルートと型を揃える (多層防御・一貫性)。
+// この理由で asyncHandler (常に 500) ではなく同型の自前ラップにする。マージ本体・成功パスは
+// 無変更。
+app.post('/api/git/merge', (req, res) => {
+  handleMerge(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+async function handleMerge(req: express.Request, res: express.Response): Promise<void> {
+  const dir = bodyDir(req);
+  const branch = String(req.body.branch ?? '');
+  if (!branch || branch.startsWith('-')) {
+    res.status(400).json({ error: `不正な branch です: ${branch}` });
+    return;
+  }
   const { noFf, ffOnly, message } = req.body ?? {};
   res.json({
-    result: await git.merge(bodyDir(req), String(req.body.branch), {
+    result: await git.merge(dir, branch, {
       noFf: !!noFf,
       ffOnly: !!ffOnly,
       message: typeof message === 'string' && message ? message : undefined,
     }),
   });
-}));
+}
 
 app.post('/api/git/merge-abort', asyncHandler(async (req, res) => {
   await git.mergeAbort(bodyDir(req));

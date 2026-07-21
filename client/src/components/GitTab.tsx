@@ -5,6 +5,7 @@ import type {
   BranchInfo,
   GitOperation,
   GitOperationAction,
+  RemoteInfo,
   Repo,
   StashEntry,
   StatusFile,
@@ -16,6 +17,7 @@ import { useConfirm } from './ConfirmDialog';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import DiffTabsPane, { conflictTabKey, diffTabKey, type WorkTab } from './DiffTabsPane';
 import HistoryTab from './HistoryTab';
+import { usePrompt } from './PromptDialog';
 
 type GitView = 'status' | 'history';
 
@@ -34,8 +36,10 @@ const OPERATION_SKIP_UNSUPPORTED: readonly GitOperation[] = ['merge'];
 export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Worktree }) {
   const refreshDeck = useDeck((s) => s.refresh);
   const { confirm: confirmDialog, dialog } = useConfirm();
+  const { prompt: promptDialog, dialog: promptDlg } = usePrompt();
   const [view, setView] = useState<GitView>('status');
   const [branches, setBranches] = useState<BranchInfo[]>([]);
+  const [gitRemotes, setGitRemotes] = useState<RemoteInfo[]>([]);
   const [stashes, setStashes] = useState<StashEntry[]>([]);
   const [openLocal, setOpenLocal] = useState(true);
   const [openRemote, setOpenRemote] = useState(false);
@@ -107,6 +111,7 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
 
   const load = useCallback(() => {
     api.branches(repo.id).then(setBranches).catch(() => {});
+    api.remotes(dir).then(setGitRemotes).catch(() => {});
     api.stashList(dir).then(setStashes).catch(() => {});
     api
       .gitStatus(dir)
@@ -189,6 +194,19 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
     setBranchMenu({ x: e.clientX, y: e.clientY, branch });
   }, []);
 
+  // rename は非破壊操作 (git 自身が名前衝突を拒否する) なので ConfirmDialog は挟まず、
+  // 新名の入力だけ PromptDialog (native prompt() の代替) を経由する。
+  const renameBranch = async (b: BranchInfo) => {
+    const name = await promptDialog({
+      title: 'ブランチ名を変更',
+      message: `'${b.name}' の新しい名前を入力してください。`,
+      defaultValue: b.name,
+      confirmLabel: '変更',
+    });
+    if (!name || name === b.name) return;
+    void act(() => api.renameBranch(dir, b.name, name), `${b.name} を ${name} に変更しました`);
+  };
+
   const mergeBranch = async (b: BranchInfo, ffOnly: boolean) => {
     const target = currentBranch ?? '現在のブランチ';
     const ok = await confirmDialog({
@@ -230,35 +248,123 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
     void act(() => api.operationAction(dir, operation, action), successMsg);
   };
 
+  // BranchTree はカレントブランチ行でも右クリックを許すので、ここで項目別に制御する:
+  // 切り替え/マージ 2 種/削除は git 自身も拒否する自明な無効操作なので UI 上も disabled にし、
+  // 「名前を変更…」だけはカレントブランチでも動作する (renameBranch 参照) ので有効のままにする。
   const branchMenuItems = (b: BranchInfo): ContextMenuItem[] => {
     const usedElsewhere = !!b.worktreePath && b.worktreePath !== worktree.path.replace(/\\/g, '/');
     return [
       {
         label: '切り替え',
         icon: 'arrow-swap',
-        disabled: busy || usedElsewhere,
+        disabled: busy || usedElsewhere || b.current,
         onClick: () => void act(() => api.switchBranch(dir, b.name), `${b.name} に切り替えました`),
       },
       {
         label: `'${b.name}' を現在のブランチにマージ (--no-ff)`,
         icon: 'git-merge',
-        disabled: busy,
+        disabled: busy || b.current,
         onClick: () => void mergeBranch(b, false),
       },
       {
         label: 'fast-forward のみでマージ',
         icon: 'git-merge',
-        disabled: busy,
+        disabled: busy || b.current,
         onClick: () => void mergeBranch(b, true),
+      },
+      {
+        label: '名前を変更…',
+        icon: 'edit',
+        disabled: busy || usedElsewhere,
+        onClick: () => void renameBranch(b),
       },
       {
         label: '削除',
         icon: 'trash',
-        disabled: busy || usedElsewhere,
+        disabled: busy || usedElsewhere || b.current,
         danger: true,
         onClick: () => deleteBranch(b.name),
       },
     ];
+  };
+
+  // リモートブランチの削除はリモートに波及する破壊的操作 (元に戻せない) なので
+  // ローカル削除と異なり ConfirmDialog(danger) を必須で挟む。
+  const deleteRemoteBranch = async (b: BranchInfo) => {
+    const ok = await confirmDialog({
+      title: 'リモートブランチを削除',
+      message: `'${b.name}' をリモートから削除しますか?\nこの操作はリモートに反映され、元に戻せません。`,
+      confirmLabel: '削除',
+      severity: 'danger',
+    });
+    if (!ok) return;
+    void act(() => api.deleteRemoteBranch(dir, b.name), `${b.name} を削除しました`);
+  };
+
+  const remoteBranchMenuItems = (b: BranchInfo): ContextMenuItem[] => [
+    {
+      label: 'チェックアウト',
+      icon: 'arrow-swap',
+      disabled: busy,
+      onClick: () =>
+        void act(
+          () => api.switchBranchTracking(dir, b.name),
+          `${b.name} を追跡するローカルブランチを作成しました`,
+        ),
+    },
+    {
+      label: 'リモートブランチを削除…',
+      icon: 'trash',
+      disabled: busy,
+      danger: true,
+      onClick: () => void deleteRemoteBranch(b),
+    },
+  ];
+
+  // リモート追加は非破壊操作 (重複 name は git 自身が拒否する) なので確認は挟まず、
+  // name → URL の 2 段 PromptDialog (usePrompt) だけを通す。
+  const addRemote = async () => {
+    const name = await promptDialog({
+      title: 'リモートを追加',
+      message: 'リモート名を入力してください。',
+      placeholder: 'origin',
+      confirmLabel: '次へ',
+    });
+    if (!name) return;
+    const url = await promptDialog({
+      title: 'リモートを追加',
+      message: `'${name}' の URL を入力してください。`,
+      placeholder: 'https://example.com/repo.git',
+      confirmLabel: '追加',
+    });
+    if (!url) return;
+    void act(() => api.addRemote(dir, name, url), `${name} を追加しました`);
+  };
+
+  // URL の変更も非破壊操作 (取得済みの remote-tracking ref はそのまま残る) なので、
+  // 現在の fetch URL を初期値にした PromptDialog のみで確認なしに実行する。
+  const setRemoteUrl = async (r: RemoteInfo) => {
+    const url = await promptDialog({
+      title: 'リモート URL を変更',
+      message: `'${r.name}' の新しい URL を入力してください。`,
+      defaultValue: r.fetchUrl,
+      confirmLabel: '変更',
+    });
+    if (!url || url === r.fetchUrl) return;
+    void act(() => api.setRemoteUrl(dir, r.name, url), `${r.name} の URL を変更しました`);
+  };
+
+  // リモート自体の削除は remote-tracking ref を丸ごと消す破壊的操作なので
+  // ConfirmDialog(danger) を必須で挟む (リモートブランチ削除と同じ扱い)。
+  const removeRemote = async (r: RemoteInfo) => {
+    const ok = await confirmDialog({
+      title: 'リモートを削除',
+      message: `'${r.name}' を削除しますか?\nこのリモートの追跡ブランチ (${r.name}/*) も一覧から消えます。`,
+      confirmLabel: '削除',
+      severity: 'danger',
+    });
+    if (!ok) return;
+    void act(() => api.removeRemote(dir, r.name), `${r.name} を削除しました`);
   };
 
   const locals = branches.filter((b) => !b.remote);
@@ -342,13 +448,52 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
           />
         )}
 
-        {sectionHead('リモート', openRemote, () => setOpenRemote((v) => !v))}
-        {openRemote &&
-          (remotes.length === 0 ? (
-            <div className="git-side-empty">リモートブランチはありません</div>
-          ) : (
-            <BranchTree branches={remotes} />
-          ))}
+        {sectionHead('リモート', openRemote, () => setOpenRemote((v) => !v), {
+          icon: 'add',
+          title: 'リモートを追加',
+          onClick: () => void addRemote(),
+        })}
+        {openRemote && (
+          <>
+            {gitRemotes.length === 0 ? (
+              <div className="git-side-empty">リモートはありません</div>
+            ) : (
+              gitRemotes.map((r) => (
+                <div
+                  key={r.name}
+                  className="git-branch-row"
+                  title={`fetch: ${r.fetchUrl}\npush: ${r.pushUrl}`}
+                >
+                  <span className="codicon codicon-remote branch-icon" />
+                  <span className="branch-name">{r.name}</span>
+                  <span className="branch-actions">
+                    <button
+                      className="icon-btn"
+                      title="URL を変更…"
+                      disabled={busy}
+                      onClick={() => void setRemoteUrl(r)}
+                    >
+                      <span className="codicon codicon-edit" />
+                    </button>
+                    <button
+                      className="icon-btn"
+                      title="削除…"
+                      disabled={busy}
+                      onClick={() => void removeRemote(r)}
+                    >
+                      <span className="codicon codicon-trash" />
+                    </button>
+                  </span>
+                </div>
+              ))
+            )}
+            {remotes.length === 0 ? (
+              <div className="git-side-empty">リモートブランチはありません</div>
+            ) : (
+              <BranchTree branches={remotes} onContextMenu={openBranchMenu} />
+            )}
+          </>
+        )}
 
         {sectionHead('スタッシュ', openStash, () => setOpenStash((v) => !v), {
           icon: 'archive',
@@ -448,11 +593,16 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
         <ContextMenu
           x={branchMenu.x}
           y={branchMenu.y}
-          items={branchMenuItems(branchMenu.branch)}
+          items={
+            branchMenu.branch.remote
+              ? remoteBranchMenuItems(branchMenu.branch)
+              : branchMenuItems(branchMenu.branch)
+          }
           onClose={() => setBranchMenu(null)}
         />
       )}
       {dialog}
+      {promptDlg}
     </div>
   );
 }

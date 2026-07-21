@@ -108,6 +108,13 @@ export interface StashEntry {
   message: string;
 }
 
+// server/git.ts の RemoteInfo と手動同期(共有型機構がないため)
+export interface RemoteInfo {
+  name: string;
+  fetchUrl: string;
+  pushUrl: string;
+}
+
 export interface CommitFile {
   path: string;
   origPath: string | null;

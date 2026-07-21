@@ -115,7 +115,7 @@ export default function BranchTree({
         style={{ paddingLeft }}
         title={b.name}
         onContextMenu={
-          onContextMenu && !isCurrent
+          onContextMenu
             ? (e) => {
                 e.preventDefault();
                 onContextMenu(e, b);

@@ -587,11 +587,22 @@ export async function fetchAll(dir: string): Promise<void> {
   await runGit(dir, ['fetch', '--all', '--prune'], NETWORK_TIMEOUT);
 }
 
-export async function pull(dir: string): Promise<string> {
-  return runGit(dir, ['pull'], NETWORK_TIMEOUT);
+export async function pull(dir: string, opts: { rebase?: boolean } = {}): Promise<string> {
+  const args = ['pull'];
+  if (opts.rebase) args.push('--rebase');
+  return runGit(dir, args, NETWORK_TIMEOUT);
 }
 
-export async function push(dir: string): Promise<string> {
+export async function push(
+  dir: string,
+  opts: { forceWithLease?: boolean } = {},
+): Promise<string> {
+  if (opts.forceWithLease) {
+    // bare --force はミッション制約で不使用。--force-with-lease は fetch 済みの
+    // remote-tracking ref (stale info) と実際のリモートを比較し、他者の push で
+    // 進んでいれば拒否する (犠牲防止)。
+    return runGit(dir, ['push', '--force-with-lease'], NETWORK_TIMEOUT);
+  }
   try {
     await runGit(dir, ['rev-parse', '--abbrev-ref', '@{u}']);
     return await runGit(dir, ['push'], NETWORK_TIMEOUT);
@@ -599,6 +610,60 @@ export async function push(dir: string): Promise<string> {
     // no upstream yet -> publish the current branch
     return runGit(dir, ['push', '-u', 'origin', 'HEAD'], NETWORK_TIMEOUT);
   }
+}
+
+// ---- remotes ------------------------------------------------------------------
+
+export interface RemoteInfo {
+  name: string;
+  fetchUrl: string;
+  pushUrl: string;
+}
+
+/**
+ * `git remote -v` の出力 (name / URL / (fetch|push) の 3 列、fetch と push で 2 行) を
+ * name ごとに畳み込む純粋関数。URL 部は `\S+` ではなく `.+` で受ける — Windows のスペース
+ * 入りパス (`C:\My Documents\repo` 等) を URL にした場合、旧実装の `\S+` は空白手前で
+ * 切れてしまい行全体がマッチせず取りこぼされていた (4.R レビューで実測)。`.+` は貪欲マッチ
+ * だが末尾の `\s+\((fetch|push)\)$` を満たすまでバックトラックするため、空白入り URL でも
+ * 末尾の `(fetch)`/`(push)` を正しく切り離せる。テストは git.test.ts 参照。
+ */
+export function parseRemotesOutput(out: string): RemoteInfo[] {
+  const byName = new Map<string, RemoteInfo>();
+  for (const line of out.split('\n')) {
+    const m = line.match(/^(\S+)\s+(.+)\s+\((fetch|push)\)$/);
+    if (!m) continue;
+    const [, name, url, kind] = m;
+    const entry = byName.get(name) ?? { name, fetchUrl: '', pushUrl: '' };
+    if (kind === 'fetch') entry.fetchUrl = url;
+    else entry.pushUrl = url;
+    byName.set(name, entry);
+  }
+  return [...byName.values()];
+}
+
+/**
+ * add/remove/set-url はローカル config 操作のみでネットワークアクセスが発生しないため、
+ * 他の remote 系関数と同様 NETWORK_TIMEOUT は付与しない。
+ */
+export async function listRemotes(dir: string): Promise<RemoteInfo[]> {
+  const out = await runGit(dir, ['remote', '-v']);
+  return parseRemotesOutput(out);
+}
+
+// name/url はユーザー入力をそのまま受け取るため、`-` で始まる name (例: `-f`) がオプションと
+// 誤認識されない (かつ実行されない) よう `--` でオプション解析を打ち切る (4.R レビュー指摘、
+// 実 git で `add`/`remove`/`set-url` いずれも `--` を受理することを確認済み)。
+export async function addRemote(dir: string, name: string, url: string): Promise<void> {
+  await runGit(dir, ['remote', 'add', '--', name, url]);
+}
+
+export async function removeRemote(dir: string, name: string): Promise<void> {
+  await runGit(dir, ['remote', 'remove', '--', name]);
+}
+
+export async function setRemoteUrl(dir: string, name: string, url: string): Promise<void> {
+  await runGit(dir, ['remote', 'set-url', '--', name, url]);
 }
 
 // ---- branches ---------------------------------------------------------------
@@ -610,8 +675,51 @@ export async function switchBranch(dir: string, branch: string, create = false):
   await runGit(dir, args);
 }
 
+/**
+ * リモート追跡ブランチ (例: `origin/feature/x`) から同名のローカルブランチを作成して
+ * 切り替える。`git switch --track` は -c 相当を暗黙に行い、ローカル名はリモート名を
+ * 除いた部分を DWIM で自動採用する (例: `origin/feature/x` -> ローカル `feature/x`)。
+ * 同名ローカルブランチが既存の場合は git 自身が拒否し、runGit が例外化する。
+ * remoteBranch は listBranches() が返す git 自身の出力由来で実害はないが、新規の
+ * remote 系関数群 (`--` 追加済み) との一貫性のため防御的に `--` を付ける
+ * (`git switch --track --` が受理されることは実 git で確認済み)。
+ */
+export async function switchBranchTracking(dir: string, remoteBranch: string): Promise<void> {
+  await runGit(dir, ['switch', '--track', '--', remoteBranch]);
+}
+
 export async function deleteBranch(repoPath: string, branch: string, force = false): Promise<void> {
   await runGit(repoPath, ['branch', force ? '-D' : '-d', branch]);
+}
+
+/**
+ * リモートブランチを削除する (`push <remote> --delete <branch>`)。`remoteBranch` は
+ * listBranches() が返す表示名 (例: `origin/feature/x`) をそのまま受け取り、最初の `/` で
+ * remote 名とブランチ名に分割する (remote 名自体に `/` が入らない前提。ブランチ名側に
+ * `/` を含むケース (`feature/x` 等) はそのまま branch に残る)。ネットワーク操作のため
+ * NETWORK_TIMEOUT を付与する。branch は git 自身の出力由来で実害はないが、新規の remote
+ * 系関数群との一貫性のため防御的に `--` を付ける (`git push <remote> --delete --` が
+ * 受理されることは実 git で確認済み)。
+ */
+export async function deleteRemoteBranch(dir: string, remoteBranch: string): Promise<void> {
+  const slash = remoteBranch.indexOf('/');
+  if (slash < 0) throw new Error(`remote/branch 形式ではありません: ${remoteBranch}`);
+  const remote = remoteBranch.slice(0, slash);
+  const branch = remoteBranch.slice(slash + 1);
+  await runGit(dir, ['push', remote, '--delete', '--', branch], NETWORK_TIMEOUT);
+}
+
+/**
+ * ローカルブランチをリネームする (`branch -m`)。カレントブランチでも動作する。
+ * 強制の `-M` は使わない — 新名が既存ブランチと衝突する場合は git 自身に拒否させ、
+ * runGit の例外化 (呼び出し元で `{error}` に乗る) に任せる。newName はユーザー入力
+ * (PromptDialog) をそのまま受け取るため、`--` を挟まないと `-f`(短縮 `--force` 相当)等が
+ * オプションとして誤解釈され、意図しない強制動作に化ける恐れがある (4.R レビュー指摘。
+ * 実 git で `git branch -m -- feature -f` が `fatal: '-f' is not a valid branch name` で
+ * 拒否されることを確認済み)。
+ */
+export async function renameBranch(dir: string, oldName: string, newName: string): Promise<void> {
+  await runGit(dir, ['branch', '-m', '--', oldName, newName]);
 }
 
 export async function merge(

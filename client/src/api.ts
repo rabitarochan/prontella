@@ -9,6 +9,7 @@ import type {
   GitOperation,
   GitOperationAction,
   LogEntry,
+  RemoteInfo,
   Repo,
   SearchTextResponse,
   StashEntry,
@@ -103,12 +104,30 @@ export const api = {
   discardAll: (dir: string, includeUntracked: boolean) =>
     post<void>('/api/git/discard-all', { dir, includeUntracked }),
   fetch: (dir: string) => post<void>('/api/git/fetch', { dir }),
-  pull: (dir: string) => post<{ result: string }>('/api/git/pull', { dir }),
-  push: (dir: string) => post<{ result: string }>('/api/git/push', { dir }),
+  pull: (dir: string, opts?: { rebase?: boolean }) =>
+    post<{ result: string }>('/api/git/pull', { dir, rebase: opts?.rebase === true }),
+  push: (dir: string, opts?: { forceWithLease?: boolean }) =>
+    post<{ result: string }>('/api/git/push', {
+      dir,
+      forceWithLease: opts?.forceWithLease === true,
+    }),
   switchBranch: (dir: string, branch: string, create = false) =>
     post<void>('/api/git/switch', { dir, branch, create }),
+  // リモート追跡ブランチ (例: origin/feature/x) から同名ローカルブランチを作成して切り替える
+  switchBranchTracking: (dir: string, remoteBranch: string) =>
+    post<void>('/api/git/switch', { dir, branch: remoteBranch, track: true }),
   deleteBranch: (dir: string, branch: string, force = false) =>
     post<void>('/api/git/branch-delete', { dir, branch, force }),
+  renameBranch: (dir: string, oldName: string, newName: string) =>
+    post<void>('/api/git/branch-rename', { dir, oldName, newName }),
+  deleteRemoteBranch: (dir: string, remoteBranch: string) =>
+    post<void>('/api/git/branch-delete-remote', { dir, remoteBranch }),
+  remotes: (dir: string) => request<RemoteInfo[]>(`/api/git/remotes?dir=${q(dir)}`),
+  addRemote: (dir: string, name: string, url: string) =>
+    post<void>('/api/git/remote-add', { dir, name, url }),
+  removeRemote: (dir: string, name: string) => post<void>('/api/git/remote-remove', { dir, name }),
+  setRemoteUrl: (dir: string, name: string, url: string) =>
+    post<void>('/api/git/remote-set-url', { dir, name, url }),
   merge: (
     dir: string,
     branch: string,

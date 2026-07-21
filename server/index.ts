@@ -434,20 +434,62 @@ app.post('/api/git/fetch', asyncHandler(async (req, res) => {
 }));
 
 app.post('/api/git/pull', asyncHandler(async (req, res) => {
-  res.json({ result: await git.pull(bodyDir(req)) });
+  res.json({ result: await git.pull(bodyDir(req), { rebase: req.body.rebase === true }) });
 }));
 
 app.post('/api/git/push', asyncHandler(async (req, res) => {
-  res.json({ result: await git.push(bodyDir(req)) });
+  res.json({
+    result: await git.push(bodyDir(req), {
+      forceWithLease: req.body.forceWithLease === true,
+    }),
+  });
 }));
 
 app.post('/api/git/switch', asyncHandler(async (req, res) => {
-  await git.switchBranch(bodyDir(req), String(req.body.branch), req.body.create === true);
+  // track: リモート追跡ブランチ (例: origin/feature/x) から同名ローカルを作成して切り替え。
+  // create (-c) とは異なる git switch フラグ (--track) を使うため分岐する。
+  if (req.body.track === true) {
+    await git.switchBranchTracking(bodyDir(req), String(req.body.branch));
+  } else {
+    await git.switchBranch(bodyDir(req), String(req.body.branch), req.body.create === true);
+  }
   res.json({ ok: true });
 }));
 
 app.post('/api/git/branch-delete', asyncHandler(async (req, res) => {
   await git.deleteBranch(bodyDir(req), String(req.body.branch), req.body.force === true);
+  res.json({ ok: true });
+}));
+
+// branch-delete (ローカル、git branch -d/-D、瞬時) とは基盤コマンドもリクエスト形状も
+// 異なるネットワーク操作 (git push --delete) のため、フラグ拡張ではなく新ルートにする。
+app.post('/api/git/branch-delete-remote', asyncHandler(async (req, res) => {
+  await git.deleteRemoteBranch(bodyDir(req), String(req.body.remoteBranch));
+  res.json({ ok: true });
+}));
+
+app.post('/api/git/branch-rename', asyncHandler(async (req, res) => {
+  await git.renameBranch(bodyDir(req), String(req.body.oldName), String(req.body.newName));
+  res.json({ ok: true });
+}));
+
+app.get('/api/git/remotes', asyncHandler(async (req, res) => {
+  const dir = requireKnownDir(req);
+  res.json(await git.listRemotes(dir));
+}));
+
+app.post('/api/git/remote-add', asyncHandler(async (req, res) => {
+  await git.addRemote(bodyDir(req), String(req.body.name ?? ''), String(req.body.url ?? ''));
+  res.json({ ok: true });
+}));
+
+app.post('/api/git/remote-remove', asyncHandler(async (req, res) => {
+  await git.removeRemote(bodyDir(req), String(req.body.name ?? ''));
+  res.json({ ok: true });
+}));
+
+app.post('/api/git/remote-set-url', asyncHandler(async (req, res) => {
+  await git.setRemoteUrl(bodyDir(req), String(req.body.name ?? ''), String(req.body.url ?? ''));
   res.json({ ok: true });
 }));
 

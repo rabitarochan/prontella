@@ -27,3 +27,10 @@
 - 2026-07-20 22:17 | surprise: tsconfig の extends は exclude をマージしない(build 側 tsconfig にも test 除外が必要。builder C 実測)
 - 2026-07-20 22:17 | success: 同一ファイルの並列編集は brief で編集領域を明示的に分割すれば worktree 隔離なしで成立(server/git.ts、builder 2 体)
 - 2026-07-20 22:41 | success: レビュー指摘の小修正は元 builder へ SendMessage 継続が速い(コールドスタート回避、attempt 2 は約 2 分で完了)
+- 2026-07-21 00:57 | success: ハイリスク純関数の brief に「実物を観察してから fixture を作れ」「apply --check まで通せ」を入れたことで builder が実バグを実装中に自力検出した(git-client-parity 2.1)
+- [ ] 2026-07-21 | task: editor-state-persistence | Rework | 新モジュール(editorState)の brief で既存モジュールから定数 import させたら、後続タスクで逆方向 import が必要になり循環解消の手戻り。共有定数は依存の最下流(新モジュール側)に最初から置かせるべき
+- [ ] 2026-07-21 | task: editor-state-persistence | Rework | localStorage sanitize にサイズ上限を入れたら reviewer が「書き込み側が無制限」の非対称を検出(未保存編集の無警告消失窓)。読み捨てる上限には書き込み側の対称ガード+ユーザー通知をセットで設計する
+- [ ] 2026-07-21 | task: editor-state-persistence | Success | Monaco は隠し textarea が aria-hidden で CDP の実キー入力がブロックされる。React Fiber から editor インスタンスを取得し executeEdits() を呼べば onChange→dirty→debounce の実経路ごと検証できる(verifier 実証)
+- [ ] 2026-07-21 | task: editor-state-persistence | Surprise | 選択中 worktree は 4 秒ポーリングがファイルハンドルを掴むためか Windows では git worktree remove が 500 で失敗する(force でも)。別 worktree へ切替後は成功。本機能と無関係の既存問題(verifier 発見、未修正)
+- [ ] 2026-07-21 | mission: git-client-parity | Success | セッション中断で死んだ builder を SendMessage 再開し「まず自分の部分差分を git status/diff で検証→続行」パターンが機能。中断報告は失われてもトランスクリプトと作業ツリーから完全復帰できた
+- [ ] 2026-07-21 | mission: git-client-parity | Success | フェーズゲート reviewer が並行編集によるハンク誤破棄を実 git で再現して検出(hunkCount のみの楽観ロックの盲点)。不可逆操作の楽観ロックは「数」でなく「対象の同一性」まで検証する — 設計原則として距離できる

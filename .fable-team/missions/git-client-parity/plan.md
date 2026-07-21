@@ -110,12 +110,12 @@ worktree を任意コミット/detached から作成、format-patch/am、bisect�
 
 | # | タスク | 担当 | サイズ | 観測可能な完了基準 | 依存 | 状態 |
 |---|---|---|---|---|---|---|
-| 2.1 | 純関数モジュール: `splitDiffHunks(diffText)` と `buildPartialPatch(header, hunks, selected)`。**latin1 バイト保存**前提、`\r` と `\ No newline at end of file` を保持。vitest で CRLF/末尾改行なし/複数ハンク/非ASCII を網羅 | builder | M | 該当 vitest ケースが全グリーン | 0.4 | ⬜ |
-| 2.2 | `POST /api/git/apply-hunks {dir,path,scope:'stage'\|'unstage'\|'discard',hunks:number[],expectedHunkCount}`。サーバーで権威 diff を**Buffer で再生成**→ ハンク数照合(不一致は 409 で再読込指示)→ patch 組立 → `git apply --cached`/`--cached --reverse`/`--reverse`(`runGitInput`) | builder | M | 2 ハンクのファイルで 1 ハンクだけ stage → status がそのファイルを staged と unstaged **両方**に出す | 0.1, 2.1 | ⬜ |
-| 2.3 | フロント: DiffPane/DiffTabsPane にハンク表示 + ハンク毎の stage/unstage/discard 操作(**git 由来の parsed hunks で駆動**) | builder | M | dev で各ハンクにボタンが出て、クリックで 2.2 を呼び status が更新される | 2.2 | ⬜ |
+| 2.1 | 純関数モジュール: `splitDiffHunks(diffText)` と `buildPartialPatch(header, hunks, selected)`。**latin1 バイト保存**前提、`\r` と `\ No newline at end of file` を保持。vitest で CRLF/末尾改行なし/複数ハンク/非ASCII を網羅 | builder | M | 該当 vitest ケースが全グリーン | 0.4 | ✅ |
+| 2.2 | `POST /api/git/apply-hunks {dir,path,scope:'stage'\|'unstage'\|'discard',hunks:number[],expectedHunkCount}`。サーバーで権威 diff を**Buffer で再生成**→ ハンク数照合(不一致は 409 で再読込指示)→ patch 組立 → `git apply --cached`/`--cached --reverse`/`--reverse`(`runGitInput`) | builder | M | 2 ハンクのファイルで 1 ハンクだけ stage → status がそのファイルを staged と unstaged **両方**に出す | 0.1, 2.1 | ✅ |
+| 2.3 | フロント: DiffPane/DiffTabsPane にハンク表示 + ハンク毎の stage/unstage/discard 操作(**git 由来の parsed hunks で駆動**) | builder | M | dev で各ハンクにボタンが出て、クリックで 2.2 を呼び status が更新される | 2.2 | ✅ |
 | 2.4 | (P1-13)行単位選択。`buildPartialPatch` にハンク内行選択→ヘッダ recount。vitest 追加。フロントで行チェック UI | builder | M | 1 ハンク内の一部行だけ stage が成立、追加 vitest グリーン | 2.1, 2.3 | ⬜ |
-| 2.V | Phase 2 動作検証 | verifier | M | CRLF/Shift_JIS ファイルで stage/unstage/discard を検証、staged diff 実内容を確認 | 2.2, 2.3 | ⬜ |
-| 2.R | レビュー(パッチ生成の正確性重点) | reviewer | S | 指摘反映 | 2.V | ⬜ |
+| 2.V | Phase 2 動作検証 | verifier | M | CRLF/Shift_JIS ファイルで stage/unstage/discard を検証、staged diff 実内容を確認 | 2.2, 2.3 | ✅ |
+| 2.R | レビュー(パッチ生成の正確性重点) | reviewer | S | 指摘反映 | 2.V | ✅ |
 
 > 補足: 2.4(行単位)は P1 精緻化。Phase 2 の Gate は 2.1–2.3(ハンク単位)で判定し、2.4 は後続に回してよい。
 

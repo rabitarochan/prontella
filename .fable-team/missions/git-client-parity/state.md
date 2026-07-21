@@ -5,40 +5,46 @@
 > If this file and reality (code, test results) disagree, reality is the truth. Record it in the journal and fix this file.
 
 - slug: `git-client-parity`
-- Phase: Phase 1 完了(ゲート通過)→ Phase 2 — ハンク単位ステージ(中核・高リスク)
-- Progress: 8 / 30 実装タスク完了(Phase 0: 0.1〜0.4 ✅ / Phase 1: 1.1〜1.4 ✅。すべて verifier 検証 + reviewer LGTM 済み)
-- Last updated: 2026-07-20 23:25
+- Phase: **Phase 2 完了(ゲート通過)** → 次はユーザー判断(2.4 行単位選択 or Phase 3 コンフリクト解決)
+- Progress: 11 / 30 実装タスク完了(Phase 0: 0.1〜0.4 ✅ / Phase 1: 1.1〜1.4 ✅ / Phase 2: 2.1〜2.3 ✅ + ゲート 2.V/2.R ✅。2.4(行単位、P1)はゲート外で未着手)
+- Last updated: 2026-07-21 14:29(Phase 2 ゲート通過のチェックポイント)
 - Updated by: Conductor session (fable)
 
 ## Next move (most important)
 
-**/loop はフェーズ境界(Phase 1 ゲート通過)で停止。ユーザーの再開指示待ち。** 再開時は Phase 2 へ:
+**Phase 2 はゲート通過済み。フェーズ境界で停止中 — ユーザーの選択待ち:**
 
-1. **2.1(builder、単独委任)**: 純関数モジュール(置き場所は `server/diffPatch.ts` など新ファイル推奨)
-   `splitDiffHunks(diffText)` と `buildPartialPatch(header, hunks, selected)` を実装 + vitest。
-   **latin1 バイト保存**前提、`\r` と `\ No newline at end of file` を保持。テストケースに
-   CRLF / 末尾改行なし / 複数ハンク / 非 ASCII バイトを必ず含める(plan.md の R1/R2/R3 の主戦場)
-2. **2.2(builder、2.1 完了後)**: `POST /api/git/apply-hunks {dir,path,scope,hunks[],expectedHunkCount}`。
-   サーバーで権威 diff を Buffer 再生成(git diff [--cached] -- path)→ ハンク数照合(不一致 409)→
-   patch 組立 → runGitInput で `git apply --cached` / `--cached --reverse` / `--reverse`
-3. **2.3(builder)**: DiffPane/DiffTabsPane にハンク表示 + ハンク毎 stage/unstage/discard ボタン
-4. ゲート: vitest 全グリーン + verifier が **CRLF と Shift_JIS ファイル**で実測 + reviewer(パッチ正確性重点)
-5. 2.4(行単位選択)はゲート外。Phase 2 ゲート後に回してよい
+1. **選択肢 A(推奨)**: Phase 3 — コンフリクト解決(P0。ours/theirs/手動の 3 経路 + continue/abort。plan.md L122〜)
+2. **選択肢 B**: 2.4 — 行単位選択(P1 精緻化。buildPartialPatch のヘッダー recount + 行チェック UI)
+3. 再開時はどちらもいつもの委任ループ(builder → verifier → reviewer)で
+
+**持ち越し債務(いずれも記録済み・非ブロッカー)**: (1) api.ts request() のステータス保持(409 判定の恒久化、
+後続フェーズで)/ (2) SJIS diff 表示の文字化け(アプリ横断のエンコーディング課題、専用タスク推奨)/
+(3) 選択中 worktree の削除が Windows ロックで失敗(editor-persistence 検証で発見した既存問題)
 
 ## In progress / stopping point
 
-**ループ停止時の申し送り(2026-07-20 23:25)**:
-- 停止理由: Phase 1 ゲート通過(フェーズ境界 = 無人ループの設計上の停止点)
-- 進捗: Phase 0–1 完了・コミット済み(ブランチ feat/git-client-parity)。全機能 verifier 実測 +
-  Conductor ブラウザー検証 + reviewer LGTM(Phase 0: rec 1 件修正済み / Phase 1: rec 1 件修正済み)
-- 再開方法: `/fable-team:work`(1 サイクル)または `/loop /fable-team:work`(次のフェーズ境界まで自動)
+2026-07-21 14:29 — Phase 2 ゲート通過でチェックポイント。委任中の subagent なし。
+ゲート内で実施した追加修正: 兄弟タブ自動更新(2.3 attempt 2)/ apply-hunks の header 同一性ロック
+(2.R rec#1。expectedHeaders 追加 — server/index.ts・api.ts・DiffHunkStrip.tsx)。
+コミットは未実施(ユーザーへ提案中。Phase 2 実装一式 = 作業ツリーの未コミット変更全部 + 新規 4 ファイル)。
+
+**注記(このブランチの混在物)**: 本ミッションと別件の一件タスク「エディター状態の永続化」が
+コミット d8131be としてこのブランチに載っている(検証・レビュー済みの完結した変更)。
+ミッションの未コミット変更(api.ts / DiffPane / DiffTabsPane / GitTab / styles.css の hunk-strip 分 /
+types.ts / server/git.ts / server/index.ts / 新規 diffPatch・diffHunk・DiffHunkStrip)はすべて作業ツリーに残っている。
+このセッションが死んでいた場合: `git status` と `npm test`(36 件)で現実を確認してから 2.V へ
 
 ## Verification status
 
 - Verified(Phase 1 追加分): 複数行本文の API 往復と UI 表示 / --no-ff マージ(UI からも親 2 つ)/
   ffOnly の成功・拒否 / undo の staged 復帰・初回ガード / discardAll の staged 温存・未追跡削除・
   キャンセル無変更 / subdir 正規化(undo・discardAll)/ HistoryTab レース修正後の typecheck・test
-- Unverified: なし(Phase 0–1 範囲)
+- Verified(Phase 2 追加分): CRLF/SJIS のハンク stage/unstage/discard(staged バイト cmp 完全一致・
+  U+FFFD なし)/ 409 時の index・worktree 無変更 / UI 全経路(表示・スクロール連動・danger 確認・
+  409 自動再読込・兄弟タブ双方向自動更新)/ header 同一性ロック(再現シナリオ 409・誤爆なし・偽 409 なし)/
+  vitest 36・typecheck green
+- Unverified: なし(Phase 0–2 範囲)
 
 ## Blockers / notes
 

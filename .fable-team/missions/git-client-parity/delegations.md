@@ -51,3 +51,13 @@ Dossier format (⤴ / non-convergence only):
 - 2026-07-20 23:22 | task 1.V | verifier(sonnet) | attempt 1 | ✅ accepted | 4 機能 + subdir 正規化を API 実測で全 Verified。UI 目視は Conductor 補完
 - 2026-07-20 23:22 | phase 1 gate | reviewer(opus) | attempt 1 | ✅ LGTM | must-fix 0 / recommended 1 / FYI 4
 - 2026-07-20 23:22 | task 1.1 | builder(sonnet) | attempt 2 | ✅ accepted | HistoryTab の 2 effect を統合し cancelled ガード追加(レース解消)
+- 2026-07-21 00:57 | task 2.1 | builder(sonnet) | attempt 1 | ✅ accepted | vitest 15/15。corrupt patch バグを自力検出・修正・回帰テスト化
+- 2026-07-21 01:04 | task 2.2 | builder(sonnet) | attempt 1(継続) | ✅ accepted | HTTP スモーク a〜e 全通過。CRLF+日本語バイト保持・409 無変更を実測
+- 2026-07-21 01:15 | task 2.3 | builder(sonnet) | attempt 1 | ✅ accepted | DiffHunkStrip + スクロール連動 + 409 自動再読込。409 の文字列一致判定は 2.R 送り
+- 2026-07-21 13:16 | task 2.V | verifier(sonnet) | attempt 1 | ✅ accepted | CRLF/SJIS バイト cmp 一致・409 無変更・回帰 36/36 を実測 Verified
+- 2026-07-21 13:32 | task 2.V(UI) | claude(sonnet) | attempt 1 | ✅ accepted | ハンク帯 6 項目実測。兄弟タブ非更新(2.3 起因)と SJIS 表示文字化け(既存)を発見
+- 2026-07-21 13:36 | task 2.3 | builder(sonnet) | attempt 2 | ✅ accepted | 兄弟タブ自動更新を既存 reload 経路へ配線。409 分岐不変・test 36 green
+- 2026-07-21 13:50 | task 2.3 再検証 | claude(sonnet) | attempt 1 | ✅ accepted | 兄弟タブ双方向・409 非伝播をネットワークログで実測 ✅
+- 2026-07-21 13:59 | phase 2 gate | reviewer(opus) | attempt 1 | ✅ LGTM | must-fix 0 / recommended 2 / FYI 3(rec#1 はゲート内修正へ格上げ)
+- 2026-07-21 14:26 | task 2.2+2.3 rec#1 | builder(sonnet) | attempt 1(中断再開) | ✅ accepted | header 同一性ロック追加。再現シナリオ 409・誤爆なし・偽 409 なしを実測
+- 2026-07-21 14:29 | phase 2 gate | reviewer(opus) | attempt 2(修正確認) | ✅ LGTM | rec#1 解消を確認。must-fix 0。ゲート通過

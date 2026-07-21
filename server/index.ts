@@ -8,6 +8,7 @@ import * as config from './config.js';
 import * as git from './git.js';
 import * as files from './files.js';
 import * as search from './search.js';
+import { buildPartialPatch, splitDiffHunks } from './diffPatch.js';
 import { PtyManager } from './pty.js';
 
 const PORT = Number(process.env.PORT) || 3711;
@@ -264,6 +265,20 @@ app.get('/api/git/diff', asyncHandler(async (req, res) => {
   });
 }));
 
+// ハンク単位ステージ UI 用。scope=worktree: index vs working tree(git diff)、
+// scope=staged: HEAD vs index(git diff --cached)。表示用なので utf8 文字列化でよい —
+// ハンク境界の分割は '\n' と '@@ ' の位置だけで決まるため、apply-hunks 側の latin1 パースと
+// hunkCount は一致する(POST /api/git/apply-hunks の expectedHunkCount にそのまま使える)。
+app.get('/api/git/diff-hunks', asyncHandler(async (req, res) => {
+  const dir = requireKnownDir(req);
+  const filePath = queryStr(req, 'path');
+  const scope = queryStr(req, 'scope');
+  if (scope !== 'worktree' && scope !== 'staged') throw new Error(`不正な scope です: ${scope}`);
+  const diffBuf = await git.getDiffBuffer(dir, filePath, scope === 'staged');
+  const { header, hunks } = splitDiffHunks(diffBuf.toString('utf8'));
+  res.json({ header, hunks, hunkCount: hunks.length });
+}));
+
 app.post('/api/git/stage', asyncHandler(async (req, res) => {
   await git.stageFile(bodyDir(req), String(req.body.path));
   res.json({ ok: true });
@@ -318,6 +333,90 @@ app.post('/api/git/discard', asyncHandler(async (req, res) => {
   }
   res.json({ ok: true });
 }));
+
+// ハンク単位ステージ/アンステージ/破棄。差分は毎回サーバー側で再生成して検証する
+// (クライアントが古いハンク一覧をもとに送ってくる競合を expectedHunkCount + 選択ハンクの
+// header 一致で検出するため。ハンク数が同じまま並行編集で中身が別位置にずれるケースは
+// hunkCount だけでは検出できず、クリックしたのと別のハンクに操作が当たる恐れがある
+// — discard は不可逆なのでこれはデータ喪失になりうる。実 git で再現確認済み)。
+// asyncHandler は 500 固定のため、差分不一致(409)を返せるようこのルートだけ自前で包む。
+app.post('/api/git/apply-hunks', (req, res) => {
+  applyHunks(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+async function applyHunks(req: express.Request, res: express.Response): Promise<void> {
+  const dir = bodyDir(req);
+  const filePath = String(req.body.path ?? '');
+  if (!filePath) throw new Error('path が必要です');
+  const scope = req.body.scope;
+  if (scope !== 'stage' && scope !== 'unstage' && scope !== 'discard') {
+    throw new Error(`不正な scope です: ${scope}`);
+  }
+  const selected = req.body.hunks;
+  if (!Array.isArray(selected) || selected.length === 0 || !selected.every((n) => Number.isInteger(n))) {
+    throw new Error('hunks は空でない number[] が必要です');
+  }
+  const expectedHunkCount = Number(req.body.expectedHunkCount);
+  const expectedHeaders: unknown = req.body.expectedHeaders;
+  // フェイルクローズド: selected と同順・同長の string[] でなければ検証不能なので即 409 とする
+  // (expectedHunkCount が欠落 → NaN → 下の hunkCount 比較で 409 になるのと同じ精神)。
+  if (
+    !Array.isArray(expectedHeaders) ||
+    expectedHeaders.length !== selected.length ||
+    !expectedHeaders.every((h): h is string => typeof h === 'string')
+  ) {
+    res.status(409).json({ error: '差分が変化しました。再読み込みしてください' });
+    return;
+  }
+
+  // stage/discard は worktree 差分(git diff)、unstage は staged 差分(git diff --cached)が
+  // 権威データ。他画面での並行操作でハンク構成がずれていないか expectedHunkCount で確認する。
+  const diffBuf = await git.getDiffBuffer(dir, filePath, scope === 'unstage');
+  const { header, hunks } = splitDiffHunks(diffBuf.toString('latin1'));
+  if (hunks.length === 0 || hunks.length !== expectedHunkCount) {
+    res.status(409).json({ error: '差分が変化しました。再読み込みしてください' });
+    return;
+  }
+
+  // hunkCount が同じでも、並行編集でハンクの中身が別位置に動いていることがある。選択した
+  // 各インデックスについて、権威diffのハンク header がクライアントの期待(expectedHeaders)と
+  // 一致するか確認する。
+  //
+  // ⚠ エンコーディングの罠: クライアントの header は GET /api/git/diff-hunks の utf8 デコード
+  // (`diffBuf.toString('utf8')`)由来。一方このルートの `hunks`(適用に使う権威データ)は
+  // latin1 パース(バイト保存。git apply へ渡すバイト列を一切変換しないため)。
+  // `@@ -a,b +c,d @@ <関数名などのコンテキスト>` の後続に日本語が含まれると、utf8 と latin1 で
+  // 同じバイト列でも文字列表現が異なり、latin1 側の header とそのまま比較すると変更が無くても
+  // 偽 409 になってしまう。そこで比較専用に同じ Buffer を utf8 でも再パースし、utf8 側の
+  // header を expectedHeaders と比較する(適用そのものは引き続き latin1 側の `hunks`/`header`
+  // を使う)。
+  //
+  // インデックス対応(utf8 側 i 番目 = latin1 側 i 番目)が保たれる根拠: ハンク境界の分割は
+  // `\n` と行頭 `@@ ` の出現位置だけで決まる(splitDiffHunks)。UTF-8 でも Shift_JIS 系
+  // マルチバイト文字でも、後続バイトの値域は ASCII の `\n`(0x0A)や `@`,` `(0x40,0x20)と
+  // 重ならないため、分割結果のハンク数は utf8/latin1 どちらでデコードしても一致する
+  // (GET /api/git/diff-hunks 側のコメントにも記載済み)。ゆえに selected の同一インデックスで
+  // 両者のハンクを対応づけられる。
+  const { hunks: hunksUtf8 } = splitDiffHunks(diffBuf.toString('utf8'));
+  for (let i = 0; i < selected.length; i++) {
+    const authoritative = hunksUtf8[selected[i]];
+    if (!authoritative || authoritative.header !== expectedHeaders[i]) {
+      res.status(409).json({ error: '差分が変化しました。再読み込みしてください' });
+      return;
+    }
+  }
+
+  const patch = buildPartialPatch(header, hunks, selected);
+  const patchBuf = Buffer.from(patch, 'latin1');
+  const applyArgs =
+    scope === 'stage' ? ['apply', '--cached', '-']
+    : scope === 'unstage' ? ['apply', '--cached', '--reverse', '-']
+    : ['apply', '--reverse', '-']; // discard: worktree の変更を打ち消す(index には触れない)
+  await git.runGitInput(dir, applyArgs, patchBuf); // 失敗(非0終了)はそのまま catch -> 500
+  res.json({ ok: true });
+}
 
 app.post('/api/git/undo-commit', asyncHandler(async (req, res) => {
   await git.undoLastCommit(bodyDir(req));

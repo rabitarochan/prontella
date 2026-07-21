@@ -2,6 +2,7 @@ import type {
   BranchInfo,
   BranchStatus,
   CommitFile,
+  DiffHunksResult,
   DiffPair,
   FileContent,
   GitOperation,
@@ -71,6 +72,19 @@ export const api = {
     if (opts.origPath) params.set('origPath', opts.origPath);
     return request<DiffPair>(`/api/git/diff-pair?${params}`);
   },
+  diffHunks: (dir: string, path: string, scope: 'worktree' | 'staged') =>
+    request<DiffHunksResult>(`/api/git/diff-hunks?dir=${q(dir)}&path=${q(path)}&scope=${q(scope)}`),
+  applyHunks: (
+    dir: string,
+    path: string,
+    scope: 'stage' | 'unstage' | 'discard',
+    hunks: number[],
+    expectedHunkCount: number,
+    // hunks と同順・同長。選択ハンクの `@@ ...` ヘッダー文字列 — サーバー側が権威 diff の
+    // 同一インデックスの header と突き合わせ、ハンク数は同じでも中身が別位置にずれた
+    // 並行編集を検出する(server/index.ts の POST /api/git/apply-hunks 参照)。
+    expectedHeaders: string[],
+  ) => post<void>('/api/git/apply-hunks', { dir, path, scope, hunks, expectedHunkCount, expectedHeaders }),
   commitFiles: (dir: string, hash: string) =>
     request<CommitFile[]>(`/api/git/commit-files?dir=${q(dir)}&hash=${q(hash)}`),
   commitMessage: (dir: string, hash: string) =>

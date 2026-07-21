@@ -471,6 +471,17 @@ export async function getDiff(
   return runGit(dir, args);
 }
 
+/**
+ * ハンク単位ステージ用の権威 diff を latin1 化前提のバイト列(Buffer)で取得する。
+ * getDiff() は runGit(execFile、UTF-8 デコード)を経由するため CRLF/非ASCII のバイトを
+ * 崩す恐れがある — こちらは runGitInput の生 stdout をそのまま返す(呼び出し側で
+ * `.toString('latin1')` してから diffPatch.ts の純関数に渡す前提)。
+ */
+export async function getDiffBuffer(dir: string, filePath: string, staged: boolean): Promise<Buffer> {
+  const args = staged ? ['diff', '--cached', '--', filePath] : ['diff', '--', filePath];
+  return runGitInput(dir, args, Buffer.alloc(0));
+}
+
 export interface BranchInfo {
   name: string;
   hash: string;

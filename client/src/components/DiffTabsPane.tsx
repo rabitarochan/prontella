@@ -14,6 +14,8 @@ export interface DiffTab {
   path: string;
   origPath: string | null;
   staged: boolean;
+  /** untracked ファイルの合成 diff か (DiffPane 側でハンク操作を出さない判定に使う) */
+  untracked: boolean;
   gen: number; // 増やすと再フェッチ
 }
 
@@ -44,6 +46,16 @@ export default function DiffTabsPane({
   onClose: (key: string) => void;
   onReload: (key: string) => void;
 }) {
+  // ハンク操作 (stage/unstage/discard) が成功したタブ (sourceKey) と同じファイルを
+  // 別スコープで開いている兄弟タブがあれば、既存の「差分を取り直す」と同じ経路
+  // (onReload → gen++ → DiffPane の key が変わって再マウント) で再読込させる。
+  // 操作した本人のタブは DiffPane 内の loadPair (ソフト再読込) で既に更新済みなので除外する。
+  const notifySiblings = (path: string, sourceKey: string) => {
+    for (const t of tabs) {
+      if (t.key !== sourceKey && t.path === path) onReload(t.key);
+    }
+  };
+
   return (
     <div className="git-file-tabs">
       {tabs.length === 0 ? (
@@ -102,6 +114,8 @@ export default function DiffTabsPane({
                   path={t.path}
                   scope={t.staged ? 'staged' : 'worktree'}
                   origPath={t.origPath}
+                  untracked={t.untracked}
+                  onHunksChanged={() => notifySiblings(t.path, t.key)}
                 />
               </div>
             </div>

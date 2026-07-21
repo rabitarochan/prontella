@@ -114,6 +114,19 @@ export interface DiffPair {
   tooLarge: boolean;
 }
 
+// server/diffPatch.ts の DiffHunk と手動同期(共有型機構がないため)
+export interface DiffHunk {
+  header: string;
+  lines: string[];
+}
+
+// GET /api/git/diff-hunks のレスポンス形状。server/index.ts と手動同期(共有型機構がないため)
+export interface DiffHunksResult {
+  header: string;
+  hunks: DiffHunk[];
+  hunkCount: number;
+}
+
 export interface SearchMatch {
   line: number; // 1-based
   column: number; // 1-based, UTF-16 code units

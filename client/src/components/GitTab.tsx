@@ -39,7 +39,10 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
       const hit = prev.find((t) => t.key === key);
       // 既存タブの再クリックは最新の差分を取り直す
       if (hit) return prev.map((t) => (t.key === key ? { ...t, gen: t.gen + 1 } : t));
-      return [...prev, { key, path: file.path, origPath: file.origPath, staged, gen: 0 }];
+      return [
+        ...prev,
+        { key, path: file.path, origPath: file.origPath, staged, untracked: file.untracked, gen: 0 },
+      ];
     });
     setActiveDiff(key);
   }, []);

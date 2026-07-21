@@ -5,26 +5,30 @@
 > If this file and reality (code, test results) disagree, reality is the truth. Record it in the journal and fix this file.
 
 - slug: `git-client-parity`
-- Phase: **Phase 4 完了(ゲート通過)** → 次はユーザー判断(Phase 5 履歴操作 or 2.4 行単位選択)
-- Progress: 20 / 30 実装タスク完了(Phase 0〜4: すべてゲート込み ✅。未着手: 2.4(P1)と Phase 5 以降)
-- Last updated: 2026-07-21 18:02(Phase 4 ゲートクローズのチェックポイント)
+- Phase: **Phase 5 完了(ゲート通過)** → 次はユーザー判断(Phase 6 タグ/スタッシュ差分/ファイル履歴/検索 or 積み残しの 2.4 行単位選択)
+- Progress: 24 / 30 実装タスク完了(Phase 0〜5: すべてゲート込み ✅。未着手: 2.4(P1)と Phase 6)
+- Last updated: 2026-07-21 19:52(Phase 5 ゲートクローズ、コミット/次フェーズはユーザー判断待ち)
 - Updated by: Conductor session (fable)
 
 ## Next move (most important)
 
-**Phase 4 完了(4.V 8 項目 E2E ✅ + ゲート内修正 2 件の実機再確認 ✅ + 4.R LGTM、レビュー反映 5 件込み)。
-ユーザー承認済み: コミット実施済み + 次は Phase 5(履歴操作)。**
+**Phase 5 完了・コミット確定(f901755)。ユーザー選択で次フェーズは Phase 6(タグ/スタッシュ差分/ファイル履歴/検索)。
+新セッションで `/fable-team:resume-mission` から Phase 6 開始。**
 
-1. **次の一手: Phase 5 開始**(reset 3 種 / cherry-pick / revert / rebase。plan.md L153〜。競合時は Phase 3 の競合 UI へ遷移。5.2/5.3/5.4 は 3.1 依存で相互独立=並列可、ただし同一ファイル群を触るなら Phase 3/4 同様の順次継続が安全)— **新セッションで `/fable-team:resume-mission` から**(本セッションのコンテキストが長い)
-2. コミット済み: 318f5eb feat(git) Phase 4 一式(9 files, +602)+ 直後の chore(fable-team) チェックポイント。作業ツリークリーン
-3. 2.4(行単位選択)は引き続き未着手の P1 として残存
+1. **次の一手: Phase 6 開始**(6.1 タグ一覧/作成/削除/push / 6.2 stash 差分閲覧 / 6.3 ファイル履歴+過去版 diff / 6.4 履歴検索(grep/author/path)/ 6.5 blame 任意。plan.md L168〜。**6.1〜6.5 は相互独立=並列可**だが、同一ファイル群(server/git.ts・index.ts・api.ts・types.ts・GitTab.tsx・HistoryTab.tsx)を触るなら Phase 3/4/5 同様の順次継続が安全)
+2. コミット済み: f901755 feat(git) Phase 5 一式(6 files, +335/-6)。誤生成ファイル `e.textContent)` はユーザー承認で削除済み。この後 chore(fable-team) チェックポイントを追加予定 → 作業ツリークリーンへ
+3. 2.4(行単位ステージ、P1)は引き続き未着手として残存
 4. テスト現状: vitest 53 件(diffPatch 15 / diffHunk 6 / editorState 15 / conflictBlocks 12 / parseRemotesOutput 5)+ typecheck green
-5. 4.2 で PromptDialog.tsx + usePrompt() 新設(汎用入力モーダル、requestId key で連続プロンプト安全。以後の入力 UI はこれを再利用)
+5. Phase 5 で再利用可能な資産: HistoryTab のコミット ContextMenu(operation/busy 連動 disabled)/ 新規ルートの hash・引数検証パターン(先頭 `-` 拒否)/ ConfirmDialog の danger + 影響件数明示
+2. 5.1 実装形: `resetToCommit` + `POST /api/git/reset`(hash `/^[0-9a-f]{4,40}$/i` + mode ホワイトリストで 400。`git reset` に `--` は不使用 — パス形式に解釈が変わるため)/ HistoryTab コミット行 ContextMenu + ConfirmDialog(hard のみ danger、未コミット変更 N 件警告は GitTab の dirty prop)/ GitTab の act をそのまま onAct prop 渡し(再マウントでメッセージが消えない)
+3. Phase 5 実装は作業ツリーに未コミットで蓄積 → フェーズゲート後にコミット提案(Phase 4 と同様)
+4. テスト現状: vitest 53 件 + typecheck green(5.1 受入時点)
+5. 2.4(行単位選択)は引き続き未着手の P1 として残存
 
-1. 委任方針: 4.1〜4.4 は同一ファイル群(server/git.ts / server/index.ts / client/src/api.ts / GitTab.tsx)を触るため 1 体の builder に順次継続(Phase 3 の判断踏襲)。4.5(リモート管理 UI、M)は builder の文脈が長ければ新規スポーン
-2. 4.1 実装形: `POST /api/git/switch` + `track` フラグ / `switchBranchTracking()` / GitTab `remoteBranchMenuItems`(「チェックアウト」)
-3. Phase 3 までコミット済み(ac27473 / f8e213e / grow 13f8a57)。Phase 4 実装は作業ツリーに未コミットで蓄積中 → フェーズゲート後にコミット提案
-4. テスト現状: vitest 48 件 + typecheck green(4.1 受入時点)
+**持ち越し債務(Phase 5 追加分、非ブロッカー)**: hard reset 警告の件数が部分ステージ(同一ファイルが staged/unstaged 両方)を
+2 重計上し得る(表示 nuance、操作は git が正しく処理)/ dirty・untracked・operation は 10 秒ポーリング由来で直近変更の反映窓あり /
+新規 4 ルートの検証ロジック(hash 正規表現・mode ホワイトリスト・onto ガード)にユニットテスト無し(既存 operation 系ルートと同じ E2E 依存 = 慣習一致、回帰ではない)。
+※ merge の branch 素通しは 5.R 反映で解消済み(先頭 `-` ガード追加)/ `git rebase --` セパレーターは Phase 4 と揃える余地あり(FYI、必須でない)
 
 **持ち越し債務(Phase 4 追加分、非ブロッカー)**: Monaco "TextModel got disposed"(diff タブ→履歴切替のコンソールエラー。
 Phase 1/2 の diff タブ機構由来と 4.R が判定 — 別課題としてトラッキング)/ PromptDialog の Promise リーク(prompt 待機中の
@@ -42,19 +46,17 @@ listRemotes の複数 pushurl 畳み込み(最後の 1 つのみ保持)
 
 ## In progress / stopping point
 
-2026-07-21 15:57 — 新セッションで resume。委任中の subagent なし。作業ツリークリーン。
-Phase 3 実装は ac27473 feat(git) としてコミット済み(チェックポイント f8e213e、grow 第 1 回 13f8a57 も完了)。
-ゲート内で実施した追加修正(コミットに含む): act() catch でも状態再取得(競合失敗直後の stale 表示解消)/
-競合行の個別ステージ(+)ボタン非表示(誤ステージ footgun)/ 旧マージバナー重複解消(ChangesTab)。
-
-**注記(このブランチの混在物)**: 本ミッションと別件の一件タスク「エディター状態の永続化」が
-コミット d8131be としてこのブランチに載っている(検証・レビュー済みの完結した変更)。
-ミッションの未コミット変更(api.ts / DiffPane / DiffTabsPane / GitTab / styles.css の hunk-strip 分 /
-types.ts / server/git.ts / server/index.ts / 新規 diffPatch・diffHunk・DiffHunkStrip)はすべて作業ツリーに残っている。
-このセッションが死んでいた場合: `git status` と `npm test`(36 件)で現実を確認してから 2.V へ
+2026-07-21 18:30 — Phase 5 進行中。builder 1 体(5.1 実装済み)に 5.2(cherry-pick)を継続委任中。
+Phase 5 の変更は未コミット(server/git.ts / server/index.ts / client/src/api.ts / types.ts /
+HistoryTab.tsx / GitTab.tsx)。
+このセッションが死んでいた場合: `git status` と `npm run test`(53 件)で現実を確認 → journal 末尾から再開
 
 ## Verification status
 
+- Verified(Phase 5 追加分、5.V ブラウザー E2E): reset soft/mixed(staged/unstaged 区別、git 突合)/ hard(danger・警告・
+  キャンセル無変更・承認でクリーン)/ cherry-pick クリーン+競合→Phase 3 UI 解決→continue 完走 / revert クリーン+
+  競合→abort 完全復元 / rebase 線形化・カレント disabled・競合→中止復元 / operation 中の履歴メニュー disabled(R7)/
+  回帰(status・diff・コミット・履歴、typecheck・vitest 53)。未検証: なし(ゲート内修正の実機再確認は進行中)
 - Verified(Phase 1 追加分): 複数行本文の API 往復と UI 表示 / --no-ff マージ(UI からも親 2 つ)/
   ffOnly の成功・拒否 / undo の staged 復帰・初回ガード / discardAll の staged 温存・未追跡削除・
   キャンセル無変更 / subdir 正規化(undo・discardAll)/ HistoryTab レース修正後の typecheck・test

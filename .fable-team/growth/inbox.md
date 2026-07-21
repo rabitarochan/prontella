@@ -37,3 +37,5 @@
 - 2026-07-21 | 隔離 USERPROFILE で Volta シムが死ぬ(builder は node.exe 実体 + tsx/dist/cli.mjs 直叩きで回避)— pj-isolated-verify への追記候補 [friction]
 - 2026-07-21 | E2E ゲートが実害バグを掘り当てた(PromptDialog 連続プロンプトの state 残留 — Promise ベース連続モーダルは request 毎の key 再マウントが安全パターン)。unit green でも UI 状態バグは E2E でしか出ない [success-pattern]
 - 2026-07-21 | E2E ゲート通過後に敵対的レビューが実害インジェクションを発見(rename に -f)— 自由入力を git 引数に渡す新規コードは「-- セパレーター」をチェックリスト化する価値あり [failure→pattern]
+- 2026-07-21 19:23 | friction | 隔離検証のスクラッチを深いパスに掘ると Windows で git rebase が Filename too long — pj-isolated-verify に「フィクスチャは短パス(例 C:t5)推奨」を追記したい(5.V で実測・切り分け済み)
+- 2026-07-21 19:44 | success | 同型 UI を別コンポーネントに実装すると disabled 条件が非対称になりやすい(HistoryTab のコミットメニューが busy を見落とし、GitTab の rebase 項目だけ busy ガード)。新規 UI 配線は既存の対称物の disabled 条件を突き合わせるチェックを — 5.R が指摘

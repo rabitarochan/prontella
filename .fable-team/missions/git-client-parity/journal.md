@@ -272,3 +272,69 @@
 
 - **Did**: ユーザー承認により Phase 4 を確定: 318f5eb feat(git) リモート/ブランチ操作一式(9 files, +602/-27、PromptDialog 新規)。ユーザー選択で**次フェーズは Phase 5(履歴操作)**。本チェックポイントを chore コミットとして続けて実施
 - **Next**: 新セッションで /fable-team:resume-mission → Phase 5(5.1 reset / 5.2 cherry-pick / 5.3 revert / 5.4 rebase → 5.V → 5.R)
+
+## 2026-07-21 18:30 — Conductor (fable)
+
+- **Did**: 新セッションで resume(現実クロスチェック: ツリークリーン・318f5eb/bcf1eea・vitest 53 green、記録と一致)。Phase 5 開始。5.1(reset soft/mixed/hard)を受入(新規 builder、attempt 1)。`resetToCommit` + `POST /api/git/reset`(自前ラップで 400 系: hash `/^[0-9a-f]{4,40}$/i`・mode ホワイトリスト。`git reset` は `--` でパス形式に解釈が変わり得るため不使用の判断をコメント化)+ HistoryTab コミット行 ContextMenu(3 モードとも ConfirmDialog、hard のみ danger + 未コミット変更 N 件警告)+ GitTab から operation/dirty/act を prop 渡し。隔離スモーク: soft(staged 残)/ mixed(unstaged 残)/ hard(クリーン+内容一致)/ 不正 mode・不正 hash(`-f`/`--hard`)400 でリポジトリー無傷 ✅。typecheck・vitest 53 green。スポットチェック: ルートの hash/mode 検証と自前ラップ(handleReset + .catch)を実読で確認
+- **Decisions and rationale**: builder 判断 3 件を承認 — (1) onAct に GitTab の act をそのまま渡す(HistoryTab は reloadKey 再マウントでローカル message が消えるため、表示は GitTab 側に残す)(2) soft/mixed も ConfirmDialog(「…」付きメニューは確認を開く既存慣例、danger は hard のみ)(3) hard の未コミット警告は worktree.status 由来の dirty prop 再利用(追加 API 呼び出し無し)
+- **Next**: 同 builder 継続で 5.2(cherry-pick)委任
+
+## 2026-07-21 18:36 — Conductor (fable)
+
+- **Did**: 5.2(cherry-pick)を受入(同 builder 継続、attempt 1)。`cherryPick()` + `POST /api/git/cherry-pick`(hash 検証は 5.1 と同一パターン)+ HistoryTab メニュー「このコミットをチェリーピック…」(ConfirmDialog normal、operation 中 disabled、5.1 の onAct 配線再利用)。隔離スモーク: クリーン適用(別ブランチのコミット → main に同 subject 新コミット・内容一致)✅ / 競合ケース(500 → status.operation=cherry-pick・UU 表示 → operation abort → HEAD/内容とも完全復元)✅ / 不正 hash(`-f`/`--abort`)400 無傷 ✅。typecheck・vitest 53 green。スポットチェック: 3 層配線+ルート検証を grep 実読で確認(Phase 3 の operation 機構が CHERRY_PICK_HEAD を拾う設計どおり)
+- **Decisions and rationale**: builder 判断 2 件を承認 — (1) メニューアイコンは codicon `git-commit`(cherry-pick 専用アイコン不存在、単一コミット操作の意で妥当)(2) severity は normal(cherry-pick は git 的に非破壊、競合は Phase 3 の operation バナー+競合 UI が受ける)
+- **Next**: 同 builder 継続で 5.3(revert)委任
+
+## 2026-07-21 18:41 — Conductor (fable)
+
+- **Did**: 5.3(revert)を受入(同 builder 継続、attempt 1)。`revertCommit()`(`revert --no-edit`、マージコミット `-m` はスコープ外とコメント明記)+ `POST /api/git/revert`(5.1/5.2 と同一検証パターン)+ HistoryTab「このコミットをリバート…」(normal、operation 中 disabled、onAct 再利用)。隔離スモーク: クリーン revert(`Revert "..."` 打ち消しコミット生成・内容が親コミットに一致)✅ / 競合 revert(500 → operation=revert・UU → abort → 完全復元)✅ / マージコミット revert(500 で git 生エラー、開始前拒否のため operation にも入らず無傷)✅ / 不正 hash 400 ✅。typecheck・vitest 53 green。スポットチェック: 3 層配線 grep 確認
+- **Decisions and rationale**: builder 判断 2 件を承認 — アイコン codicon `reply`(打ち消しの意、reset の discard と区別)/ マージ revert エラーは git 生文言のまま(加工なし、ブリーフどおり)。**5.4(rebase)は新規 builder にスポーン** — 現 builder は 3 タスク+5.1 で文脈 ~170k、Phase 4 の「劣化域前切替」(~167k)と同水準
+- **Next**: 新規 builder で 5.4(rebase)委任
+
+## 2026-07-21 18:51 — Conductor (fable)
+
+- **Did**: 5.4(rebase)を受入(新規 builder、attempt 1)。`rebaseOnto()` + `POST /api/git/rebase`(onto 空/先頭 `-` は 400 — ブランチ名は `/`・`.` を含み得るため hash 正規表現でなく先頭 `-` 拒否が主防壁)+ GitTab branchMenuItems「現在のブランチをこのブランチにリベース…」(ConfirmDialog normal、busy/current/operation で disabled、act() 経由)。隔離スモーク: クリーン rebase 線形化(--graph 証拠)✅ / 競合 rebase(500 → operation=rebase → abort → HEAD・内容・ブランチ完全復元)✅ / 不正 onto(`-i`/`--onto=x`/空)400 無傷 ✅ / 不存在ブランチ 500 無傷 ✅。typecheck・vitest 53 green。スポットチェック: 3 層配線 grep 確認。**Phase 5 実装タスク(5.1〜5.4)全完了** — フェーズゲートへ
+- **Learned**:(builder 指摘・既存課題)`POST /api/git/merge` は branch を素通し(先頭 `-` ガード無し)— Phase 1 期の実装で、Phase 5 新規ルートとの一貫性欠如。持ち越し債務に記録し 5.R の判断材料に載せる
+- **Decisions and rationale**: builder 判断 4 件を承認(void 戻り値で hash 系と統一 / アイコン git-branch / 挿入位置はマージ系の隣 / 確認文言の `\n` 改行は pre-wrap 確認済み)
+- **Next**: 5.V(verifier、隔離ブラウザー E2E)委任 → 5.R(reviewer、Opus)
+
+## 2026-07-21 19:23 — Conductor (fable)
+
+- **Did**: 5.V(実機ブラウザー E2E、隔離 PORT=4715 + 隔離 Chrome/CDP 直叩き + ビルド asset ハッシュ確認)を受入。8 項目すべて ✅ — reset soft/mixed(staged/unstaged の区別を git 実出力と突合)/ hard(danger 見た目・未コミット警告・キャンセル無変更・承認でクリーン)/ cherry-pick クリーン+**競合→Phase 3 UI で解決→continue 完走**(ゲート基準の本命経路)/ revert クリーン+競合→abort 完全復元 / rebase 線形化+カレント行 disabled+競合→中止復元 / operation 中の履歴メニュー全 disabled(R7)/ 回帰(status・diff・コミット・履歴、typecheck・vitest 53)/ 後始末・実環境無傷
+- **Learned**:(発見・軽微バグ)hard reset 警告の「未コミットの変更 N 件が失われます」が **untracked を含んで数えるが、`reset --hard` は untracked を消さない** — 実際に untracked 1 件が生存し文言が過大(安全側の誤りだが R5「影響範囲明示」の精度目標に反する)/(発見・環境起因)深いスクラッチパス(~180 字)で `git rebase` が `Filename too long` — Windows MAX_PATH 系。短パス(C:/vt5)で同一フィクスチャ成功、コード欠陥でないことを検証者が切り分け済み /(既知)Monaco "TextModel got disposed" は残存(Phase 1/2 債務、Phase 5 回帰ではない)
+- **Decisions and rationale**: ゲート内修正 1 件 — hard reset 警告の件数から untracked を除外(staged+unstaged のみ)。5.4 builder の継続で実施(GitTab 既知・文脈 ~95k で健全)。修正後、verifier 継続で当該ダイアログのみ実機再確認(Phase 4 の教訓「UI 状態は実機でしか閉じられない」)→ 5.R
+- **Next**: ゲート内修正 → 実機再確認 → 5.R(reviewer、Opus、新規)
+
+## 2026-07-21 19:25 — Conductor (fable)
+
+- **Did**: ゲート内修正(hard reset 警告の untracked 過大計上)を受入(5.4 builder 継続、attempt 1、コードレベル)。GitTab に `resetLossCount`(staged+unstaged)と `untrackedCount` を新設して HistoryTab へ、警告は「失われます N 件」(tracked のみ、0 なら非表示)+「未追跡ファイル N 件は保持されます」(0 なら非表示)の 2 行構成に。sidebar の `wt-dirty` バッジは意味が異なるため untracked 込みのまま維持(builder 判断、妥当)。typecheck・vitest 53 green
+- **Next**: verifier 継続で当該ダイアログの実機再確認 → 5.R
+
+## 2026-07-21 19:32 — Conductor (fable)
+
+- **Did**: ゲート内修正の実機再確認を受入(5.V verifier 継続)。ビルド asset ハッシュ更新確認の上で: untracked のみ →「失われます」行なし+「保持されます 1 件」✅ / 混在 → 両行が正しい件数(1/1、合算 2 でない)✅ / キャンセル無変更・承認で tracked 復帰+untracked 生存(git 突合)✅ / 後始末・実環境無傷 ✅。5.V の発見事項はクローズ
+- **Next**: 5.R(reviewer、Opus、新規)— Phase 5 全変更の敵対的レビュー
+
+## 2026-07-21 19:44 — Conductor (fable)
+
+- **Did**: 5.R(reviewer、Opus、新規)受入。判定 **✅ LGTM(must-fix なし)**。新規 4 ルートの引数インジェクションは全て不成立を敵対的に実証(hash 正規表現は `-`/空白/`..`/refspec を含み得ず、rebase onto は先頭 `-` 拒否が主防壁 — `git rebase --exec="touch PWNED"` が隔離で実際に任意コマンド実行することを再現し、ガードが load-bearing と確認)。確認フロー・ダイアログ生存関係・型同期も検証済み
+- **Learned**:(反例実証)`git rebase -- other` は exit 0 で正常動作 = `--` 付与は Phase 4 と揃える余地あり(FYI、必須でない)/(実害切り分け)既存 merge の branch 素通しは現行 git では実害なし(単独オプションは引数不足エラー、strategy 名は組み込みリストで検証され任意 exec に至らない)— 能動的脆弱性でなく一貫性・多層防御の技術債務
+- **Decisions and rationale**: 修正サイクル 1 を実施(reviewer の recommended 2 件を採択)— (1) HistoryTab commitMenuItems に busy ガード追加(GitTab rebase 項目との非対称是正。Phase 5 新規コードの一貫性の穴)(2) merge ルートに先頭 `-` ガード(既存債務だが 1 行で新規 4 ルートと同型・多層防御。reviewer 「今直すなら最小コスト」)。FYI 3 件(ユニットテスト無し=慣習一致・回帰でない / hard reset 部分ステージ 2 重計上=表示 nuance / 10 秒ポーリング鮮度)は債務として記録。判断材料 (b) MAX_PATH 切り分けは reviewer も異議なし
+- **Next**: 修正サイクル 1 → reviewer 継続で修正確認 → ゲートクローズ(checkpoint + コミット提案 + ユーザー報告)
+
+## 2026-07-21 19:49 — Conductor (fable)
+
+- **Did**: 5.R 指摘反映サイクル 1 を受入(5.4 builder 継続、attempt 1)。(1) HistoryTab に busy prop 追加、commitMenuItems 5 項目の disabled を `busy || !!operation` に(GitTab から busy={busy} 渡し)(2) merge ルートを asyncHandler → 自前ラップ `handleMerge` に変更、branch 空/先頭 `-` は 400(新規 4 ルートと同型)。隔離実 API 確認: `-Xtheirs`/空 → 400 ✅ / 通常ブランチ `--no-ff` マージは従来どおり成功(マージコミット生成確認)✅。typecheck・vitest 53 green。Conductor スポットチェック: handleMerge の 400 ガードと成功パス(noFf/ffOnly/message)保持を実読で確認(index.ts L593–614)
+- **Decisions and rationale**: builder 判断承認 — エラー文言を新規 4 ルートと同パターン(`不正な ○○ です: <値>`)に統一 / merge を handleReset 等と完全同型の自前ラップに抽出。既存の merge 成功パスは不変
+- **Next**: reviewer 継続で修正確認 → LGTM なら plan.md 5.R を ✅ にしてゲートクローズ(checkpoint + コミット提案 + ユーザー報告)
+
+## 2026-07-21 19:51 — Conductor (fable)
+
+- **Did**: **Phase 5 ゲートクローズ**。reviewer の修正確認(サイクル 1)で ✅ LGTM — busy ガードは 5 項目すべてに効き二重実行窓を閉塞(裏口経路なし・render 時評価で反応的 disabled も確認)/ handleMerge は成功パス完全不変・catch がバイト等価・正当ブランチ名(`feature/foo-bar`・`release-1.0`)を誤弾きせず git が元々拒否する `-oops` のみ綺麗な 400 に置換(実 git 実証)/ 新たな穴なし・型同期不変・typecheck・vitest 53 green。判断材料 (a) は予防解消、(b) は異議なし。Phase 5 は 5.1〜5.4 + ゲート内修正 1 件(hard reset 警告)+ レビュー反映 2 件(busy/merge ガード)で完了
+- **Decisions and rationale**: フェーズ境界で停止。次フェーズ(Phase 6 タグ/スタッシュ差分/ファイル履歴/検索 or 積み残しの 2.4 行単位選択)はユーザー判断。コミットは Phase 4 と同構成 feat + chore の 2 コミットを提案(ユーザー承認待ち)。本セッションはコンテキストが長いため次フェーズは新セッション推奨
+- **Next**: ユーザーへ中間報告 + コミット提案。再開は /fable-team:resume-mission
+
+## 2026-07-21 23:06 — Conductor (fable)
+
+- **Did**: ユーザー承認により Phase 5 を確定: f901755 feat(git) 履歴操作一式(6 files, +335/-6 — reset/cherry-pick/revert/rebase + merge ガード)。誤生成ファイル `e.textContent)`(0 バイト)はユーザー承認で削除済み。ユーザー選択で**次フェーズは Phase 6(タグ/スタッシュ差分/ファイル履歴/検索)**。本チェックポイントを chore コミットとして続けて実施
+- **Next**: 新セッションで /fable-team:resume-mission → Phase 6(6.1 タグ / 6.2 stash 差分 / 6.3 ファイル履歴 / 6.4 履歴検索 / 6.5 blame 任意。6.1〜6.5 は相互独立=並列可)

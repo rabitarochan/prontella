@@ -80,3 +80,13 @@ Dossier format (⤴ / non-convergence only):
 - 2026-07-21 17:45 | task 4.R | reviewer(opus) | attempt 1 | ⚠ 要修正 | must-fix 1(rename インジェクション・実再現)/ rec 2 / FYI 5。攻めて壊れなかった箇所の証跡付き
 - 2026-07-21 17:55 | task 4.R 反映(サイクル 1) | builder(sonnet, 4.5 継続) | attempt 1 | ✅ accepted | 5 件すべて実 git 証拠付き。vitest 48→53。Conductor 再実行で green 確認
 - 2026-07-21 18:00 | task 4.R 修正確認(ゲート判定) | reviewer(opus, 継続) | attempt 1 | ✅ LGTM(ゲート通過) | must-fix 0 残 / rec 0 残 / FYI 1(フィクスチャ実名 → Conductor が即時対応)。Phase 4 ゲートクローズ
+- 2026-07-21 18:30 | 5.1 reset (soft/mixed/hard) | builder(sonnet) | attempt 1 | ✅ accepted | 隔離スモーク+ルート検証のスポットチェック通過。reset への `--` 不使用の判断承認
+- 2026-07-21 18:36 | 5.2 cherry-pick | builder(sonnet) | attempt 1 | ✅ accepted | 隔離スモーク(クリーン/競合+abort 復元/400)+3 層配線 grep 確認
+- 2026-07-21 18:41 | 5.3 revert | builder(sonnet) | attempt 1 | ✅ accepted | 隔離スモーク(クリーン/競合+abort/マージ拒否/400)+3 層配線 grep 確認。builder 文脈 ~170k → 5.4 は新規スポーン
+- 2026-07-21 18:51 | 5.4 rebase | builder(sonnet, 新規) | attempt 1 | ✅ accepted | 隔離スモーク(線形化/競合+abort 復元/400/500)+3 層配線 grep 確認。merge ルートの `-` ガード欠如の指摘を 5.R へ持ち越し
+- 2026-07-21 19:23 | 5.V Phase 5 実機 E2E | verifier(sonnet) | attempt 1 | ✅ accepted | 8/8 合格。発見: hard reset 警告の untracked 過大計上(ゲート内修正へ)・MAX_PATH 環境アーティファクト切り分け
+- 2026-07-21 19:25 | 5.V ゲート内修正(hard reset 警告件数) | builder(sonnet, 5.4 継続) | attempt 1 | ✅ accepted (code-level) | 実機再確認は verifier 継続で実施
+- 2026-07-21 19:32 | 5.V ゲート内修正の実機再確認 | verifier(sonnet, 継続) | attempt 1 | ✅ accepted | 3 状態のダイアログ表示+キャンセル/承認の git 突合。実環境無傷
+- 2026-07-21 19:44 | 5.R Phase 5 敵対的レビュー | reviewer(opus, 新規) | attempt 1 | ✅ LGTM | must-fix 0 / recommended 2(busy ガード・merge 素通し、両方採択して修正サイクル 1 へ)/ FYI 3(債務記録)
+- 2026-07-21 19:49 | 5.R 指摘反映サイクル 1 | builder(sonnet, 5.4 継続) | attempt 1 | ✅ accepted | busy ガード対称化 + merge 先頭 `-` ガード(実 API で 400/成功パス確認)+ スポットチェック
+- 2026-07-21 19:51 | 5.R 修正確認(サイクル 1) | reviewer(opus, 継続) | attempt 1 | ✅ LGTM (gate closed) | busy/merge 両修正の退行なし・新穴なしを実 git で確認。Phase 5 ゲート通過

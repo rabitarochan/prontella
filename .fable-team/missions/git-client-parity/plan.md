@@ -156,12 +156,12 @@ worktree を任意コミット/detached から作成、format-patch/am、bisect�
 
 | # | タスク | 担当 | サイズ | 観測可能な完了基準 | 依存 | 状態 |
 |---|---|---|---|---|---|---|
-| 5.1 | (P1-1)reset(soft/mixed/hard)を任意コミットへ。history commit context メニュー。hard は danger(未コミット変更があれば警告) | builder | M | 3 種の reset で HEAD 位置・ステージ/作業ツリー状態が期待通り | 0.3 | ⬜ |
-| 5.2 | (P1-3)cherry-pick(history から)。競合は Phase 3 UI へ | builder | M | 他ブランチのコミットを cherry-pick→適用、競合時は競合 UI へ遷移 | 3.1 | ⬜ |
-| 5.3 | (P1-4)revert(history から、`--no-edit`)。競合は Phase 3 UI へ | builder | M | コミットを revert→打ち消しコミット生成、競合時は競合 UI へ | 3.1 | ⬜ |
-| 5.4 | (P1-2)rebase(現ブランチを選択ブランチ上に)。continue/abort/skip は 3.1、競合は Phase 3 UI | builder | M | フィーチャーブランチを main に rebase→線形化、競合は競合 UI 経由で完了 | 3.1 | ⬜ |
+| 5.1 | (P1-1)reset(soft/mixed/hard)を任意コミットへ。history commit context メニュー。hard は danger(未コミット変更があれば警告) | builder | M | 3 種の reset で HEAD 位置・ステージ/作業ツリー状態が期待通り | 0.3 | ✅ |
+| 5.2 | (P1-3)cherry-pick(history から)。競合は Phase 3 UI へ | builder | M | 他ブランチのコミットを cherry-pick→適用、競合時は競合 UI へ遷移 | 3.1 | ✅ |
+| 5.3 | (P1-4)revert(history から、`--no-edit`)。競合は Phase 3 UI へ | builder | M | コミットを revert→打ち消しコミット生成、競合時は競合 UI へ | 3.1 | ✅ |
+| 5.4 | (P1-2)rebase(現ブランチを選択ブランチ上に)。continue/abort/skip は 3.1、競合は Phase 3 UI | builder | M | フィーチャーブランチを main に rebase→線形化、競合は競合 UI 経由で完了 | 3.1 | ✅ |
 | 5.V | Phase 5 動作検証 | verifier | M | 各 graph 変化 + 競合遷移を検証 | 5.1-5.4 | ⬜ |
-| 5.R | レビュー | reviewer | S | 指摘反映 | 5.V | ⬜ |
+| 5.R | レビュー | reviewer | S | 指摘反映 | 5.V | ✅ |
 
 > 並列: 5.2/5.3/5.4 は 3.1 依存で相互独立=並列可。5.1 は独立。
 

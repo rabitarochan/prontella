@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hunkStats, parseHunkHeader } from './diffHunk';
+import { classifyHunkLine, hunkStats, parseHunkHeader } from './diffHunk';
 
 describe('parseHunkHeader', () => {
   it('parses a header with explicit line counts on both sides', () => {
@@ -49,5 +49,37 @@ describe('hunkStats', () => {
       added: 0,
       removed: 0,
     });
+  });
+});
+
+describe('classifyHunkLine', () => {
+  it('classifies context/add/del lines by their leading character only', () => {
+    expect(classifyHunkLine(' line1', false)).toBe('context');
+    expect(classifyHunkLine('+line2', false)).toBe('add');
+    expect(classifyHunkLine('-line3', false)).toBe('del');
+  });
+
+  it('classifies the "no newline at end of file" marker line', () => {
+    expect(classifyHunkLine('\\ No newline at end of file', false)).toBe('marker');
+  });
+
+  it('classifies the empty-string trailing-newline sentinel distinctly from a real content line when at the sentinel position', () => {
+    expect(classifyHunkLine('', true)).toBe('eof-sentinel');
+  });
+
+  it(
+    'classifies an empty string as a context line (not the eof sentinel) when NOT at the sentinel position ' +
+      '(regression: diff.suppressBlankEmpty=true blank context lines mid-hunk / non-final-hunk tail — fix cycle 2)',
+    () => {
+      expect(classifyHunkLine('', false)).toBe('context');
+    },
+  );
+
+  it('does not misclassify a content line that happens to start with "---"/"+++" as a header (6.R lesson)', () => {
+    // hunk.lines never actually contains file-header lines (splitDiffHunks separates them out),
+    // but a content line that happens to look like one must still be classified by its diff
+    // prefix alone, not by any "--- "/"+++ " special-casing (unlike stashDiffText's classifyDiffLine).
+    expect(classifyHunkLine('+++ this is just an added line of text', false)).toBe('add');
+    expect(classifyHunkLine('--- this is just a removed line of text', false)).toBe('del');
   });
 });

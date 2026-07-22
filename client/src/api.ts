@@ -103,11 +103,27 @@ export const api = {
     scope: 'stage' | 'unstage' | 'discard',
     hunks: number[],
     expectedHunkCount: number,
-    // hunks と同順・同長。選択ハンクの `@@ ...` ヘッダー文字列 — サーバー側が権威 diff の
-    // 同一インデックスの header と突き合わせ、ハンク数は同じでも中身が別位置にずれた
-    // 並行編集を検出する(server/index.ts の POST /api/git/apply-hunks 参照)。
-    expectedHeaders: string[],
-  ) => post<void>('/api/git/apply-hunks', { dir, path, scope, hunks, expectedHunkCount, expectedHeaders }),
+    // hunks と同順・同長。GET /api/git/diff-hunks が返した hunkHashes からそのハンクの
+    // 値をそのまま渡す。サーバー側が権威 diff から同じ関数(hashHunk)でハッシュを
+    // 再計算して突き合わせ、ハンク本体(ヘッダー+全内容行、バイト保存)の不一致を
+    // 行選択の有無にかかわらず無条件で検出する(server/diffPatch.ts の hashHunk /
+    // checkApplyHunksRequest 参照。不具合2/3の修正: 以前の expectedHeaders/
+    // expectedHunkLines(utf8 文字列比較・行選択があるハンクのみ)を置き換えた)。
+    expectedHunkHashes: string[],
+    // 2.4 行単位ステージ用。hunks と同順・同長。要素は「そのハンクの hunk.lines への
+    // インデックス配列」または null(= そのハンク全行選択。従来どおりの挙動)。
+    // 省略時はハンク単位ステージ(全ハンク全行選択)として扱われる(server 側デフォルト)。
+    lines?: (number[] | null)[],
+  ) =>
+    post<void>('/api/git/apply-hunks', {
+      dir,
+      path,
+      scope,
+      hunks,
+      expectedHunkCount,
+      expectedHunkHashes,
+      lines,
+    }),
   commitFiles: (dir: string, hash: string) =>
     request<CommitFile[]>(`/api/git/commit-files?dir=${q(dir)}&hash=${q(hash)}`),
   commitMessage: (dir: string, hash: string) =>

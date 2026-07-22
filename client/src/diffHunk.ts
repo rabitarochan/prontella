@@ -43,3 +43,26 @@ export function hunkStats(hunk: DiffHunk): { added: number; removed: number } {
 // (client/src/api.ts の request() は HTTP ステータスを保持せず Error.message しか返さないため、
 // 文言一致で判定するしかない。サーバー側の文言を変える場合はここも合わせて直すこと)。
 export const HUNK_CONFLICT_MESSAGE = '差分が変化しました。再読み込みしてください';
+
+/** ハンク内 1 行の種別(行単位選択 UI 用)。 */
+export type HunkLineKind = 'context' | 'add' | 'del' | 'marker' | 'eof-sentinel';
+
+/**
+ * ハンク内の 1 行を分類する。StashDiffPane の classifyDiffLine (stashDiffText.ts) とは異なり、
+ * ハンク内の行 (hunk.lines) には `diff --git`/`index`/`---`/`+++` のようなファイルヘッダー行が
+ * 含まれない (splitDiffHunks が既にヘッダーとハンクを分離済み) ため、先頭 1 文字だけで判定すれば
+ * 十分 — 6.R で指摘された「`--- foo` のような内容行をヘッダーと誤認する」弱点をここに持ち込まない。
+ *
+ * `isSentinelPosition` は「この行が、選択元 hunks 配列で実際に最後のハンクの、最後の要素か」を
+ * 呼び出し側 (DiffHunkStrip) が判定して渡す (不具合5の修正)。番人は値 (`''`) ではなく位置で
+ * 判定する必要がある — `git config diff.suppressBlankEmpty true` の環境ではハンク中央や
+ * 非最終ハンクの末尾にも空行の context 行がまさに `''` として現れ (実 git で確認済み)、値だけで
+ * 判定すると番人と誤認して表示から消えてしまう。
+ */
+export function classifyHunkLine(line: string, isSentinelPosition: boolean): HunkLineKind {
+  if (isSentinelPosition && line === '') return 'eof-sentinel';
+  if (line.startsWith('\\')) return 'marker'; // `\ No newline at end of file`
+  if (line.startsWith('+')) return 'add';
+  if (line.startsWith('-')) return 'del';
+  return 'context'; // ' ' 始まり、または diff.suppressBlankEmpty の空行 context
+}

@@ -152,6 +152,9 @@ export interface DiffHunksResult {
   header: string;
   hunks: DiffHunk[];
   hunkCount: number;
+  // hunks と同順・同長。楽観ロック用ハッシュ(server/diffPatch.ts の hashHunk)。
+  // POST /api/git/apply-hunks の expectedHunkHashes にそのまま echo する。
+  hunkHashes: string[];
 }
 
 export interface SearchMatch {

@@ -1616,6 +1616,11 @@ button.context-menu-item:hover:not(:disabled) {
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
 }
+/* 行選択パネルを展開中は 1 ハンク分では収まらないことが多いので、展開時だけ広げる
+   (何も展開していない既定状態の見た目・挙動は従来から一切変えない)。 */
+.hunk-strip.expanded {
+  max-height: 360px;
+}
 .hunk-strip-notice {
   padding: 4px 10px;
   font-size: 11px;
@@ -1628,15 +1633,31 @@ button.context-menu-item:hover:not(:disabled) {
   display: flex;
   flex-direction: column;
 }
+/* ハンク 1 行 (.hunk-chip) + その行単位選択パネル (.hunk-chip-lines, 展開時のみ) をまとめる
+   グループ。区切り線はここに付ける (行単位選択パネルの有無で最後の要素が変わっても
+   :last-child が正しく効くように)。 */
+.hunk-chip-group {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border);
+}
+.hunk-chip-group:last-child {
+  border-bottom: none;
+}
 .hunk-chip {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 6px 2px 10px;
-  border-bottom: 1px solid var(--border);
+  padding: 2px 6px 2px 4px;
 }
-.hunk-chip:last-child {
-  border-bottom: none;
+.hunk-chip-toggle {
+  flex: none;
+}
+.hunk-chip-chevron {
+  transition: transform 0.1s;
+}
+.hunk-chip-chevron.open {
+  transform: rotate(90deg);
 }
 .hunk-chip-loc {
   flex: 1;
@@ -1671,6 +1692,60 @@ button.context-menu-item:hover:not(:disabled) {
 .hunk-chip-actions {
   flex: none;
   display: flex;
+}
+
+/* ---- hunk chip lines (DiffHunkStrip: 行単位 stage/unstage/discard の展開パネル) ---- */
+
+.hunk-chip-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 10px 8px 30px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+.hunk-line-list {
+  display: flex;
+  flex-direction: column;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+}
+.hunk-line-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.hunk-line-row input[type="checkbox"] {
+  margin: 2px 0 0;
+  flex-shrink: 0;
+  padding: 0;
+}
+.hunk-line-checkbox-spacer {
+  display: inline-block;
+  width: 13px;
+  flex-shrink: 0;
+}
+.hunk-line-text {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.hunk-line-add .hunk-line-text {
+  color: var(--green);
+}
+.hunk-line-del .hunk-line-text {
+  color: var(--red);
+}
+.hunk-line-context .hunk-line-text {
+  color: var(--fg-dim);
+}
+.hunk-line-marker .hunk-line-text {
+  color: var(--fg-dim);
+  font-style: italic;
+}
+.hunk-line-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 /* ---- conflict resolve pane (ConflictResolvePane: 競合ファイルの ours/theirs/both 解決) ---- */

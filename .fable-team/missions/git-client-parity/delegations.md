@@ -90,3 +90,10 @@ Dossier format (⤴ / non-convergence only):
 - 2026-07-21 19:44 | 5.R Phase 5 敵対的レビュー | reviewer(opus, 新規) | attempt 1 | ✅ LGTM | must-fix 0 / recommended 2(busy ガード・merge 素通し、両方採択して修正サイクル 1 へ)/ FYI 3(債務記録)
 - 2026-07-21 19:49 | 5.R 指摘反映サイクル 1 | builder(sonnet, 5.4 継続) | attempt 1 | ✅ accepted | busy ガード対称化 + merge 先頭 `-` ガード(実 API で 400/成功パス確認)+ スポットチェック
 - 2026-07-21 19:51 | 5.R 修正確認(サイクル 1) | reviewer(opus, 継続) | attempt 1 | ✅ LGTM (gate closed) | busy/merge 両修正の退行なし・新穴なしを実 git で確認。Phase 5 ゲート通過
+- 2026-07-22 01:37 | task 6.1 | builder(sonnet) | attempt 1 | ✅ accepted | タグ管理 4 ルート+サイドバー節。配列 body 素通しを自己発見し typeof ガード先行に修正。UI 実機検証は 6.V 持ち越し
+- 2026-07-22 01:56 | task 6.2 | builder(sonnet) | attempt 1 | ✅ accepted | stash-show ルート+プレーンテキスト差分タブ。git 出力とバイト一致検証。notifySiblings 型順序バグを付随修正。UI 実機は 6.V 持ち越し
+- 2026-07-22 02:17 | task 6.3 | builder(sonnet) | attempt 1 | ✅ accepted | log 拡張(--follow+origPath)+FileHistoryModal。リネーム罠を隔離実測して解決。vitest +5。UI 実機は 6.V 持ち越し
+- 2026-07-22 02:32 | task 6.4 | builder(sonnet) | attempt 1 | ✅ accepted | author/grep/path フィルタ+フィルタ中レーン退避。--fixed-strings 採用と = 埋め込み攻撃不成立を実測。UI 実機は 6.V へ
+- 2026-07-22 03:03 | task 6.V | verifier(sonnet) | attempt 1 | ✅ accepted | CDP 直叩き実機 E2E でゲート 5 基準全合格。Monaco 既知債務の切り分け(新規でない・経路増)と origPath 反例実証つき
+- 2026-07-22 03:15 | task 6.R | reviewer(opus) | attempt 1 | ✅ accepted | LGTM。攻撃全不成立(タグ名トラバーサル・=埋め込み改行値・既存ルート横展開まで実証)。parseFollowLog 前提の実 git 突合込み
+- 2026-07-22 03:15 | gate Phase 6 | reviewer(opus) | 判定 ✅ LGTM | must-fix 0 / recommended 0 / FYI 5 | 修正サイクル 0(ミッション初)。6.V は CDP 直叩き E2E で全 5 基準合格

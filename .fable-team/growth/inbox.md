@@ -39,3 +39,8 @@
 - [x] 2026-07-21 | E2E ゲート通過後に敵対的レビューが実害インジェクションを発見(rename に -f)— 自由入力を git 引数に渡す新規コードは「-- セパレーター」をチェックリスト化する価値あり [failure→pattern]
 - [x] 2026-07-21 19:23 | friction | 隔離検証のスクラッチを深いパスに掘ると Windows で git rebase が Filename too long — pj-isolated-verify に「フィクスチャは短パス(例 C:t5)推奨」を追記したい(5.V で実測・切り分け済み)
 - [x] 2026-07-21 19:44 | success | 同型 UI を別コンポーネントに実装すると disabled 条件が非対称になりやすい(HistoryTab のコミットメニューが busy を見落とし、GitTab の rebase 項目だけ busy ガード)。新規 UI 配線は既存の対称物の disabled 条件を突き合わせるチェックを — 5.R が指摘
+- 2026-07-22 01:37 【驚き】`String(req.body.x ?? '')` 検証は配列 body を "a,b" に化かして素通し — typeof チェックを先に置く必要(6.1 builder が敵対的テストで実測・修正)。既存ルートも同型の可能性 → pj-git-route 防壁節への追記候補
+- 2026-07-22 01:56 【摩擦】既存 stash-apply/drop は git.ts 内検証+asyncHandler で不正 ref が 500(400 でない)— pj-git-route「検証はルート側」原則と非対称(6.2 builder 実測)。6.R 判断材料+プレイブック追記候補
+- 2026-07-22 02:17 【成功パターン】`--follow` の per-commit 旧パスは `--name-status` 併用で取得し diff に origPath を必ず渡す — リネーム前コミットが「新規ファイル」に化ける誤表示を防ぐ(6.3 builder 隔離実測)。pj-git-route 追記候補
+- 2026-07-22 02:32 【成功パターン】git log の自由入力検索は `--fixed-strings -i` + `--author=`/`--grep=` の `=` 埋め込み単一トークン — regex メタ文字 500 と `--upload-pack=` 系注入の両方を実測で封じる(6.4 builder)。pj-git-route 追記候補
+- 2026-07-22 03:03 【成功パターン】ブラウザー MCP 無し環境でも Node 組込み WebSocket の CDP 直叩きで実機 E2E が成立(Runtime.evaluate + Page.handleJavaScriptDialog で native prompt 応答、consoleAPICalled 購読で新規エラー監視)— 6.V verifier 自作 cdp.mjs。pj-isolated-verify 追記候補

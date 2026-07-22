@@ -5,25 +5,25 @@
 > If this file and reality (code, test results) disagree, reality is the truth. Record it in the journal and fix this file.
 
 - slug: `git-client-parity`
-- Phase: **Phase 5 完了(ゲート通過)** → 次はユーザー判断(Phase 6 タグ/スタッシュ差分/ファイル履歴/検索 or 積み残しの 2.4 行単位選択)
-- Progress: 24 / 30 実装タスク完了(Phase 0〜5: すべてゲート込み ✅。未着手: 2.4(P1)と Phase 6)
-- Last updated: 2026-07-21 19:52(Phase 5 ゲートクローズ、コミット/次フェーズはユーザー判断待ち)
+- Phase: **Phase 6 完了(ゲート通過: 6.V 全基準 ✅ + 6.R LGTM)** → 次はユーザー判断(コミット承認 / 2.4 or 6.5 or 完了判定)
+- Progress: 28 / 30 実装タスク完了(Phase 0〜6 すべてゲート込み ✅。残: 2.4(P1、DoD 唯一の残項目)と 6.5(任意・DoD 外))
+- Last updated: 2026-07-22 03:20(Phase 6 ゲートクローズ、コミット/次フェーズはユーザー判断待ち)
 - Updated by: Conductor session (fable)
 
 ## Next move (most important)
 
-**Phase 5 完了・コミット確定(f901755)。ユーザー選択で次フェーズは Phase 6(タグ/スタッシュ差分/ファイル履歴/検索)。
-新セッションで `/fable-team:resume-mission` から Phase 6 開始。**
+**Phase 6 完了(6.V 全基準 ✅ / 6.R LGTM・must-fix 0・recommended 0・FYI 5・修正サイクル 0)。ユーザー判断待ち:
+(A) コミット承認 — feat(git) Phase 6 一式 + chore(fable-team) チェックポイントの 2 コミット構成(Phase 4/5 と同様)
+(B) 次の一手 — 2.4 行単位ステージ(DoD 唯一の残項目・P1)/ 6.5 blame(任意・DoD 外)/ ミッション完了判定(2.4 をスコープ外とする場合)
+(C) growth inbox 5 件 → /fable-team:grow 実施可否。新セッション再開時は /fable-team:resume-mission。**
 
-1. **次の一手: Phase 6 開始**(6.1 タグ一覧/作成/削除/push / 6.2 stash 差分閲覧 / 6.3 ファイル履歴+過去版 diff / 6.4 履歴検索(grep/author/path)/ 6.5 blame 任意。plan.md L168〜。**6.1〜6.5 は相互独立=並列可**だが、同一ファイル群(server/git.ts・index.ts・api.ts・types.ts・GitTab.tsx・HistoryTab.tsx)を触るなら Phase 3/4/5 同様の順次継続が安全)
-2. コミット済み: f901755 feat(git) Phase 5 一式(6 files, +335/-6)。誤生成ファイル `e.textContent)` はユーザー承認で削除済み。この後 chore(fable-team) チェックポイントを追加予定 → 作業ツリークリーンへ
-3. 2.4(行単位ステージ、P1)は引き続き未着手として残存
-4. テスト現状: vitest 53 件(diffPatch 15 / diffHunk 6 / editorState 15 / conflictBlocks 12 / parseRemotesOutput 5)+ typecheck green
-5. Phase 5 で再利用可能な資産: HistoryTab のコミット ContextMenu(operation/busy 連動 disabled)/ 新規ルートの hash・引数検証パターン(先頭 `-` 拒否)/ ConfirmDialog の danger + 影響件数明示
-2. 5.1 実装形: `resetToCommit` + `POST /api/git/reset`(hash `/^[0-9a-f]{4,40}$/i` + mode ホワイトリストで 400。`git reset` に `--` は不使用 — パス形式に解釈が変わるため)/ HistoryTab コミット行 ContextMenu + ConfirmDialog(hard のみ danger、未コミット変更 N 件警告は GitTab の dirty prop)/ GitTab の act をそのまま onAct prop 渡し(再マウントでメッセージが消えない)
-3. Phase 5 実装は作業ツリーに未コミットで蓄積 → フェーズゲート後にコミット提案(Phase 4 と同様)
-4. テスト現状: vitest 53 件 + typecheck green(5.1 受入時点)
-5. 2.4(行単位選択)は引き続き未着手の P1 として残存
+1. Phase 6 成果: タグ管理(一覧/作成/削除/push)/ stash 差分閲覧 / ファイル履歴(リネーム横断 origPath)/ 履歴検索(author・grep・path、--fixed-strings)。6.V は CDP 直叩き実機 E2E で全 5 基準合格、6.R は攻撃全不成立を実証して LGTM
+2. 6.5(blame)は任意・DoD 外 — ユーザー判断待ち
+3. Phase 6 実装は作業ツリーに未コミット(コミット提案中。`.fable-team/` の記録更新も同様)
+4. テスト現状: vitest 63 件(diffPatch 15 / diffHunk 6 / editorState 15 / conflictBlocks 12 / parseRemotesOutput 5 / stashDiffText 5 / parseFollowLog 5)+ typecheck green(6.R が実走で再確認済み)
+5. 2.4(行単位ステージ、P1)が DoD の唯一の残項目
+
+**持ち越し債務(Phase 6 追加分、非ブロッカー、6.R 全て FYI)**: classifyDiffLine が `--- foo` 型の内容行をヘッダー誤色(表示のみ、コード内コメント明示済み)/ stash 差分タブは開いた後に当該 stash を drop すると旧内容のスナップショット表示(読み取り専用・実害なし)/ FileHistoryModal・stash 差分タブに Escape クローズ無し(Confirm/PromptDialog と非対称)/ 既存 stash・remote 行ボタンの disabled は busy のみ(新タグ行は busy||operation — 既存側の非対称残置)/ stash-apply/drop の検証位置は git.ts 内+500(新規ルートはルート内+400)の非対称 / フィルタ変更で selected 自動クリアなし(ハイライト消えのみ)/ Monaco "TextModel got disposed" の到達経路が FileHistoryModal で増加(Phase 1/2 債務そのもの、6.V 切り分け済み)/ ファイル履歴一覧にマージコミット不表示(--follow --name-status の仕様、明示的制限)
 
 **持ち越し債務(Phase 5 追加分、非ブロッカー)**: hard reset 警告の件数が部分ステージ(同一ファイルが staged/unstaged 両方)を
 2 重計上し得る(表示 nuance、操作は git が正しく処理)/ dirty・untracked・operation は 10 秒ポーリング由来で直近変更の反映窓あり /
@@ -46,10 +46,11 @@ listRemotes の複数 pushurl 畳み込み(最後の 1 つのみ保持)
 
 ## In progress / stopping point
 
-2026-07-21 18:30 — Phase 5 進行中。builder 1 体(5.1 実装済み)に 5.2(cherry-pick)を継続委任中。
-Phase 5 の変更は未コミット(server/git.ts / server/index.ts / client/src/api.ts / types.ts /
-HistoryTab.tsx / GitTab.tsx)。
-このセッションが死んでいた場合: `git status` と `npm run test`(53 件)で現実を確認 → journal 末尾から再開
+2026-07-22 03:20 — Phase 6 ゲートクローズ。ユーザー判断待ち(コミット承認 / 次の一手 / grow)。
+Phase 6 の変更は未コミット(server/git.ts / git.test.ts / index.ts / api.ts / types.ts / GitTab.tsx /
+DiffTabsPane.tsx / FileTree.tsx / FilesTab.tsx / styles.css + 新規 StashDiffPane.tsx / stashDiffText.ts /
+stashDiffText.test.ts / FileHistoryModal.tsx)。
+このセッションが死んでいた場合: `git status` と `npm run test`(63 件)で現実を確認 → journal 末尾から再開
 
 ## Verification status
 
@@ -73,6 +74,8 @@ HistoryTab.tsx / GitTab.tsx)。
   解決済み(encoding 維持保存 + stage)→ continue でマージコミット生成 / abort 完全復元 /
   rebase バナー(スキップ表示)+ 中止復元 / operation API スモーク(GIT_EDITOR 抑止・merge+skip 400)/
   resolve-side スモーク / 失敗時の即時状態反映 / 回帰(diff タブ・ハンク帯・解決済みボタン無効条件)
+- Verified(Phase 6 追加分、6.V ブラウザー E2E = CDP 直叩き): タグ(軽量/注釈作成の cat-file 型突合・push 後の型維持・ローカル/リモート削除の danger+キャンセル無変更・作成 2 段キャンセル)/ stash 差分タブ(`stash show -p` とバイト完全一致・apply/drop の stopPropagation・タブ開閉/切替)/ ファイル履歴(リネーム横断 origPath の正しい diff — origPath 無しだと誤表示になる反例も実証・モーダル開閉)/ 履歴検索(author/grep/path の件数・hash 突合・`[WIP]` メタ文字 500 なし・フィルタ中レーン退避・不正 path でもツールバー操作可・フィルタ中の選択/メニュー正常)/ 回帰(status・ステージ・コミット・diff・stash 操作・vitest 63・typecheck)
+- Unverified(Phase 6): tag push/delete の busy 瞬間 disabled 表示(処理が数十 ms で完了し観測不能 — コード確認のみ、6.R の対称性チェック対象)
 - Unverified: なし(Phase 0–3 範囲)
 
 ## Blockers / notes

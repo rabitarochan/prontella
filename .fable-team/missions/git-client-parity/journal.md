@@ -338,3 +338,45 @@
 
 - **Did**: ユーザー承認により Phase 5 を確定: f901755 feat(git) 履歴操作一式(6 files, +335/-6 — reset/cherry-pick/revert/rebase + merge ガード)。誤生成ファイル `e.textContent)`(0 バイト)はユーザー承認で削除済み。ユーザー選択で**次フェーズは Phase 6(タグ/スタッシュ差分/ファイル履歴/検索)**。本チェックポイントを chore コミットとして続けて実施
 - **Next**: 新セッションで /fable-team:resume-mission → Phase 6(6.1 タグ / 6.2 stash 差分 / 6.3 ファイル履歴 / 6.4 履歴検索 / 6.5 blame 任意。6.1〜6.5 は相互独立=並列可)
+
+## 2026-07-22 01:37 — Conductor (fable)
+
+- **Did**: Phase 6 開始。6.1(タグ管理)を受入(新規 builder、attempt 1)。`TagInfo` + 薄い関数 5 本(listTags/createTag/deleteTag/pushTag/deleteRemoteTag)+ `GET /api/git/tags` + 自前ラップ 4 ルート(tag-create/-delete/-push/-delete-remote、共通ガード `invalidTagName` = typeof→空→先頭 `-`)+ GitTab「タグ」セクション(スタッシュ節パターン、既定折りたたみ、行アクション push / ローカル削除 danger / リモート削除 danger)。HistoryTab は無変更(getLog の refs + RefChips が tag: を既に描画)。隔離スモーク(C:/vt6 短パス、後始末・実環境無傷確認済み): 軽量/注釈作成(cat-file 型突合)→ 一覧 creatordate 降順 → log refs に tag: 表示 → bare へ push(注釈型維持)→ リモート削除でローカル無傷 → ローカル削除 ✅ / エラー系(重複作成・不存在削除は git 生 500 = 既存慣習)✅ / 敵対的入力(空・`-f`・`--exec=`・配列 body)を全 4 変更系ルートで 400 無傷・PWNED 不生成 ✅ / 回帰(status・stash・branches・remotes)✅。typecheck・vitest 53 green。Conductor スポットチェック: invalidTagName の typeof 先行+自前ラップ 4 ルートを実読確認(index.ts L705–729)
+- **Learned**: (builder が敵対的テストで自己発見・修正)`String(req.body.x ?? '')` 型の検証は配列 body `["a","b"]` を `"a,b"` に化かして素通しさせる — `typeof !== 'string'` を先に見る必要がある。既存ルート(reset/merge 等)も同じ書き方の可能性があり 6.R の判断材料に載せる /(builder 指摘)stash/remote の行ボタンは busy のみで operation を見ない非対称が既存にある(タグ行は brief どおり busy||operation)— 6.R へ FYI /(記録漏れ修正)plan.md の 5.V が ⬜ のままだった → journal 2026-07-21 19:23 の受入記録を根拠に ✅ へ修正
+- **Decisions and rationale**: builder 判断 6 件を承認 — メッセージ入力は native prompt()(PromptDialog は空確定不可のため。stashCurrent と同型、空=軽量タグ)/ タグ節は既定折りたたみ(使用頻度)/ アイコン tag・cloud-upload・trash・cloud(同一行に trash 2 個を避ける)/ ルート命名 tag-*(branch-* 慣習)/ push 先 origin 固定(既存 push 基盤と同前提)/ 新規ユニットテスト無し(薄い runGit ラッパーのみ = listBranches 慣習一致)。**ブラウザー UI 実機検証(ダイアログ・キャンセル経路・disabled)は builder 環境にツール無しのため 6.V へ明示持ち越し**
+- **Next**: 同 builder 継続で 6.2(stash 差分閲覧)委任
+
+## 2026-07-22 01:56 — Conductor (fable)
+
+- **Did**: 6.2(stash 差分閲覧)を受入(同 builder 継続、attempt 1)。`stashShow`(`stash show -p`)+ `GET /api/git/stash-show`(自前ラップ、ref は `/^stash@\{\d+\}$/` ホワイトリスト不一致 400)+ StashDiffPane(新規、**Monaco 不使用**のプレーンテキスト差分ビュー + `classifyDiffLine` 純関数と vitest 5 件)+ DiffTabsPane に StashTab 種別 + GitTab スタッシュ行クリックで差分タブ(既存 pop/apply/drop ボタンは stopPropagation で誤爆防止)。隔離スモーク(C:/vt7 短パス、後始末済み): API text と `git stash show -p` 直接出力のバイト単位一致 / untracked 除外をスコープどおり確認 / 敵対的 ref(`-p`・`--all`・`HEAD`・`;rm`・空・重複クエリ)全 400 無傷 / 回帰(apply/drop/status/log)✅。typecheck・vitest 58(+5)green。Conductor スポットチェック: ルート正規表現の実読 + vitest 58・typecheck を手元で再実行 green
+- **Learned**: (builder 発見・修正)WorkTab への種別追加で DiffTabsPane notifySiblings の型絞り込み順序バグが顕在化(kind 判定前に path アクセス)→ kind 先行に修正 /(builder 実測・既存債務)stash-apply/drop は git.ts 内で ref 検証+asyncHandler のため不正 ref が 400 でなく 500 — pj-git-route「検証はルート側」原則との非対称。コード内コメントで 6.R へ明示 /(発見)commitDetail API はどこからも呼ばれない死にコード(HistoryTab は commitFiles + DiffPane(scope=commit) 方式に移行済み)
+- **Decisions and rationale**: builder 判断を承認 — 「DiffTabs で表示」はタブ殻の再利用+中身は Monaco 不使用の軽量ビューと解釈(既知債務 TextModel disposed を構造的に回避、複数ファイル unified diff に DiffEditor は不適)/ 行クリック方式(ChangesTab fileRow と同型、ボタンは stopPropagation)/ `.git-stash-row` 専用クラスで波及防止 / リフレッシュボタン無し(stash@{N} は実質不変)。untracked 分の非表示はスコープ内と確定(--include-untracked は git 2.32+、必要なら 6.R 判断)。**6.3 は新規 builder にスポーン** — 現 builder は重い隔離検証込み 2 タスクで長文脈(Phase 4/5 の「劣化域前切替」と同判断)。6.3/6.4 は getLog 拡張・HistoryTab/FilesTab を共有するため新 builder で順次継続
+- **Next**: 新規 builder で 6.3(ファイル履歴)委任
+
+## 2026-07-22 02:17 — Conductor (fable)
+
+- **Did**: 6.3(ファイル履歴+過去バージョン diff)を受入(新規 builder、attempt 1)。getLog に opts.path(`--follow --name-status -- <path>`)+ LogEntry に path/origPath + `parseFollowLog` 純関数(vitest 5 件)/ log ルートを自前ラップ化し path の 400 検証(typeof→空→先頭 `-`)/ FileTree ファイル行 onFileContextMenu → FilesTab の ContextMenu「ファイルの履歴...」→ FileHistoryModal(新規、左コミット一覧+右 DiffPane scope=commit)。隔離検証(C:/vt6f 短パス、後始末・実 config mtime 不変確認済み): リネーム 1 回フィクスチャで「origPath 無し→original 空の誤表示 / origPath 有り→正しい差分なし」を実証 / 不正 path 3 種 400 無傷 / 回帰(path 無し log の応答形状完全一致・commit-files・diff-pair・status)✅。typecheck・vitest 63(+5)green。Conductor スポットチェック: parseFollowLog とルート検証(index.ts L186–193)の実読 + vitest/typecheck 手元再実行 green
+- **Learned**: (builder 実測)--follow のリネーム前コミットに現在パスを使うと original 空=「新規ファイル」誤表示になる — `--name-status` 併用で per-commit の path/origPath を取り、DiffPane に origPath を必ず渡すのが正解 /(判断根拠)FilesTab の tabs は Monaco path キー+localStorage 永続の密結合状態機械 — 非エディタービュー混在は回帰リスク大 /(制限・実測)マージコミットは name-status 行が出ず per-file 履歴一覧から除外される
+- **Decisions and rationale**: builder 判断を承認 — 既存 log ルートの拡張(6.4 が同じ拡張点に載る)/ UI は (b) モーダル(AddWorktreeModal パターン、上記理由で (a) タブ混在を回避)/ api.log 第 4 引数はオプションオブジェクト(6.4 前提)/ parseFollowLog 切り出し+テスト(parseRemotesOutput 慣習)。FYI(6.R へ): モーダルに Escape close 無し(AddWorktreeModal に前例無し、Confirm/PromptDialog とは非対称)/ 連続リネーム・all+path 併用は未実測(UI から到達しない経路)
+- **Next**: 同 builder 継続で 6.4(履歴検索/フィルタ)委任
+
+## 2026-07-22 02:32 — Conductor (fable)
+
+- **Did**: 6.4(履歴検索/フィルタ)を受入(同 builder 継続、attempt 1)。getLog opts に follow/author/grep(`--author=`/`--grep=` は `=` 埋め込み単一トークン+`--fixed-strings --regexp-ignore-case`)/ ルートに invalidFilterValue(非文字列のみ 400。author/grep は先頭 `-` を意図的に許容 — `-fix` 等の検索を弾かないため。理由コメント付き)/ HistoryTab ツールバーに種別セレクト+検索欄+クリア(200ms デバウンス)/ **フィルタ中はグラフレーン非表示**(親欠落で layoutGraph のレーンが単調増加するのを実測したため skip)/ logError を一覧領域に分離(失敗時もツールバー操作可)/ 6.3 FileHistoryModal に follow: true(opts 分離に伴う退行防止)。隔離検証(C:/vt8f・vt8h、後始末済み): author/grep(メタ文字 `[WIP]` 含む)/path を git 直接出力と件数・hash 突合 / 配列クエリ 400 / `--author=--upload-pack=touch PWNED` 埋め込み攻撃の不成立(0 件・無傷)を実測 / フィルタ無し応答形状の完全一致 / author+path 複合一致。typecheck・vitest 63 green。Conductor スポットチェック: --fixed-strings 分岐・invalidFilterValue・follow: true の実読 + 手元再実行 green
+- **Learned**: (builder 実測)`git log --grep="["` は BRE 不正で exit 128 → 自由入力検索は --fixed-strings が正解 /(builder 実測)layoutGraph は親待ちレーンを pop しない実装 — フィルタで親が抜けるとレーン数が際限なく増える(1..8 を実測)/ `=` 埋め込み単一トークンなら値先頭 `-` でも独立オプション化せず、--upload-pack 系注入も不成立(実測)
+- **Decisions and rationale**: builder 判断を承認 — --fixed-strings -i の採用(regex 検索は非対応 = 意図的トレードオフ、6.R 対象)/ author・grep のみ先頭 `-` 許容(根拠は = 埋め込み)/ ツールバー版 path は --follow 無し・opts.follow を 6.3 用に分離 / logError 分離。FYI(6.R へ): フィルタ変更で selected を自動クリアしない(データ不整合なし・ハイライト無しのみ)/ 6.4 の新規 vitest 無し(純関数切り出し単位なし = 慣習一致)。**Phase 6 実装タスク 6.1〜6.4 全完了 — フェーズゲートへ**
+- **Next**: 6.V(verifier、新規、隔離ブラウザー E2E)→ 6.R(reviewer、Opus、新規)
+
+## 2026-07-22 03:03 — Conductor (fable)
+
+- **Did**: 6.V(Phase 6 実機 E2E)を受入(新規 verifier、attempt 1)。**ゲート 5 基準すべて ✅**。verifier はブラウザー操作 MCP 無しの環境で Node 組込み WebSocket による CDP 直叩きドライバー(cdp.mjs)を自作し、実イベント経路(React onChange/onClick/onContextMenu、native prompt は Page.handleJavaScriptDialog)で検証。ビルドアセットのハッシュ+Phase 6 文字列 grep で配信物の同一性も確認。ハイライト: タグ(軽量/注釈の cat-file 型突合・push 後の型維持・danger キャンセル無変更・2 段キャンセル)/ stash 差分タブのバイト完全一致+stopPropagation 実証 / ファイル履歴のリネーム横断 diff 正常+**origPath を外すと誤表示になる反例まで実証** / 検索(author/grep/path の件数・hash 突合、`[WIP]` メタ文字 500 なし、不正 path でもツールバー操作可、フィルタ中の選択・メニューが正しい hash)/ 回帰(status・ステージ・コミット・diff・stash 操作、vitest 63・typecheck)。後始末・実環境無傷確認済み
+- **Learned**: (verifier 切り分け)Monaco "TextModel got disposed" はリロード直後ゼロ → FileHistoryModal の**コミット選択切替**(key 無し props 切替 = HistoryTab と同一パターン)で初発、以後持ち越り再発火。DiffPane 自体は Phase 6 無変更 = **Phase 1/2 既知債務そのもので新規バグではない**が、新しい到達経路が増え発生機会は実質増加 — 6.R への申し送り /(手法)ブラウザーツール無しでも CDP 直叩き E2E が成立する(pj-isolated-verify 追記候補)
+- **Decisions and rationale**: 未観測 2 点を許容して受入 — (1) tag push/delete の busy 瞬間 disabled 表示(ローカル bare へは数十 ms で完了し観測不能。コード確認済み+6.R の対称性チェック対象)(2) operation 中のタグボタン disabled(Phase 3/5 で検証済み機構の再利用のみ)。既知債務(SJIS・ポーリング窓)は指示どおり新規発生のみ監視 → 新規異常ゼロ
+- **Next**: 6.R(reviewer、Opus、新規)— Phase 6 全変更の敵対的レビュー
+
+## 2026-07-22 03:15 — Conductor (fable)
+
+- **Did**: **Phase 6 ゲートクローズ**。6.R(reviewer、Opus、新規)受入 — 判定 ✅ LGTM、**must-fix 0 / recommended 0 / FYI 5**(修正サイクル 0 での通過は本ミッション初)。攻撃全不成立の実証: タグ名のトラバーサル系(`../evil`・`a:b`・`a..b`・空白)は git check-ref-format が拒否し refs/tags 外への書き込み無しを実測 / `--` セパレーターはタグ 3 コマンドで受理を実測 / stash-show 正規表現に突破口なし(`$` の末尾改行挙動まで確認)/ author/grep の `=` 埋め込みは改行入り値でも argv 再分割されず安全(--upload-pack 再攻撃も不成立)/ **既存ルート(reset/cherry-pick/revert/rebase)への配列 body 同型穴の横展開は実害なし**(hash 正規表現・先頭 `-` 拒否が後段で受けることを実証)/ parseFollowLog の前提(出力形式・R/C の新旧パス位置・ルートコミットの新規表示)を実 git 突合で確認 / 63 テスト・typecheck をレビュー側でも実走 green。後始末・実 config 無書き込み確認済み
+- **Learned**: FYI 5 件を持ち越し債務に記録 — classifyDiffLine が `--- foo` 型の内容行をヘッダー誤色(表示のみ)/ stash 差分タブは開いた後の drop で旧内容のスナップショット表示(読み取り専用・実害なし)/ FileHistoryModal・stash タブに Escape クローズ無し(Confirm/PromptDialog と非対称)/ 既存 stash・remote 行の disabled は busy のみ(新タグ行は busy||operation — 既存側の非対称は残置、安全側は新コード)/ フィルタ変更で selected 自動クリアなし(ハイライト消えのみ)。いずれも機能影響・データ損失なしと実証済み
+- **Decisions and rationale**: フェーズ境界で停止(レビューゲートを無人で越えない)。コミットは Phase 4/5 と同構成 feat + chore の 2 コミットを提案(ユーザー承認待ち)。DoD の残項目は 2.4(行単位ステージ、P1)のみ。6.5(blame)は任意・DoD 外。growth inbox が 5 件に達したため /fable-team:grow を提案
+- **Next**: ユーザーへ中間報告 — (A) コミット承認 (B) 次の一手(2.4 / 6.5 / 完了判定)(C) grow 実施可否。再開は /fable-team:resume-mission

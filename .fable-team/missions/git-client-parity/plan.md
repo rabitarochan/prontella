@@ -160,7 +160,7 @@ worktree を任意コミット/detached から作成、format-patch/am、bisect�
 | 5.2 | (P1-3)cherry-pick(history から)。競合は Phase 3 UI へ | builder | M | 他ブランチのコミットを cherry-pick→適用、競合時は競合 UI へ遷移 | 3.1 | ✅ |
 | 5.3 | (P1-4)revert(history から、`--no-edit`)。競合は Phase 3 UI へ | builder | M | コミットを revert→打ち消しコミット生成、競合時は競合 UI へ | 3.1 | ✅ |
 | 5.4 | (P1-2)rebase(現ブランチを選択ブランチ上に)。continue/abort/skip は 3.1、競合は Phase 3 UI | builder | M | フィーチャーブランチを main に rebase→線形化、競合は競合 UI 経由で完了 | 3.1 | ✅ |
-| 5.V | Phase 5 動作検証 | verifier | M | 各 graph 変化 + 競合遷移を検証 | 5.1-5.4 | ⬜ |
+| 5.V | Phase 5 動作検証 | verifier | M | 各 graph 変化 + 競合遷移を検証 | 5.1-5.4 | ✅ |
 | 5.R | レビュー | reviewer | S | 指摘反映 | 5.V | ✅ |
 
 > 並列: 5.2/5.3/5.4 は 3.1 依存で相互独立=並列可。5.1 は独立。
@@ -171,13 +171,13 @@ worktree を任意コミット/detached から作成、format-patch/am、bisect�
 
 | # | タスク | 担当 | サイズ | 観測可能な完了基準 | 依存 | 状態 |
 |---|---|---|---|---|---|---|
-| 6.1 | (P1-9)タグ: 一覧(サイドバー)+ 作成(軽量/注釈)+ 削除 + push(`push origin <tag>` / `--delete`)。削除は danger | builder | M | タグ作成→ history に出る、push→テストリモート、削除が反映 | 0.3 | ⬜ |
-| 6.2 | (P1-10)スタッシュ差分閲覧(`stash show -p <ref>`)を DiffTabs で表示 | builder | S | スタッシュをクリック→差分表示 | - | ⬜ |
-| 6.3 | (P1-11)ファイル履歴(`log --follow -- path`)+ 過去バージョン閲覧(既存 `getFileAtRev`)。ファイル context から | builder | M | あるファイルの履歴一覧→コミット選択で当時の内容 diff | - | ⬜ |
-| 6.4 | (P1-12)履歴検索/フィルタ(`--grep`/`--author`/`-- path`)。graph-toolbar に検索欄 | builder | M | 著者で絞り込み→該当コミットのみ表示 | - | ⬜ |
+| 6.1 | (P1-9)タグ: 一覧(サイドバー)+ 作成(軽量/注釈)+ 削除 + push(`push origin <tag>` / `--delete`)。削除は danger | builder | M | タグ作成→ history に出る、push→テストリモート、削除が反映 | 0.3 | ✅ |
+| 6.2 | (P1-10)スタッシュ差分閲覧(`stash show -p <ref>`)を DiffTabs で表示 | builder | S | スタッシュをクリック→差分表示 | - | ✅ |
+| 6.3 | (P1-11)ファイル履歴(`log --follow -- path`)+ 過去バージョン閲覧(既存 `getFileAtRev`)。ファイル context から | builder | M | あるファイルの履歴一覧→コミット選択で当時の内容 diff | - | ✅ |
+| 6.4 | (P1-12)履歴検索/フィルタ(`--grep`/`--author`/`-- path`)。graph-toolbar に検索欄 | builder | M | 著者で絞り込み→該当コミットのみ表示 | - | ✅ |
 | 6.5 | (P1-14, 任意)blame(`blame --porcelain`+ 行注釈) | builder | M | ファイルの blame で各行の commit/author が出る | - | ⬜ |
-| 6.V | Phase 6 動作検証 | verifier | M | 各機能を dev で検証 | 6.1-6.4 | ⬜ |
-| 6.R | レビュー | reviewer | S | 指摘反映 | 6.V | ⬜ |
+| 6.V | Phase 6 動作検証 | verifier | M | 各機能を dev で検証 | 6.1-6.4 | ✅ |
+| 6.R | レビュー | reviewer | S | 指摘反映 | 6.V | ✅ |
 
 > 並列: 6.1〜6.5 は相互独立=並列可(6.5 は任意)。
 

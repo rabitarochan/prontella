@@ -278,6 +278,36 @@ app.get('/api/git/diff-pair', asyncHandler(async (req, res) => {
   });
 }));
 
+// ファイルの行単位 blame(6.5)。ファイルツリー「ファイルの履歴...」の隣に足す読み取り専用機能。
+// path はファイルツリー右クリック由来の自由入力(GET /api/git/log の path と同じ扱い) —
+// `typeof !== 'string'` を先に見るのは配列 body ([`"a","b"`] 的な化け) 対策(6.1 で実測済みの罠)、
+// 空/先頭 `-` 拒否が主防壁(危険オプションは全て先頭 `-`)。rev は既存のコミットハッシュ系ルート
+// (commit/commit-files/commit-message/diff-pair scope=commit)と同じ `/^[0-9a-f]{4,40}$/i`
+// ホワイトリスト — ブランチ名等の自由形式は許容しない(rev はハッシュのみを渡す設計のため、
+// ホワイトリストで完全に閉じられる。先頭 `-` 拒否だけに頼るブランチ名系ルートより防御が強い)。
+// この検証のため asyncHandler(常に 500)ではなく自前ラップにする。git.getBlame は読み取り専用
+// (index/worktree を一切変更しない)。
+app.get('/api/git/blame', (req, res) => {
+  handleBlame(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+async function handleBlame(req: express.Request, res: express.Response): Promise<void> {
+  const dir = requireKnownDir(req);
+  const filePath = req.query.path;
+  if (typeof filePath !== 'string' || !filePath || filePath.startsWith('-')) {
+    res.status(400).json({ error: `不正な path です: ${JSON.stringify(filePath)}` });
+    return;
+  }
+  const revParam = req.query.rev;
+  if (revParam !== undefined && (typeof revParam !== 'string' || !/^[0-9a-f]{4,40}$/i.test(revParam))) {
+    res.status(400).json({ error: `不正な rev です: ${JSON.stringify(revParam)}` });
+    return;
+  }
+  res.json(await git.getBlame(dir, filePath, typeof revParam === 'string' ? revParam : undefined));
+}
+
 app.get('/api/git/commit-files', asyncHandler(async (req, res) => {
   const dir = requireKnownDir(req);
   const hash = queryStr(req, 'hash');

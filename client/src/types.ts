@@ -157,6 +157,28 @@ export interface DiffHunksResult {
   hunkHashes: string[];
 }
 
+// server/git.ts の BlameLine と手動同期(共有型機構がないため)
+export interface BlameLine {
+  hash: string;
+  author: string;
+  authorTime: number; // unix epoch 秒
+  summary: string;
+  path: string;
+  line: number;
+  origLine: number;
+  content: string;
+}
+
+// GET /api/git/blame のレスポンス形状。server/index.ts と手動同期(共有型機構がないため)
+export interface BlameResult {
+  lines: BlameLine[];
+  encoding: string | null; // バイナリ判定時・tooLarge 時は null
+  // バイナリ判定、または UTF-16 等での行復元の整合性検証失敗(6.5R R-1)のとき true
+  binary: boolean;
+  tooLarge: boolean; // ファイルが大きすぎるとき true(6.5R R-3、files.ts の MAX_FILE_SIZE と同一閾値)
+  notFound: boolean; // 未追跡ファイル等、blame 対象の履歴が無いとき true(6.5R R-4)
+}
+
 export interface SearchMatch {
   line: number; // 1-based
   column: number; // 1-based, UTF-16 code units

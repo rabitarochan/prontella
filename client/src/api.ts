@@ -1,4 +1,5 @@
 import type {
+  BlameResult,
   BranchInfo,
   BranchStatus,
   CommitFile,
@@ -124,6 +125,11 @@ export const api = {
       expectedHunkHashes,
       lines,
     }),
+  blame: (dir: string, path: string, rev?: string) => {
+    const params = new URLSearchParams({ dir, path });
+    if (rev) params.set('rev', rev);
+    return request<BlameResult>(`/api/git/blame?${params}`);
+  },
   commitFiles: (dir: string, hash: string) =>
     request<CommitFile[]>(`/api/git/commit-files?dir=${q(dir)}&hash=${q(hash)}`),
   commitMessage: (dir: string, hash: string) =>

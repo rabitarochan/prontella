@@ -1,6 +1,8 @@
 import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { decodeBuffer, decodeWithEncoding } from './encoding.js';
+import { MAX_FILE_SIZE } from './files.js';
 
 const US = '\x1f'; // unit separator for log formatting
 
@@ -1056,4 +1058,254 @@ export async function revertCommit(dir: string, hash: string): Promise<void> {
  */
 export async function rebaseOnto(dir: string, onto: string): Promise<void> {
   await runGit(dir, ['rebase', onto]);
+}
+
+// ---- blame (6.5) ---------------------------------------------------------------
+
+export interface BlameLine {
+  /** 完全なコミットハッシュ(40桁)。未コミットの変更行は全て 0 (`git blame` の仕様)。 */
+  hash: string;
+  author: string;
+  /** unix epoch 秒(porcelain の author-time をそのまま数値化)。 */
+  authorTime: number;
+  summary: string;
+  /** この行を最後に変更したコミット時点でのファイルパス。リネームを跨ぐと問い合わせ path と異なる。 */
+  path: string;
+  /** 問い合わせた版のファイルにおける行番号(1-based, porcelain の final line number)。 */
+  line: number;
+  /** porcelain の original line number(その行を導入したコミット自身の版における行番号, 1-based)。 */
+  origLine: number;
+  /** ファイルの検出/指定エンコーディングでデコード済みの行内容(改行文字を含まない)。 */
+  content: string;
+}
+
+export interface BlameResult {
+  lines: BlameLine[];
+  /** decodeBuffer が検出したエンコーディング(FileContent.encoding と同じ語彙)。バイナリ判定時は null。 */
+  encoding: string | null;
+  /**
+   * バイナリ判定、または行復元の整合性検証に失敗した(6.5R R-1)ときに true。いずれも
+   * lines は空になる — 呼び出し側は「バイナリと同じ扱い」の 1 系統として表示すればよい
+   * (6.5R の指摘どおり文言をバイナリ時プレースホルダーに揃える)。
+   */
+  binary: boolean;
+  /** files.ts の MAX_FILE_SIZE を超えるとき true(lines は空)。6.5R R-3 — エディターが開けない
+   * ファイルを blame では丸ごと読めてしまう非対称を閉じるためのガード。 */
+  tooLarge: boolean;
+  /**
+   * 未追跡ファイル等、指定 path/rev に blame 対象の履歴が無いとき true(lines は空)。
+   * 6.5R R-4 — FileHistoryModal(未追跡ファイルはエラーでなく「履歴なし」として空表示)との
+   * UX 対称性のため、git のエラーを呼び出し元に投げっぱなしにせずここで正常系として吸収する。
+   */
+  notFound: boolean;
+}
+
+/**
+ * parseBlamePorcelain の中間表現。content はデコード前の latin1 文字列(1 文字 = 1 バイト。
+ * Shift_JIS 等の非 UTF-8 バイト列もそのまま保持する)— decodeBlameContent がファイル全体から
+ * 検出したエンコーディングで最終デコードするまでの受け渡し用。
+ */
+export interface RawBlameLine {
+  hash: string;
+  author: string;
+  authorTime: number;
+  summary: string;
+  path: string;
+  line: number;
+  origLine: number;
+  content: string;
+}
+
+// {40,64}: SHA-1(40桁)/SHA-256(`git init --object-format=sha256`, 64桁)の両方を受理する
+// (6.5R R-2 — 40 桁固定だと SHA-256 リポジトリーの全行が下の `!m` 分岐で無言棄却され、
+// 中身のあるファイルが空ファイルと区別不能になっていた)。
+const BLAME_HASH_LINE = /^([0-9a-f]{40,64}) (\d+) (\d+)(?: \d+)?$/;
+
+/**
+ * latin1 文字列の部分文字列を、実バイトが UTF-8 である前提で正しくデコードする(git のメタデータ
+ * 行 — author 名・commit summary・filename — は i18n.commitEncoding に関わらず常に UTF-8 で
+ * 出力される。実 git で日本語 author 名・summary を確認済み)。
+ */
+function metaToUtf8(latin1Slice: string): string {
+  return Buffer.from(latin1Slice, 'latin1').toString('utf8');
+}
+
+/**
+ * `git blame --porcelain` の生出力(Buffer を `.toString('latin1')` した文字列 — バイト保存の
+ * ため latin1 を経由する。diffPatch.ts の splitDiffHunks と同じ考え方)を per-line の
+ * RawBlameLine[] に変換する純関数(vitest 対象)。
+ *
+ * 実 git で観察したフォーマット(私の実装前提と食い違った点も含む):
+ * - 各行は必ず `<40桁hash> <originalLine> <finalLine>[ <groupSize>]` ヘッダーで始まり、直後に
+ *   0 行以上のメタデータ行(author/author-mail/author-time/author-tz/committer 系/summary/
+ *   previous/boundary/filename)、最後に必ず tab 始まりの内容行が 1 行続く。
+ * - `groupSize`(4 番目の数値)は「新しい連続グループの先頭行」だけに付き、同一グループの
+ *   2 行目以降は 3 フィールドのみ(このパーサーはグループを追跡せず 1 行ずつ処理するので
+ *   使わない — 各行が自分の origLine/finalLine を持つため不要)。
+ * - メタデータ行は「そのコミットハッシュをこの blame 呼び出しで初めて見た時」だけ出力され、
+ *   2 回目以降は省略される。**同一グループ内の連続行はもちろん、非連続な別グループでも省略**
+ *   される(実 git で確認済み)。「グループの先頭かどうか」と「メタデータが省略されるかどうか」
+ *   は独立の 2 つの現象で、後者は純粋に「このハッシュを初めて見たか」だけで決まる。
+ * - 未コミットの変更行は hash が全て 0(`0000...000`)の擬似コミットとして表現され、
+ *   author に `Not Committed Yet` が入る。他のハッシュと全く同じ規則(初出時のみメタデータ、
+ *   複数行にまたがれば dedup)に従う(実 git で確認済み)。
+ * - 内容行はファイル末尾に改行が無くても常に `\n` で終端される(git blame 自身の出力仕様)。
+ *   空行は `\t` の直後に何も続かない 1 行になる。
+ * - リネームを跨ぐと、リネーム前のコミットの `filename` は問い合わせた現在パスと異なる旧パスに
+ *   なる(previous 行も同様に旧パスを指す)。
+ */
+export function parseBlamePorcelain(text: string): RawBlameLine[] {
+  const lines = text.length === 0 ? [] : text.split('\n');
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop(); // 末尾 \n による空要素
+
+  interface CommitMeta {
+    author: string;
+    authorTime: number;
+    summary: string;
+    path: string;
+  }
+  const commits = new Map<string, CommitMeta>();
+  const result: RawBlameLine[] = [];
+  let unmatched = 0;
+  let i = 0;
+  while (i < lines.length) {
+    const header = lines[i];
+    const m = BLAME_HASH_LINE.exec(header);
+    if (!m) {
+      // 想定外の行(ハッシュ長がホワイトリスト外 等)。無言で読み飛ばすと「行が欠落した
+      // 正常系」に化けてしまう(6.5R R-2 — SHA-256 で全行棄却され空ファイルと区別不能になった
+      // 実例)。読み飛ばし自体は無限ループ防止のため続けるが、件数を数えて最後に必ずエラーにする
+      // (フェイルクローズド — 部分的な結果を正常系として返さない)。
+      unmatched++;
+      i++;
+      continue;
+    }
+    const hash = m[1];
+    const origLine = Number(m[2]);
+    const line = Number(m[3]);
+    i++;
+    if (!commits.has(hash)) {
+      let author = '';
+      let authorTime = 0;
+      let summary = '';
+      let filePath = '';
+      while (i < lines.length && !lines[i].startsWith('\t')) {
+        const l = lines[i];
+        if (l.startsWith('author ')) author = metaToUtf8(l.slice('author '.length));
+        else if (l.startsWith('author-time ')) authorTime = Number(l.slice('author-time '.length));
+        else if (l.startsWith('summary ')) summary = metaToUtf8(l.slice('summary '.length));
+        else if (l.startsWith('filename ')) filePath = unquoteGitPath(metaToUtf8(l.slice('filename '.length)));
+        i++;
+      }
+      commits.set(hash, { author, authorTime, summary, path: filePath });
+    }
+    const contentLine = lines[i] ?? '';
+    const content = contentLine.startsWith('\t') ? contentLine.slice(1) : contentLine;
+    i++;
+    const meta = commits.get(hash)!;
+    result.push({ hash, origLine, line, content, ...meta });
+  }
+  if (unmatched > 0) {
+    throw new Error(
+      `git blame の出力を解析できませんでした(想定外の形式の行が ${unmatched} 件あります)`,
+    );
+  }
+  return result;
+}
+
+const EMPTY_LINES: BlameLine[] = [];
+
+/**
+ * RawBlameLine[](content はデコード前の latin1)から、ファイル全体のバイト列を対象に
+ * decodeBuffer と同じ検出(BOM → 純 ASCII → jschardet)を 1 回だけ行い、ファイル全体を
+ * 1 回でデコードしてから改めて行に分割する純関数(vitest 対象)。server/files.ts の
+ * readFileContent と同じ検出ロジックを再利用することで、エディターで開いたときと同じ
+ * エンコーディング判定に揃える。バイナリ判定(NUL を含む)/ 行復元の整合性検証失敗
+ * (下記コメント参照)のときは lines を空にして binary:true を返す。MAX_FILE_SIZE(files.ts
+ * と共通)を超えるときは lines を空にして tooLarge:true を返す(6.5R R-3)。
+ * 空ファイル(rawLines.length===0)は utf-8 固定で binary:false・tooLarge:false。
+ *
+ * **行ごとに個別デコードしない理由(6.5R R-1 の修正)**: `git blame` はファイルを生バイト列の
+ * まま `0x0A` で区切るため、UTF-16LE の改行(2 バイト `0A 00`)を跨ぐと 2 行目以降の内容が
+ * 1 バイトずつ後ろにずれ、実 git で文字化けを確認した(例: UTF-16LE 4 行ファイルで
+ * `GET /api/git/blame` だけ化け、`GET /api/fs/file` は正しい)。**行の再結合の段階で扱えるか
+ * 自分で確かめた** — 各行の content(latin1)を `\n` で連結し直す処理(下記 contentBuf)は
+ * git が消費した区切りバイトをそのまま埋め戻すため、実際には**元ファイルのバイト列を常に
+ * 完全に復元できる**(1 行ずつ個別デコードするから化けるのであって、復元自体は常に正しい)。
+ * そこで「復元したバイト列をエンコーディング検出後に一括デコードし、デコード後の文字列を
+ * 改めて '\n' で分割し直す」方式に変更した。これは UTF-8/Shift_JIS 等では従来と同じ結果になり
+ * (`0x0A` バイトがこれらのエンコーディングの非境界バイトとして出現しないため、行ごと分割と
+ * 一括分割は等価)、UTF-16 では正しく整列した行を復元できる(実 git の ASCII 相当内容の
+ * UTF-16LE ファイルで確認済み)。
+ * ただし一般には直せない場合が残る: UTF-16 の非改行コードポイントの下位バイト(LE)/
+ * 上位バイト(BE)がたまたま `0x0A` と一致する文字(例 U+300A `《`)を含むと、git 自身が
+ * その位置を本物の改行と誤認して余分に分割し、`rawLines.length`(git が報告した行数)が
+ * ファイルの真の行数と食い違う。これは git 自身の byte-oriented な行区切りに起因し、
+ * 事後の文字列処理では原理的に検出不能な位置のズレ(本物の改行と偶然一致した非改行位置を
+ * 区別する情報が失われている)なので直せない。**そこで一括デコード後に改めて '\n' で
+ * 分割した行数が `rawLines.length` と一致するか検証し、一致すれば復元結果を採用、
+ * 不一致なら安全側に倒して binary:true(表示できません)にする**(実 git で、この不一致
+ * ケースが実際に発生すること・その他の場合は一致することの両方を確認済み)。
+ */
+export function decodeBlameContent(rawLines: RawBlameLine[]): BlameResult {
+  if (rawLines.length === 0) {
+    return { lines: EMPTY_LINES, encoding: 'utf-8', binary: false, tooLarge: false, notFound: false };
+  }
+  // 各行の content(latin1 = 1 文字 1 バイト)を '\n' で連結し直すことで、ファイル本体の
+  // バイト列を復元する(実際の行区切りは全て '\n' なので、連結後の位置は元ファイルと一致する。
+  // 1 行目の先頭がファイル先頭バイトと一致するため BOM 検出も正しく働く)。
+  const contentBuf = Buffer.from(rawLines.map((l) => l.content).join('\n'), 'latin1');
+  if (contentBuf.length > MAX_FILE_SIZE) {
+    return { lines: EMPTY_LINES, encoding: null, binary: false, tooLarge: true, notFound: false };
+  }
+  const decoded = decodeBuffer(contentBuf);
+  if (!decoded) return { lines: EMPTY_LINES, encoding: null, binary: true, tooLarge: false, notFound: false };
+  // BOM は自前で切り落とさない — iconv-lite の decode() は utf-8/utf-16le/utf-16be いずれも
+  // 先頭の BOM を自動的に除去して返すことを実測済み(decodeBuffer が対応する BOM 付きエンコー
+  // ディングは全てこの 3 つ)。旧実装は files.ts の readFileContent に倣い bomLen を手動計算して
+  // 1 行目だけ切り落としていたが、iconv-lite が既に無条件で剥がすため常に無効化しても出力が
+  // 変わらない死んだ分岐だった(6.5R T-1 の変異テストで「bomLen 除去の変異が生存」として指摘され、
+  // 実際に bomLen を 0 に固定しても全テスト green のままであることを確認した)。
+  const fullText = decodeWithEncoding(contentBuf, decoded.encoding);
+  const recovered = fullText.split('\n');
+  if (recovered.length !== rawLines.length) {
+    // git 自身の行区切りとエンコーディング上の真の行数が食い違う(上記コメントの UTF-16 の
+    // 非改行コードポイントが偶然 0x0A を含むケース等)。整列できないため安全側で表示を諦める。
+    return { lines: EMPTY_LINES, encoding: decoded.encoding, binary: true, tooLarge: false, notFound: false };
+  }
+  const lines: BlameLine[] = rawLines.map((raw, idx) => ({ ...raw, content: recovered[idx] }));
+  return { lines, encoding: decoded.encoding, binary: false, tooLarge: false, notFound: false };
+}
+
+/**
+ * ファイルの行単位 blame。`--porcelain`(`--line-porcelain` ではない — 後者は行ごとに全ヘッダーを
+ * 繰り返し出力が肥大するため不採用)を使う。rev 省略時は既定どおり HEAD + 作業ツリー(未コミット
+ * の変更行は擬似コミット `0000...000` として表現される)、rev 指定時はその版のみを見る(未コミット
+ * 変更は反映されない — 実 git で確認済み)。rev/path の形式検証は呼び出し元
+ * (GET /api/git/blame)の責務(pj-git-route の原則どおり)。読み取り専用 — index/worktree は
+ * 一切変更しない。
+ *
+ * 未追跡ファイル(`?? ` 状態)や指定 rev にまだ存在しないパスは、git 自身が
+ * `fatal: no such path '...' in HEAD` で非ゼロ終了する。これを呼び出し元にエラーとして
+ * 投げっぱなしにすると、隣接する「ファイルの履歴...」(getLog --follow は同じ状況で
+ * 単に空配列を返す — 6.5R R-4 で指摘された非対称)と体験が割れる。ここで `no such path` を
+ * 検出したときだけ正常系(notFound:true, lines 空)に変換し、**それ以外の失敗(存在しない
+ * rev の `bad object` 等)はそのまま再 throw する**(6.5 の敵対的入力要件 — 不正な rev は
+ * 明示的なエラーのままにする、を壊さないため区別する)。
+ */
+export async function getBlame(dir: string, filePath: string, rev?: string): Promise<BlameResult> {
+  const args = ['blame', '--porcelain'];
+  if (rev) args.push(rev);
+  args.push('--', filePath);
+  let buf: Buffer;
+  try {
+    buf = await runGitInput(dir, args, Buffer.alloc(0));
+  } catch (e) {
+    if (String(e).includes('no such path')) {
+      return { lines: [], encoding: 'utf-8', binary: false, tooLarge: false, notFound: true };
+    }
+    throw e;
+  }
+  const rawLines = parseBlamePorcelain(buf.toString('latin1'));
+  return decodeBlameContent(rawLines);
 }

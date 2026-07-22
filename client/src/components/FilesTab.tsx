@@ -11,6 +11,7 @@ import {
   type LeafEditorState,
 } from '../editorState';
 import { registerFilesTab, touchFilesTab, unregisterFilesTab } from '../search/registry';
+import BlameModal from './BlameModal';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import EditorStatusBar from './EditorStatusBar';
 import FileHistoryModal from './FileHistoryModal';
@@ -164,11 +165,17 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
   // ConfirmDialog は不要 — pj-git-route の「操作系でない機能は確認不要」の原則どおり。
   const [fileMenu, setFileMenu] = useState<{ x: number; y: number; path: string } | null>(null);
   const [historyPath, setHistoryPath] = useState<string | null>(null);
+  const [blamePath, setBlamePath] = useState<string | null>(null);
   const fileMenuItems = (path: string): ContextMenuItem[] => [
     {
       label: 'ファイルの履歴...',
       icon: 'history',
       onClick: () => setHistoryPath(path),
+    },
+    {
+      label: 'blame...',
+      icon: 'account',
+      onClick: () => setBlamePath(path),
     },
   ];
 
@@ -859,6 +866,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
       {historyPath && (
         <FileHistoryModal dir={root} path={historyPath} onClose={() => setHistoryPath(null)} />
       )}
+      {blamePath && <BlameModal dir={root} path={blamePath} onClose={() => setBlamePath(null)} />}
     </div>
   );
 }

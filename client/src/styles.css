@@ -1987,6 +1987,102 @@ button.context-menu-item:hover:not(:disabled) {
   min-height: 0;
 }
 
+/* ---- blame modal (6.5: ファイルツリーの「blame...」— git blame --porcelain のプレーン表示) ---- */
+
+.blame-modal {
+  width: 900px;
+  max-width: 92vw;
+  height: 640px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+.blame-modal h3 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.blame-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+}
+.blame-row {
+  display: flex;
+  align-items: baseline;
+  white-space: pre;
+}
+.blame-row:hover {
+  background: var(--bg-hover);
+}
+.blame-row-uncommitted {
+  background: rgba(230, 180, 80, 0.08);
+}
+.blame-line-no {
+  flex: none;
+  width: 44px;
+  padding: 0 8px 0 4px;
+  text-align: right;
+  color: var(--fg-dim);
+  user-select: none;
+}
+.blame-annotation {
+  flex: none;
+  width: 220px;
+  display: flex;
+  gap: 8px;
+  padding: 0 10px;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+/* 直前行と同一コミットのため注釈(hash/author)を間引いた行。空欄のまま罫線だけだと
+   「情報なし」と「同上(直前行と同じ)」の区別がつかない(6.5V 実機所見)ため、薄い縦罫と
+   淡い背景で「直前行の続き」であることを視覚的に示す。 */
+.blame-annotation-repeat {
+  border-right: 1px solid var(--border);
+  position: relative;
+  background: rgba(255, 255, 255, 0.025);
+  /* .blame-row は align-items: baseline (行番号・注釈・内容のテキストベースラインを揃えるため)。
+     この間引き行の <span> はテキストノードを一切持たないため、baseline 整列下では内容ゼロの
+     まま高さ 0 に収縮してしまい、背景も ::before の縦罫(top:0/bottom:0 は自分自身の高さが
+     基準)も面積 0 で描画されない(6.5V' 実機で確認された不具合)。align-self でこの要素だけ
+     交差軸方向に伸長させ、行の高さ(他の列の文字が確立する行高)いっぱいに広げる — 親の
+     align-items は変えないため、テキストを持つ他の行(run 先頭 .blame-annotation・
+     .blame-line-no・.blame-content)の baseline 整列には影響しない。 */
+  align-self: stretch;
+}
+.blame-annotation-repeat::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+.blame-hash {
+  color: var(--orange);
+  flex-shrink: 0;
+}
+.blame-author {
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.blame-content {
+  flex: 1;
+  min-width: 0;
+  padding: 0 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 /* ---- attention bell (要対応キュー) ---- */
 
 .bell {

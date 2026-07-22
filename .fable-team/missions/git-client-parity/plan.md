@@ -190,7 +190,9 @@ worktree を任意コミット/detached から作成、format-patch/am、bisect�
 | 6.2 | (P1-10)スタッシュ差分閲覧(`stash show -p <ref>`)を DiffTabs で表示 | builder | S | スタッシュをクリック→差分表示 | - | ✅ |
 | 6.3 | (P1-11)ファイル履歴(`log --follow -- path`)+ 過去バージョン閲覧(既存 `getFileAtRev`)。ファイル context から | builder | M | あるファイルの履歴一覧→コミット選択で当時の内容 diff | - | ✅ |
 | 6.4 | (P1-12)履歴検索/フィルタ(`--grep`/`--author`/`-- path`)。graph-toolbar に検索欄 | builder | M | 著者で絞り込み→該当コミットのみ表示 | - | ✅ |
-| 6.5 | (P1-14, 任意)blame(`blame --porcelain`+ 行注釈) | builder | M | ファイルの blame で各行の commit/author が出る | - | ⬜ |
+| 6.5 | (P1-14, 任意)blame(`blame --porcelain`+ 行注釈) | builder | M | ファイルの blame で各行の commit/author が出る | - | ✅ |
+| 6.5V | 6.5 動作検証(内容の正確性・境界・エンコーディング・UI 実機) | verifier | M | `git blame` 直接出力と一致、行と注釈の対応ずれなし | 6.5 | ✅(3 回: 合格 → 部分合格 → 合格) |
+| 6.5R | レビュー(パーサーの正確性・引数インジェクション・読み取り専用性を重点) | reviewer | S | 指摘反映(最大 2 サイクル) | 6.5V | ✅(条件付き LGTM → **LGTM**) |
 | 6.V | Phase 6 動作検証 | verifier | M | 各機能を dev で検証 | 6.1-6.4 | ✅ |
 | 6.R | レビュー | reviewer | S | 指摘反映 | 6.V | ✅ |
 

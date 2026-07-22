@@ -2,7 +2,7 @@
 
 - slug: `git-client-parity`
 - Start date: 2026-07-20
-- Status: in progress
+- Status: completed(2026-07-23。DoD 全 8 項目 ✅ + 任意項目の 6.5 blame も完了)
 - Conductor: fable
 - The user's request (verbatim):
   > Git タブのもつ機能について、Git クライアント (SourceTree, GitKraken など) を全く使わなくても Claude Deck のみで作業が完結できるように、不足している機能を洗い出しして、実装計画を立ててください。

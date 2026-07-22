@@ -172,16 +172,54 @@ function requireKnownDir(req: express.Request): string {
   return git.resolveGitRoot(dir) ?? dir;
 }
 
-app.get('/api/git/log', asyncHandler(async (req, res) => {
+// path はファイルツリーの右クリック「ファイルの履歴...」(6.3) 由来、または history グラフ
+// ツールバーの検索欄 (6.4, follow なし) 由来の自由入力。空/非文字列/先頭 `-` を弾くのは
+// tag-create 等と同じ理由 (危険オプションは全て先頭 `-`) — `typeof !== 'string'` を先に見るのは
+// 配列 body ([`"a","b"`] 的な化け) 対策 (6.1 で実測済みの罠と同じ)。
+// author/grep (6.4) は `--author=<値>` / `--grep=<値>` の単一トークン埋め込みが防壁になる
+// (git.ts の getLog 参照。値の先頭が `-` でも独立オプションに化けないことを実 git で確認済み)
+// ため、非文字列のみを拒否し先頭 `-` は許容する (invalidFilterValue)。
+// このためだけに asyncHandler (常に 500) ではなく自前ラップにする。ref/all/dir 自体の検証は
+// このタスクの対象外 (既存のまま — 500 経路も含めて変更しない)。
+app.get('/api/git/log', (req, res) => {
+  handleLog(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+function invalidFilterValue(value: unknown): boolean {
+  return value !== undefined && typeof value !== 'string';
+}
+
+async function handleLog(req: express.Request, res: express.Response): Promise<void> {
   const dir = requireKnownDir(req);
   const limit = Math.min(Number(req.query.limit) || 100, 500);
+  const pathParam = req.query.path;
+  if (pathParam !== undefined && (typeof pathParam !== 'string' || !pathParam || pathParam.startsWith('-'))) {
+    res.status(400).json({ error: `不正な path です: ${JSON.stringify(pathParam)}` });
+    return;
+  }
+  const authorParam = req.query.author;
+  if (invalidFilterValue(authorParam)) {
+    res.status(400).json({ error: `不正な author です: ${JSON.stringify(authorParam)}` });
+    return;
+  }
+  const grepParam = req.query.grep;
+  if (invalidFilterValue(grepParam)) {
+    res.status(400).json({ error: `不正な grep です: ${JSON.stringify(grepParam)}` });
+    return;
+  }
   res.json(
     await git.getLog(dir, limit, {
       ref: typeof req.query.ref === 'string' ? req.query.ref : undefined,
       all: req.query.all === '1',
+      path: typeof pathParam === 'string' ? pathParam : undefined,
+      follow: req.query.follow === '1',
+      author: typeof authorParam === 'string' && authorParam ? authorParam : undefined,
+      grep: typeof grepParam === 'string' && grepParam ? grepParam : undefined,
     }),
   );
-}));
+}
 
 app.get('/api/git/commit', asyncHandler(async (req, res) => {
   const dir = requireKnownDir(req);
@@ -695,6 +733,113 @@ app.post('/api/git/stash-drop', asyncHandler(async (req, res) => {
   await git.stashDrop(bodyDir(req), String(req.body.ref));
   res.json({ ok: true });
 }));
+
+// ref (`stash@{N}`) はクライアントからの自由入力なので、固定書式のホワイトリスト正規表現
+// (コミットハッシュの hash 系ルートと同じ考え方) に不一致なら 400 を返す必要があり、
+// asyncHandler (常に 500) ではなく reset/cherry-pick/revert/rebase/merge/tag-* と同じ自前
+// ラップにする。既存の stash-apply/stash-drop は同じ正規表現を git.ts 側 (stashApply/
+// stashDrop 内) で検証しており、無効な ref は (自前ラップではなく asyncHandler 経由のため)
+// 400 ではなく 500 になる — この既存の非対称はここでは変更しない (6.R への報告事項)。
+app.get('/api/git/stash-show', (req, res) => {
+  handleStashShow(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+async function handleStashShow(req: express.Request, res: express.Response): Promise<void> {
+  const dir = requireKnownDir(req);
+  const ref = typeof req.query.ref === 'string' ? req.query.ref : '';
+  if (!/^stash@\{\d+\}$/.test(ref)) {
+    res.status(400).json({ error: `不正な stash 参照です: ${ref}` });
+    return;
+  }
+  res.json({ text: await git.stashShow(dir, ref) });
+}
+
+app.get('/api/git/tags', asyncHandler(async (req, res) => {
+  res.json(await git.listTags(requireKnownDir(req)));
+}));
+
+// タグ名は PromptDialog からの自由入力 (create) または既存タグ一覧由来 (delete/push/
+// delete-remote) だが、後者もリクエスト形状としては自由な body なので同一に検証する。
+// 空/先頭 `-` (危険オプションは全て先頭 `-`) を弾くのが主防壁 — reset/cherry-pick/revert/
+// rebase/merge と同じ理由で asyncHandler (常に 500) ではなく自前ラップにする。
+// `typeof !== 'string'` を先に見るのは、配列 body (例: `["a","b"]`) が `String(...)` 経由で
+// "a,b" のような一見有効な文字列に化けて素通りするのを防ぐため (敵対的入力テストで実測)。
+function invalidTagName(name: unknown): boolean {
+  return typeof name !== 'string' || !name || name.startsWith('-');
+}
+
+app.post('/api/git/tag-create', (req, res) => {
+  handleTagCreate(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+async function handleTagCreate(req: express.Request, res: express.Response): Promise<void> {
+  const dir = bodyDir(req);
+  const name = req.body.name;
+  if (invalidTagName(name)) {
+    res.status(400).json({ error: `不正なタグ名です: ${JSON.stringify(name)}` });
+    return;
+  }
+  const message = req.body.message;
+  await git.createTag(dir, name, typeof message === 'string' && message ? message : undefined);
+  res.json({ ok: true });
+}
+
+app.post('/api/git/tag-delete', (req, res) => {
+  handleTagDelete(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+async function handleTagDelete(req: express.Request, res: express.Response): Promise<void> {
+  const dir = bodyDir(req);
+  const name = req.body.name;
+  if (invalidTagName(name)) {
+    res.status(400).json({ error: `不正なタグ名です: ${JSON.stringify(name)}` });
+    return;
+  }
+  await git.deleteTag(dir, name);
+  res.json({ ok: true });
+}
+
+app.post('/api/git/tag-push', (req, res) => {
+  handleTagPush(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+async function handleTagPush(req: express.Request, res: express.Response): Promise<void> {
+  const dir = bodyDir(req);
+  const name = req.body.name;
+  if (invalidTagName(name)) {
+    res.status(400).json({ error: `不正なタグ名です: ${JSON.stringify(name)}` });
+    return;
+  }
+  await git.pushTag(dir, name);
+  res.json({ ok: true });
+}
+
+// branch-delete-remote と同じパターン: `--delete` はコード側固定値でユーザー入力が
+// 入り込む余地はなく、name (自由入力) の検証のみが防壁。
+app.post('/api/git/tag-delete-remote', (req, res) => {
+  handleTagDeleteRemote(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+async function handleTagDeleteRemote(req: express.Request, res: express.Response): Promise<void> {
+  const dir = bodyDir(req);
+  const name = req.body.name;
+  if (invalidTagName(name)) {
+    res.status(400).json({ error: `不正なタグ名です: ${JSON.stringify(name)}` });
+    return;
+  }
+  await git.deleteRemoteTag(dir, name);
+  res.json({ ok: true });
+}
 
 // ---- file system -----------------------------------------------------------
 

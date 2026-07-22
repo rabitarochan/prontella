@@ -60,6 +60,10 @@ export interface LogEntry {
   date: string; // committer date (ISO 8601)
   subject: string;
   refs: string;
+  // opts.path (ファイル履歴, 6.3) 指定時のみ設定される。server/git.ts の LogEntry と手動同期
+  // (共有型機構がないため)。
+  path?: string;
+  origPath?: string | null;
 }
 
 export interface BranchInfo {
@@ -109,6 +113,12 @@ export interface TreeStatusEntry {
 export interface StashEntry {
   ref: string;
   message: string;
+}
+
+// server/git.ts の TagInfo と手動同期(共有型機構がないため)
+export interface TagInfo {
+  name: string;
+  hash: string;
 }
 
 // server/git.ts の RemoteInfo と手動同期(共有型機構がないため)

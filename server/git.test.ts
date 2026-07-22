@@ -1,5 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { parseRemotesOutput, unquoteGitPath } from './git.js';
+import { parseFollowLog, parseRemotesOutput, unquoteGitPath } from './git.js';
+
+const US = '\x1f';
+/** getLog と同じ %H%x1f%h%x1f%P%x1f%an%x1f%cI%x1f%s%x1f%D 形式の 1 コミット分を組み立てる。 */
+function prettyLine(fields: {
+  hash: string;
+  shortHash?: string;
+  parents?: string;
+  author?: string;
+  date?: string;
+  subject: string;
+  refs?: string;
+}): string {
+  return [
+    fields.hash,
+    fields.shortHash ?? fields.hash.slice(0, 7),
+    fields.parents ?? '',
+    fields.author ?? 'Tester',
+    fields.date ?? '2026-01-01T00:00:00+09:00',
+    fields.subject,
+    fields.refs ?? '',
+  ].join(US);
+}
 
 describe('unquoteGitPath', () => {
   it('passes through a path that git did not quote', () => {
@@ -69,5 +91,53 @@ describe('parseRemotesOutput', () => {
       { name: 'origin', fetchUrl: 'https://example.com/repo.git', pushUrl: 'https://example.com/repo.git' },
       { name: 'backup', fetchUrl: 'https://backup.example.com/repo.git', pushUrl: 'https://backup.example.com/repo.git' },
     ]);
+  });
+});
+
+describe('parseFollowLog', () => {
+  // `git log --follow --name-status --pretty=format:<US 区切り> -- <path>` の実出力
+  // (隔離環境で 1 回リネームを挟んだフィクスチャに対して実測・突合済み)。
+  it('リネームを 1 回挟んだ履歴で、各コミット時点の path/origPath を正しく割り当てる', () => {
+    const out = [
+      prettyLine({ hash: 'b1c396d0', parents: '335b2da7', subject: 'modify new.txt', refs: 'HEAD -> main' }) +
+        '\nM\tnew.txt',
+      prettyLine({ hash: '335b2da7', parents: 'e46902f4', subject: 'rename old.txt to new.txt' }) +
+        '\nR100\told.txt\tnew.txt',
+      prettyLine({ hash: 'e46902f4', parents: '4bd0893b', subject: 'modify old.txt' }) + '\nM\told.txt',
+      prettyLine({ hash: '4bd0893b', parents: '', subject: 'add old.txt' }) + '\nA\told.txt',
+    ].join('\n\n');
+
+    const entries = parseFollowLog(out);
+
+    expect(entries.map((e) => ({ hash: e.hash, subject: e.subject, path: e.path, origPath: e.origPath }))).toEqual([
+      { hash: 'b1c396d0', subject: 'modify new.txt', path: 'new.txt', origPath: null },
+      { hash: '335b2da7', subject: 'rename old.txt to new.txt', path: 'new.txt', origPath: 'old.txt' },
+      { hash: 'e46902f4', subject: 'modify old.txt', path: 'old.txt', origPath: null },
+      { hash: '4bd0893b', subject: 'add old.txt', path: 'old.txt', origPath: null },
+    ]);
+  });
+
+  it('コピー (C) もリネーム同様 origPath に旧パスを設定する', () => {
+    const out = prettyLine({ hash: 'aaa1111', parents: 'bbb2222', subject: 'copy config' }) + '\nC100\tbase.yml\tcopy.yml';
+    expect(parseFollowLog(out)).toEqual([
+      expect.objectContaining({ hash: 'aaa1111', path: 'copy.yml', origPath: 'base.yml' }),
+    ]);
+  });
+
+  it('name-status 行が無いコミット (既定 no -m のマージコミット等) は除外する', () => {
+    const out = [
+      prettyLine({ hash: 'ccc3333', parents: 'ddd4444 eee5555', subject: 'Merge branch x' }), // name-status 行なし
+      prettyLine({ hash: 'ddd4444', parents: 'fff6666', subject: 'normal commit' }) + '\nM\tfile.txt',
+    ].join('\n\n');
+    expect(parseFollowLog(out).map((e) => e.hash)).toEqual(['ddd4444']);
+  });
+
+  it('日本語ファイル名を core.quotepath=false 前提でそのまま通す (quote 無しのため unquoteGitPath は恒等)', () => {
+    const out = prettyLine({ hash: 'fff7777', parents: '', subject: 'add japanese file' }) + '\nA\t日本語.txt';
+    expect(parseFollowLog(out)).toEqual([expect.objectContaining({ path: '日本語.txt', origPath: null })]);
+  });
+
+  it('空文字列 (該当パスの履歴なし) は空配列を返す', () => {
+    expect(parseFollowLog('')).toEqual([]);
   });
 });

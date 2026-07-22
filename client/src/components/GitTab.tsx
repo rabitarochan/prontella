@@ -9,13 +9,14 @@ import type {
   Repo,
   StashEntry,
   StatusFile,
+  TagInfo,
   Worktree,
 } from '../types';
 import BranchTree from './BranchTree';
 import ChangesTab from './ChangesTab';
 import { useConfirm } from './ConfirmDialog';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
-import DiffTabsPane, { conflictTabKey, diffTabKey, type WorkTab } from './DiffTabsPane';
+import DiffTabsPane, { conflictTabKey, diffTabKey, stashTabKey, type WorkTab } from './DiffTabsPane';
 import HistoryTab from './HistoryTab';
 import { usePrompt } from './PromptDialog';
 
@@ -41,9 +42,11 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [gitRemotes, setGitRemotes] = useState<RemoteInfo[]>([]);
   const [stashes, setStashes] = useState<StashEntry[]>([]);
+  const [tags, setTags] = useState<TagInfo[]>([]);
   const [openLocal, setOpenLocal] = useState(true);
   const [openRemote, setOpenRemote] = useState(false);
   const [openStash, setOpenStash] = useState(true);
+  const [openTags, setOpenTags] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
@@ -87,6 +90,17 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
     setActiveDiff(key);
   }, []);
 
+  // スタッシュの中身 (git stash show -p) は読み取り専用のプレーンテキストタブで開く
+  // (StashDiffPane 参照)。競合タブと同じく再クリックで作り直しはしない — 内容は
+  // stash@{N} という参照が指す時点のスナップショットで、タブを開いている間に変わる想定が薄い。
+  const openStashDiff = useCallback((s: StashEntry) => {
+    const key = stashTabKey(s.ref);
+    setDiffTabs((prev) =>
+      prev.some((t) => t.key === key) ? prev : [...prev, { kind: 'stash', key, ref: s.ref, message: s.message }],
+    );
+    setActiveDiff(key);
+  }, []);
+
   const closeDiff = useCallback(
     (key: string) => {
       setDiffTabs((prev) => prev.filter((t) => t.key !== key));
@@ -113,6 +127,7 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
     api.branches(repo.id).then(setBranches).catch(() => {});
     api.remotes(dir).then(setGitRemotes).catch(() => {});
     api.stashList(dir).then(setStashes).catch(() => {});
+    api.tags(dir).then(setTags).catch(() => {});
     api
       .gitStatus(dir)
       .then((s) => setOperation(s.operation))
@@ -391,6 +406,52 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
     void act(() => api.removeRemote(dir, r.name), `${r.name} を削除しました`);
   };
 
+  // タグ名は PromptDialog (必須入力) で、メッセージは stashCurrent と同じ native prompt() で
+  // 取る (空入力を許す必要があるため — PromptDialog は空文字での確定を許さない設計)。
+  // メッセージ入力をキャンセル (null) した場合は addRemote の name→url 2 段プロンプトと同様、
+  // タグ作成自体を中止する。
+  const createTag = async () => {
+    const name = await promptDialog({
+      title: '新しいタグを作成',
+      message: 'HEAD にタグを作成します。タグ名を入力してください。',
+      placeholder: 'v1.0.0',
+      confirmLabel: '次へ',
+    });
+    if (!name) return;
+    const msg = prompt('タグのメッセージ (省略可。入力すると注釈付きタグになります):');
+    if (msg === null) return;
+    void act(() => api.createTag(dir, name, msg || undefined), `${name} を作成しました`);
+  };
+
+  const pushTag = (t: TagInfo) => {
+    void act(() => api.pushTag(dir, t.name), `${t.name} を origin に push しました`);
+  };
+
+  // ローカル削除は取り消せないが再作成は容易 (同じ HEAD からいつでも作り直せる) な操作。
+  // それでも誤操作防止のため ConfirmDialog(danger) を必須にする (ブランチ削除と同じ扱い)。
+  const deleteTagLocal = async (t: TagInfo) => {
+    const ok = await confirmDialog({
+      title: 'タグを削除',
+      message: `'${t.name}' をローカルから削除しますか?`,
+      confirmLabel: '削除',
+      severity: 'danger',
+    });
+    if (!ok) return;
+    void act(() => api.deleteTag(dir, t.name), `${t.name} を削除しました`);
+  };
+
+  // リモートブランチ削除と同じ扱い: リモートに波及する破壊的操作なので ConfirmDialog(danger) 必須。
+  const deleteTagRemote = async (t: TagInfo) => {
+    const ok = await confirmDialog({
+      title: 'リモートのタグを削除',
+      message: `'${t.name}' を origin から削除しますか?\nこの操作はリモートに反映され、元に戻せません。`,
+      confirmLabel: '削除',
+      severity: 'danger',
+    });
+    if (!ok) return;
+    void act(() => api.deleteRemoteTag(dir, t.name), `${t.name} を origin から削除しました`);
+  };
+
   const locals = branches.filter((b) => !b.remote);
   const remotes = branches.filter((b) => b.remote);
   const dirty =
@@ -535,7 +596,12 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
             <div className="git-side-empty">スタッシュはありません</div>
           ) : (
             stashes.map((s) => (
-              <div key={s.ref} className="git-branch-row" title={`${s.ref}: ${s.message}`}>
+              <div
+                key={s.ref}
+                className={`git-branch-row git-stash-row ${activeDiff === stashTabKey(s.ref) ? 'selected' : ''}`}
+                title={`${s.ref}: ${s.message} — クリックで差分を表示`}
+                onClick={() => openStashDiff(s)}
+              >
                 <span className="codicon codicon-archive branch-icon" />
                 <span className="branch-name">{s.message}</span>
                 <span className="branch-actions">
@@ -543,7 +609,10 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
                     className="icon-btn"
                     title="適用して削除 (pop)"
                     disabled={busy}
-                    onClick={() => void act(() => api.stashApply(dir, s.ref, true), '適用しました')}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void act(() => api.stashApply(dir, s.ref, true), '適用しました');
+                    }}
                   >
                     <span className="codicon codicon-debug-step-out" />
                   </button>
@@ -551,7 +620,10 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
                     className="icon-btn"
                     title="適用 (スタッシュは残す)"
                     disabled={busy}
-                    onClick={() => void act(() => api.stashApply(dir, s.ref, false), '適用しました')}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void act(() => api.stashApply(dir, s.ref, false), '適用しました');
+                    }}
                   >
                     <span className="codicon codicon-desktop-download" />
                   </button>
@@ -559,13 +631,57 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
                     className="icon-btn"
                     title="削除"
                     disabled={busy}
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
                       if (confirm(`${s.ref} を削除しますか?\n${s.message}`)) {
                         void act(() => api.stashDrop(dir, s.ref), '削除しました');
                       }
                     }}
                   >
                     <span className="codicon codicon-trash" />
+                  </button>
+                </span>
+              </div>
+            ))
+          ))}
+
+        {sectionHead('タグ', openTags, () => setOpenTags((v) => !v), {
+          icon: 'add',
+          title: '新しいタグを作成 (HEAD)',
+          onClick: () => void createTag(),
+        })}
+        {openTags &&
+          (tags.length === 0 ? (
+            <div className="git-side-empty">タグはありません</div>
+          ) : (
+            tags.map((t) => (
+              <div key={t.name} className="git-branch-row" title={t.hash}>
+                <span className="codicon codicon-tag branch-icon" />
+                <span className="branch-name">{t.name}</span>
+                <span className="branch-actions">
+                  <button
+                    className="icon-btn"
+                    title="origin へ push"
+                    disabled={busy || !!operation}
+                    onClick={() => pushTag(t)}
+                  >
+                    <span className="codicon codicon-cloud-upload" />
+                  </button>
+                  <button
+                    className="icon-btn"
+                    title="ローカルタグを削除…"
+                    disabled={busy || !!operation}
+                    onClick={() => void deleteTagLocal(t)}
+                  >
+                    <span className="codicon codicon-trash" />
+                  </button>
+                  <button
+                    className="icon-btn"
+                    title="リモート (origin) から削除…"
+                    disabled={busy || !!operation}
+                    onClick={() => void deleteTagRemote(t)}
+                  >
+                    <span className="codicon codicon-cloud" />
                   </button>
                 </span>
               </div>

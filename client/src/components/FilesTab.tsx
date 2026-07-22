@@ -11,7 +11,9 @@ import {
   type LeafEditorState,
 } from '../editorState';
 import { registerFilesTab, touchFilesTab, unregisterFilesTab } from '../search/registry';
+import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import EditorStatusBar from './EditorStatusBar';
+import FileHistoryModal from './FileHistoryModal';
 import FileTree from './FileTree';
 import SearchPanel from './SearchPanel';
 
@@ -157,6 +159,18 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
   const [searchFocusSeq, setSearchFocusSeq] = useState(0);
   const searchVisitedRef = useRef(false);
   if (side === 'search') searchVisitedRef.current = true;
+
+  // ファイルツリーの右クリックメニュー(6.3: 「ファイルの履歴...」)。読み取り専用機能なので
+  // ConfirmDialog は不要 — pj-git-route の「操作系でない機能は確認不要」の原則どおり。
+  const [fileMenu, setFileMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  const [historyPath, setHistoryPath] = useState<string | null>(null);
+  const fileMenuItems = (path: string): ContextMenuItem[] => [
+    {
+      label: 'ファイルの履歴...',
+      icon: 'history',
+      onClick: () => setHistoryPath(path),
+    },
+  ];
 
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
@@ -727,7 +741,12 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
           </button>
         </div>
         <div className="side-view" style={{ display: side === 'tree' ? undefined : 'none' }}>
-          <FileTree root={root} selectedPath={activePath} onSelectFile={openFile} />
+          <FileTree
+            root={root}
+            selectedPath={activePath}
+            onSelectFile={openFile}
+            onFileContextMenu={(e, path) => setFileMenu({ x: e.clientX, y: e.clientY, path })}
+          />
         </div>
         {searchVisitedRef.current && (
           <div className="side-view" style={{ display: side === 'search' ? undefined : 'none' }}>
@@ -829,6 +848,17 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
           </>
         )}
       </div>
+      {fileMenu && (
+        <ContextMenu
+          x={fileMenu.x}
+          y={fileMenu.y}
+          items={fileMenuItems(fileMenu.path)}
+          onClose={() => setFileMenu(null)}
+        />
+      )}
+      {historyPath && (
+        <FileHistoryModal dir={root} path={historyPath} onClose={() => setHistoryPath(null)} />
+      )}
     </div>
   );
 }

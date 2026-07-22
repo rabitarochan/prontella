@@ -15,6 +15,7 @@ import type {
   SearchTextResponse,
   StashEntry,
   StatusFile,
+  TagInfo,
   TerminalSession,
   TreeEntry,
   TreeStatusEntry,
@@ -50,8 +51,26 @@ export const api = {
       method: 'DELETE',
     }),
 
-  log: (dir: string, limit = 100, all = false) =>
-    request<LogEntry[]>(`/api/git/log?dir=${q(dir)}&limit=${limit}${all ? '&all=1' : ''}`),
+  log: (
+    dir: string,
+    limit = 100,
+    all = false,
+    opts: {
+      path?: string;
+      /** true: --follow (6.3 のファイル履歴モーダル)。false/省略: 単純な pathspec 絞り込み (6.4)。 */
+      follow?: boolean;
+      author?: string;
+      grep?: string;
+    } = {},
+  ) => {
+    const params = new URLSearchParams({ dir, limit: String(limit) });
+    if (all) params.set('all', '1');
+    if (opts.path) params.set('path', opts.path);
+    if (opts.follow) params.set('follow', '1');
+    if (opts.author) params.set('author', opts.author);
+    if (opts.grep) params.set('grep', opts.grep);
+    return request<LogEntry[]>(`/api/git/log?${params}`);
+  },
   commitDetail: (dir: string, hash: string) =>
     request<{ text: string }>(`/api/git/commit?dir=${q(dir)}&hash=${q(hash)}`),
   gitStatus: (dir: string) =>
@@ -148,6 +167,15 @@ export const api = {
   stashApply: (dir: string, ref: string, pop: boolean) =>
     post<void>('/api/git/stash-apply', { dir, ref, pop }),
   stashDrop: (dir: string, ref: string) => post<void>('/api/git/stash-drop', { dir, ref }),
+  stashShow: (dir: string, ref: string) =>
+    request<{ text: string }>(`/api/git/stash-show?dir=${q(dir)}&ref=${q(ref)}`),
+  tags: (dir: string) => request<TagInfo[]>(`/api/git/tags?dir=${q(dir)}`),
+  createTag: (dir: string, name: string, message?: string) =>
+    post<void>('/api/git/tag-create', { dir, name, message }),
+  deleteTag: (dir: string, name: string) => post<void>('/api/git/tag-delete', { dir, name }),
+  pushTag: (dir: string, name: string) => post<void>('/api/git/tag-push', { dir, name }),
+  deleteRemoteTag: (dir: string, name: string) =>
+    post<void>('/api/git/tag-delete-remote', { dir, name }),
   gitInit: (dir: string) => post<void>('/api/git/init', { dir }),
 
   tree: (root: string, dir = '') => request<TreeEntry[]>(`/api/fs/tree?root=${q(root)}&dir=${q(dir)}`),

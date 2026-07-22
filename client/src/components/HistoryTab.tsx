@@ -32,6 +32,10 @@ const COLUMNS: { key: ColKey; label: string }[] = [
   { key: 'date', label: '日時' },
 ];
 
+// 履歴検索 (6.4)。フィルター種別ごとに GET /api/git/log の author/grep/path のどれへ渡すかを切替える。
+type FilterKind = 'message' | 'author' | 'path';
+const FILTER_DEBOUNCE_MS = 200;
+
 function loadCols(): ColWidths {
   try {
     const raw = localStorage.getItem(COLS_KEY);
@@ -146,6 +150,18 @@ export default function HistoryTab({
   const [commitMenu, setCommitMenu] = useState<{ x: number; y: number; entry: LogEntry } | null>(null);
   const { confirm: confirmDialog, dialog } = useConfirm();
 
+  // 履歴検索 (6.4)。filterInput はテキスト欄の生値、filter は FILTER_DEBOUNCE_MS 後に
+  // 確定する値 (実際のクエリはこちらを使う) — SearchPanel の query/DEBOUNCE_MS と同じ形。
+  const [filterKind, setFilterKind] = useState<FilterKind>('message');
+  const [filterInput, setFilterInput] = useState('');
+  const [filter, setFilter] = useState('');
+  const hasFilter = filter !== '';
+  // ログ取得 (絞り込み込み) 専用のエラー。commitFiles/commitMessage 用の error (下の effect、
+  // コンポーネント全体を覆う) とは別枠にする — 6.4 でフリーテキスト入力が増え、不正な path
+  // (先頭 `-` 等) を打鍵しただけで誰でも 400 に到達しうるようになったため、失敗してもツールバー
+  // (フィルター入力欄) を操作不能にせず、その場で訂正できるようにする。
+  const [logError, setLogError] = useState('');
+
   useEffect(() => {
     try {
       localStorage.setItem(COLS_KEY, JSON.stringify(cols));
@@ -155,12 +171,24 @@ export default function HistoryTab({
   }, [cols]);
 
   useEffect(() => {
+    const t = setTimeout(() => setFilter(filterInput), FILTER_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [filterInput]);
+
+  useEffect(() => {
     setLog(null);
+    setLogError('');
+    const opts: { author?: string; grep?: string; path?: string } = {};
+    if (filter) {
+      if (filterKind === 'author') opts.author = filter;
+      else if (filterKind === 'path') opts.path = filter;
+      else opts.grep = filter;
+    }
     api
-      .log(dir, 300, showAll)
+      .log(dir, 300, showAll, opts)
       .then(setLog)
-      .catch((e: Error) => setError(e.message));
-  }, [dir, showAll]);
+      .catch((e: Error) => setLogError(e.message));
+  }, [dir, showAll, filter, filterKind]);
 
   useEffect(() => {
     if (!selected) return;
@@ -185,14 +213,21 @@ export default function HistoryTab({
     };
   }, [dir, selected]);
 
-  const graph = useMemo(() => (log ? layoutGraph(log) : []), [log]);
+  // 絞り込み適用中はグラフレーンを描画しない。author/grep/path フィルターは親コミットが
+  // 一覧から抜け落ちる (topo 順だが非連続) ことがあり、layoutGraph は「解決されない親待ちの
+  // レーン」を popせずに残し続ける実装のため、レーン数が単調に増え続ける不具合を実測で確認した
+  // (フィルター後 N 件の履歴で laneCount が 1,2,...,N まで増加し、後段になるほど際限なく横に
+  // 広がる「幽霊レーン」が並ぶ)。フィルター中はレーン計算自体をスキップしてフラットな一覧に
+  // 品位よく退避する (6.4 の既知の設計判断)。
+  const graph = useMemo(() => (log && !hasFilter ? layoutGraph(log) : []), [log, hasFilter]);
   const graphWidth = useMemo(
     () => Math.max(2, ...graph.map((r) => r.laneCount)) * LANE_W + LANE_W / 2,
     [graph],
   );
 
+  const visibleColumns = hasFilter ? COLUMNS.filter((c) => c.key !== 'tree') : COLUMNS;
   const treeW = cols.tree ?? graphWidth;
-  const totalW = treeW + cols.subject + cols.commit + cols.author + cols.date;
+  const totalW = (hasFilter ? 0 : treeW) + cols.subject + cols.commit + cols.author + cols.date;
 
   const colStyle = (key: ColKey): CSSProperties => {
     if (key === 'subject') return { flex: `1 0 ${cols.subject}px`, minWidth: 0 };
@@ -305,21 +340,61 @@ export default function HistoryTab({
             <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
             全ブランチを表示 (--all)
           </label>
-          {log && <span className="graph-count">{log.length} コミット</span>}
+          <div className="history-filter">
+            <select
+              className="history-filter-kind"
+              value={filterKind}
+              onChange={(e) => setFilterKind(e.target.value as FilterKind)}
+            >
+              <option value="message">メッセージ</option>
+              <option value="author">著者</option>
+              <option value="path">パス</option>
+            </select>
+            <input
+              className="history-filter-input"
+              type="text"
+              value={filterInput}
+              onChange={(e) => setFilterInput(e.target.value)}
+              placeholder={
+                filterKind === 'author' ? '著者名で絞り込み'
+                : filterKind === 'path' ? 'パスで絞り込み'
+                : 'メッセージで絞り込み'
+              }
+            />
+            {filterInput && (
+              <button
+                className="icon-btn"
+                title="フィルターをクリア"
+                onClick={() => {
+                  setFilterInput('');
+                  setFilter('');
+                }}
+              >
+                <span className="codicon codicon-close" />
+              </button>
+            )}
+          </div>
+          {log && (
+            <span className="graph-count">
+              {log.length} コミット{hasFilter ? ' (絞り込み中)' : ''}
+            </span>
+          )}
         </div>
         <div className="graph-scroll">
           <div className="graph-header" style={{ minWidth: totalW }}>
-            {COLUMNS.map((col) => (
+            {visibleColumns.map((col) => (
               <div key={col.key} className="graph-hcell" style={colStyle(col.key)}>
                 <span className="graph-hlabel">{col.label}</span>
                 <span className="col-resize-handle" onMouseDown={startResize(col.key)} />
               </div>
             ))}
           </div>
-          {log === null ? (
+          {logError ? (
+            <div className="placeholder">⚠ {logError}</div>
+          ) : log === null ? (
             <div className="placeholder">読み込み中...</div>
           ) : log.length === 0 ? (
-            <div className="placeholder">コミットがありません</div>
+            <div className="placeholder">{hasFilter ? '一致するコミットがありません' : 'コミットがありません'}</div>
           ) : (
             log.map((entry, i) => (
               <div
@@ -332,9 +407,11 @@ export default function HistoryTab({
                   setCommitMenu({ x: e.clientX, y: e.clientY, entry });
                 }}
               >
-                <div className="graph-cell" style={colStyle('tree')}>
-                  <GraphCell row={graph[i]} />
-                </div>
+                {!hasFilter && (
+                  <div className="graph-cell" style={colStyle('tree')}>
+                    <GraphCell row={graph[i]} />
+                  </div>
+                )}
                 <div className="graph-subject" style={colStyle('subject')}>
                   <RefChips refs={entry.refs} />
                   <span className="graph-subject-text" title={entry.subject}>

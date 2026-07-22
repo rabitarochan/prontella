@@ -1,6 +1,7 @@
 import type { StatusFile } from '../types';
 import ConflictResolvePane from './ConflictResolvePane';
 import DiffPane from './DiffPane';
+import StashDiffPane from './StashDiffPane';
 
 /**
  * 変更リストで選択したファイルの左右 diff (+ 競合ファイルの解決) をタブで並べるペイン。
@@ -32,7 +33,14 @@ export interface ConflictTab {
   path: string;
 }
 
-export type WorkTab = DiffTab | ConflictTab;
+export interface StashTab {
+  kind: 'stash';
+  key: string; // `sd:${ref}`
+  ref: string; // e.g. "stash@{0}"
+  message: string;
+}
+
+export type WorkTab = DiffTab | ConflictTab | StashTab;
 
 export function diffTabKey(file: StatusFile, staged: boolean): string {
   return `${staged ? 's' : 'w'}:${file.path}`;
@@ -40,6 +48,10 @@ export function diffTabKey(file: StatusFile, staged: boolean): string {
 
 export function conflictTabKey(path: string): string {
   return `c:${path}`;
+}
+
+export function stashTabKey(ref: string): string {
+  return `sd:${ref}`;
 }
 
 function basename(path: string): string {
@@ -76,7 +88,10 @@ export default function DiffTabsPane({
   // 操作した本人のタブは呼び出し元で既に更新済みなので除外する。
   const notifySiblings = (path: string, sourceKey: string) => {
     for (const t of tabs) {
-      if (t.key !== sourceKey && t.path === path && t.kind === 'diff') onReload(t.key);
+      // StashTab は path を持たないため、t.kind === 'diff' を先に見て絞り込んでから t.path
+      // にアクセスする (TS の型絞り込みは論理式を左から評価するため、絞り込み前の t.path
+      // 参照は StashTab に存在しないプロパティとしてコンパイルエラーになる)。
+      if (t.kind === 'diff' && t.key !== sourceKey && t.path === path) onReload(t.key);
     }
   };
 
@@ -94,13 +109,17 @@ export default function DiffTabsPane({
                 title={
                   t.kind === 'diff'
                     ? `${t.path}${t.staged ? ' (ステージ済みの変更)' : ''}`
-                    : `${t.path} (競合の解決)`
+                    : t.kind === 'conflict'
+                      ? `${t.path} (競合の解決)`
+                      : `${t.ref}: ${t.message}`
                 }
                 onClick={() => onActivate(t.key)}
               >
-                <span className={`codicon codicon-${t.kind === 'diff' ? 'diff' : 'warning'}`} />
+                <span
+                  className={`codicon codicon-${t.kind === 'diff' ? 'diff' : t.kind === 'conflict' ? 'warning' : 'archive'}`}
+                />
                 <span className="editor-tab-name">
-                  {basename(t.path)}
+                  {t.kind === 'stash' ? t.message || t.ref : basename(t.path)}
                   {t.kind === 'diff' && t.staged && <span className="diff-tab-staged"> S</span>}
                 </span>
                 <span className="editor-tab-actions">
@@ -151,7 +170,7 @@ export default function DiffTabsPane({
                     />
                   </div>
                 </>
-              ) : (
+              ) : t.kind === 'conflict' ? (
                 <ConflictResolvePane
                   dir={dir}
                   path={t.path}
@@ -160,6 +179,18 @@ export default function DiffTabsPane({
                     onStatusChanged?.();
                   }}
                 />
+              ) : (
+                <>
+                  <div className="diff-toolbar">
+                    <span className="diff-path" title={t.ref}>
+                      {t.message || t.ref}
+                    </span>
+                    <span className="diff-scope">スタッシュの差分 (読み取り専用)</span>
+                  </div>
+                  <div className="diff-body">
+                    <StashDiffPane dir={dir} stashRef={t.ref} />
+                  </div>
+                </>
               )}
             </div>
           ))}

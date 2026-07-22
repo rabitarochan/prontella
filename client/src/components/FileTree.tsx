@@ -134,10 +134,16 @@ export default function FileTree({
   root,
   selectedPath,
   onSelectFile,
+  onFileContextMenu,
 }: {
   root: string;
   selectedPath: string | null;
   onSelectFile: (path: string) => void;
+  /**
+   * ファイル行 (ディレクトリ行は対象外) の右クリックで発火する。ContextMenu の構築・表示は
+   * 呼び出し元 (FilesTab) の責務 — BranchTree の onContextMenu と同じ分担パターン。
+   */
+  onFileContextMenu?: (e: React.MouseEvent, path: string) => void;
 }) {
   const [nodes, setNodes] = useState<TNode[] | null>(null);
   const [status, setStatus] = useState<TreeStatusEntry[]>([]);
@@ -369,6 +375,14 @@ export default function FileTree({
             setActiveDir(parentOf(node.data.id));
           }
         }}
+        onContextMenu={
+          !isDir && onFileContextMenu
+            ? (e) => {
+                e.preventDefault();
+                onFileContextMenu(e, node.data.id);
+              }
+            : undefined
+        }
       >
         <span
           className={`tree-chevron codicon codicon-chevron-right ${node.isOpen ? 'open' : ''}`}

@@ -376,12 +376,69 @@ export interface LogEntry {
   date: string; // committer date (ISO 8601)
   subject: string;
   refs: string;
+  /**
+   * opts.path 指定時のみ設定される。当該コミット時点でのファイルの実際のパス
+   * (--follow によるリネーム追跡の結果、opts.path に渡した現在パスと異なることがある)。
+   */
+  path?: string;
+  /**
+   * opts.path 指定時のみ設定される。リネームコミットでは親コミット時点の旧パス、
+   * それ以外 (追加/変更) は null — CommitFile.origPath と同じ意味論。diff-pair の
+   * scope=commit にそのまま origPath として渡せる (渡さないと、リネーム後の現在パスが
+   * 親コミットに存在せず空 diff / 誤った "新規ファイル" 表示になる。実 git で確認済み)。
+   */
+  origPath?: string | null;
+}
+
+function parseLogLine(line: string): LogEntry {
+  const [hash, shortHash, parents, author, date, subject, refs] = line.split(US);
+  return {
+    hash,
+    shortHash,
+    parents: parents ? parents.split(' ') : [],
+    author,
+    date,
+    subject,
+    refs: refs ?? '',
+  };
+}
+
+/**
+ * `git log --follow --name-status --pretty=format:<US 区切り> -- <path>` の生出力を
+ * per-commit の LogEntry[] に変換する純関数(getLog から切り出し・単体テスト対象)。
+ * 出力は「1 コミット = 空行区切りの複数行ブロック」(1 行目が --pretty=format 行、
+ * 2 行目以降が name-status 行) になる。単一 pathspec + --follow の下では name-status
+ * 行は通常ちょうど 1 行(実 git で確認済み)。マージコミット(既定の no -m では
+ * name-status 行が出ない)はここで弾かれ、履歴一覧から除外される(ファイル履歴は
+ * リニアな追跡が目的でマージの差分展開はスコープ外、6.3 の既知の制限)。
+ */
+export function parseFollowLog(out: string): LogEntry[] {
+  return out
+    .split('\n\n')
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .flatMap((block): LogEntry[] => {
+      const lines = block.split('\n');
+      const entry = parseLogLine(lines[0]);
+      const nsLine = lines[1];
+      if (!nsLine) return [];
+      const parts = nsLine.split('\t');
+      const status = parts[0][0];
+      if (status === 'R' || status === 'C') {
+        entry.path = unquoteGitPath(parts[2]);
+        entry.origPath = unquoteGitPath(parts[1]);
+      } else {
+        entry.path = unquoteGitPath(parts[1]);
+        entry.origPath = null;
+      }
+      return [entry];
+    });
 }
 
 export async function getLog(
   dir: string,
   limit = 100,
-  opts: { ref?: string; all?: boolean } = {},
+  opts: { ref?: string; all?: boolean; path?: string; follow?: boolean; author?: string; grep?: string } = {},
 ): Promise<LogEntry[]> {
   // %cI is the committer date (strict ISO 8601); LogEntry.date carries it
   const format = ['%H', '%h', '%P', '%an', '%cI', '%s', '%D'].join(US);
@@ -390,6 +447,30 @@ export async function getLog(
   const args = ['log', '--date-order', `--pretty=format:${format}`, '-n', String(limit)];
   if (opts.all) args.push('--all');
   if (opts.ref) args.push(opts.ref);
+  // 履歴検索 (6.4): メッセージ (--grep) / 著者 (--author) のフリーテキスト検索。
+  // `--fixed-strings` (リテラル一致) + `--regexp-ignore-case` (大小無視) を採用 — 既定の
+  // 正規表現 (BRE) のままだと、検索ボックスへの自由入力がメタ文字を含む場合 (例:
+  // コミットメッセージによくある "[WIP]" の `[` 単体) に不正な正規表現として git が
+  // "fatal: ... Invalid regular expression" (終了コード 128 → 500) を返すことを実測で確認したため。
+  // `--author=<値>` / `--grep=<値>` は `=` 埋め込みの単一 argv トークンにする (別トークンにしない) —
+  // この形式では値がどんな文字列 (先頭 `-` や `--upload-pack=...` のような文字列) でも独立オプション
+  // には化けない (`--author=--upload-pack=touch PWNED` が literal 文字列として扱われ何も実行され
+  // ないことを実 git で確認済み) ため、呼び出し元 (GET /api/git/log) はこの 2 つの値に限り先頭 `-`
+  // 拒否を課さない (`--grep=-fix` のような正当な検索語を弾かないため、意図的な判断)。
+  if (opts.author || opts.grep) args.push('--fixed-strings', '--regexp-ignore-case');
+  if (opts.author) args.push(`--author=${opts.author}`);
+  if (opts.grep) args.push(`--grep=${opts.grep}`);
+  // ファイル履歴 (6.3) / ツールバーの path 絞り込み (6.4)。opts.follow (6.3 のファイル履歴
+  // モーダル) のときだけ --follow --name-status を付け、per-commit の実パスを取り出す
+  // (parseFollowLog)。ツールバー版 (opts.follow なし) はリネーム追跡・per-commit パス抽出が
+  // 不要な単純な pathspec フィルターとして扱う — 複数コミットのグラフ表示と絡めるため、
+  // --name-status 特有の「1 コミット=複数行ブロック」パースを持ち込まない方が自然と判断
+  // (実 git で両モードの出力を確認済み)。path の検証 (空/非文字列/先頭 `-`) は呼び出し元の責務
+  // (pj-git-route の原則どおり)。pathspec は必ず `--` の後ろに置く。
+  if (opts.path) {
+    if (opts.follow) args.push('--follow', '--name-status');
+    args.push('--', opts.path);
+  }
   let out: string;
   try {
     out = await runGit(dir, args);
@@ -398,21 +479,9 @@ export async function getLog(
     if (String(e).includes('does not have any commits')) return [];
     throw e;
   }
-  return out
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => {
-      const [hash, shortHash, parents, author, date, subject, refs] = line.split(US);
-      return {
-        hash,
-        shortHash,
-        parents: parents ? parents.split(' ') : [],
-        author,
-        date,
-        subject,
-        refs: refs ?? '',
-      };
-    });
+  return opts.follow && opts.path
+    ? parseFollowLog(out)
+    : out.split('\n').filter(Boolean).map(parseLogLine);
 }
 
 export async function getCommitDetail(dir: string, hash: string): Promise<string> {
@@ -783,6 +852,78 @@ export async function stashApply(dir: string, ref: string, pop: boolean): Promis
 export async function stashDrop(dir: string, ref: string): Promise<void> {
   if (!/^stash@\{\d+\}$/.test(ref)) throw new Error(`不正な stash 参照です: ${ref}`);
   await runGit(dir, ['stash', 'drop', ref]);
+}
+
+/**
+ * スタッシュの中身を diff として表示する (`stash show -p`)。ref の形式検証
+ * (`/^stash@\{\d+\}$/`) は呼び出し元 (GET /api/git/stash-show) の責務 — pj-git-route の
+ * 「git.ts は薄い関数、検証はルート側」の原則どおり。stashApply/stashDrop はこの関数を
+ * 導入する前から git.ts 側で検証しており (呼び出し元は asyncHandler のため無効な ref は
+ * 400 ではなく 500 になる)、この既存の非対称は今回のタスクでは変更しない
+ * (6.R の判断材料として報告済み)。tracked な変更のみを表示する (git 標準の既定動作) —
+ * `push -u` で退避した未追跡ファイル分は含まれない (`--include-untracked` 未使用、
+ * スコープ外として明示的に見送り)。
+ */
+export async function stashShow(dir: string, ref: string): Promise<string> {
+  return runGit(dir, ['stash', 'show', '-p', ref]);
+}
+
+// ---- tags ---------------------------------------------------------------------
+
+export interface TagInfo {
+  name: string;
+  hash: string;
+}
+
+export async function listTags(dir: string): Promise<TagInfo[]> {
+  const format = ['%(refname:short)', '%(objectname:short)'].join(US);
+  const out = await runGit(dir, ['tag', '--sort=-creatordate', `--format=${format}`]);
+  return out
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [name, hash] = line.split(US);
+      return { name, hash };
+    });
+}
+
+/**
+ * HEAD にタグを作成する。message 省略時はライトウェイトタグ、指定時は `-a -m` の注釈付き
+ * タグになる。name の空/先頭 `-` 検証は呼び出し元 (POST /api/git/tag-create) の責務
+ * (resetToCommit 等と同じ分担)。`--` セパレーターでオプション解析を打ち切る (`git tag -a -m
+ * <msg> -- <name>` が受理されることは実 git で確認済み)。name はブランチ名同様 `/` を含み得る
+ * (例: `releases/v1`) ため hash 系のような固定書式のホワイトリスト検証はできず、`--` が主防壁。
+ */
+export async function createTag(dir: string, name: string, message?: string): Promise<void> {
+  const args = message ? ['tag', '-a', '-m', message, '--', name] : ['tag', '--', name];
+  await runGit(dir, args);
+}
+
+/**
+ * ローカルタグを削除する (`tag -d`)。name の検証は createTag と同じ理由で呼び出し元の責務。
+ * `--` セパレーターは実 git で受理を確認済み。
+ */
+export async function deleteTag(dir: string, name: string): Promise<void> {
+  await runGit(dir, ['tag', '-d', '--', name]);
+}
+
+/**
+ * タグを origin へ push する。name の検証は createTag と同じ理由で呼び出し元の責務。
+ * `git push origin -- <name>` が `--` セパレーターを受理することは実 git で確認済み。
+ * ネットワーク操作のため NETWORK_TIMEOUT を付与する。
+ */
+export async function pushTag(dir: string, name: string): Promise<void> {
+  await runGit(dir, ['push', 'origin', '--', name], NETWORK_TIMEOUT);
+}
+
+/**
+ * リモート (origin) のタグを削除する (`push origin --delete <name>`)。`--delete` はコード側の
+ * 固定値でありユーザー入力が入り込む余地はない。name の検証は createTag と同じ理由で呼び出し元
+ * の責務 — deleteRemoteBranch と同様、`push origin --delete -- <name>` が `--` セパレーターを
+ * 受理することは実 git で確認済み。ネットワーク操作のため NETWORK_TIMEOUT を付与する。
+ */
+export async function deleteRemoteTag(dir: string, name: string): Promise<void> {
+  await runGit(dir, ['push', 'origin', '--delete', '--', name], NETWORK_TIMEOUT);
 }
 
 // ---- operation state ---------------------------------------------------------

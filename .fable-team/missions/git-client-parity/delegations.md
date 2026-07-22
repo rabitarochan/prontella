@@ -97,3 +97,14 @@ Dossier format (⤴ / non-convergence only):
 - 2026-07-22 03:03 | task 6.V | verifier(sonnet) | attempt 1 | ✅ accepted | CDP 直叩き実機 E2E でゲート 5 基準全合格。Monaco 既知債務の切り分け(新規でない・経路増)と origPath 反例実証つき
 - 2026-07-22 03:15 | task 6.R | reviewer(opus) | attempt 1 | ✅ accepted | LGTM。攻撃全不成立(タグ名トラバーサル・=埋め込み改行値・既存ルート横展開まで実証)。parseFollowLog 前提の実 git 突合込み
 - 2026-07-22 03:15 | gate Phase 6 | reviewer(opus) | 判定 ✅ LGTM | must-fix 0 / recommended 0 / FYI 5 | 修正サイクル 0(ミッション初)。6.V は CDP 直叩き E2E で全 5 基準合格
+- 2026-07-22 16:00 | task 2.4a | builder(Sonnet) | attempt 1 | ✅ accepted | 行単位パッチ純関数+API+型同期。vitest 63→80、typecheck green、隔離実 git 検証済み。申し送り: context のみ選択が 500(400 化余地)/ 3 ハンク以上の累積オフセット未実測
+- 2026-07-22 16:27 | task 2.4b | builder(Sonnet) | attempt 1 | ✅ accepted | 行チェック UI(アコーディオン+リセット一本化)。vitest 80→86、typecheck green。実機 UI 検証は 2.4V へ持ち越し。Conductor 発見: ヘッダー楽観ロックが行内容変化を検出できない → 2.4R 最重点
+- 2026-07-22 17:43 | task 2.4V | verifier(Sonnet) | attempt 1 | ❌ 不合格(受入=検証結果として) | データ破壊 2 件検出: 行順序の崩壊(全方向・全エンコーディング)/ 409 がヘッダー比較のみで外部編集内容の混入を許す。E(UI 実機)・G(回帰)は合格。CDP 自作ドライバー
+- 2026-07-22 18:29 | task 2.4F | builder(Sonnet、新規スポーン) | attempt 1 | ✅ accepted | 行順序=ブロック内インデックスペアリング+余り後置 / 409=行選択時のみハンク本体全文照合(utf8 側)。vitest 86→102、修正前コードに 9 件が実際に落ちることを確認済み。gap: 不具合 2 の恒久自動テスト無し(ルートテスト基盤が無い慣習)
+- 2026-07-22 19:32 | task 2.4V' | verifier(Sonnet、2.4V 継続) | attempt 2 | ✅ 合格 | 不具合 1・2 とも解消を実測。m≠n 5 ケース・末尾改行なし marker 追随・日本語で偽 409 なし・UI 実機・回帰すべて合格。新規不具合ゼロ
+- 2026-07-22 20:04 | gate 2.4 | reviewer(Opus、新規) | 判定 ⚠️ 要修正 | must-fix 1 / recommended 4 / FYI 3 | marker 追随で行が融合するデータ破壊を実 HTTP + 実 git で再現(91 ケース中 13 件、全件 apply 成功扱い)。前提検証 11,200 サンプルで反例 0
+- 2026-07-22 21:37 | task 2.4F2 | builder(Sonnet、2.4F 継続) | attempt 2 | ✅ accepted | 2.4R 指摘全件を実装(marker 引き込み+ガード / ハッシュ楽観ロック無条件化 / 検証の純関数抽出 / 位置ベース番人 / 400 昇格)。vitest 102→120。新論点: 破棄でチェック以上が巻き戻る → 2.4R へ判定依頼
+- 2026-07-22 21:55 | gate 2.4 確認1 | reviewer(Opus、継続) | 判定 ⚠️ 条件付き LGTM | 指摘 7 件すべて実証つきで閉塞・データ破壊経路なし(97 ケースで違反 0)。新規 recommended 2 件(N-1 過剰拒否 = builder の証明に反例 / N-2 コメントの誤り)+ 新論点は (b) discard 限定の保守的警告を推奨
+- 2026-07-22 22:42 | task 2.4F3 | builder(Sonnet、継続) | attempt 3 | ✅ accepted | N-1(marker 破棄と引き込みの二分岐)+ N-2(コメント訂正と正しい根拠)+ (b)(discard 限定の保守的警告)。vitest 120→123。builder 自身のファジング 700 回で失敗 0。UI ダイアログの実機確認は 2.4V'' へ持ち越し
+- 2026-07-22 23:01 | gate 2.4 確認2 | reviewer(Opus、継続) | 判定 ✅ LGTM | 新規問題 0。自前の独立オラクル 2 系統(往復バイト一致 208 ステップ + パッチチェッカー 570 ケース)で suppress の破壊経路を探索して 0 件。過剰拒否は 1,200 ケース超で再現なし。警告の偽陰性 592 試行で 0。ミッション完了判定に同意
+- 2026-07-23 06:05 | task 2.4V'' | verifier(Sonnet、継続) | attempt 3 | ✅ 合格 | 契約変更後の基本往復・偽 409 なし(UTF-8/SJIS)・競合検知(行選択あり/なし双方)・破棄警告文の実機初確認・末尾改行なし追記のステージ・UI 回帰・全体回帰。新規不具合 0 → 2.4 ゲートクローズ

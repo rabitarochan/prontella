@@ -15,14 +15,14 @@ GitKraken 等)が不要になる。不足機能の洗い出しと実装計画は
 
 ## Definition of Done
 
-- [ ] ハンク/行単位のステージ・アンステージ・破棄ができる(CRLF / Shift_JIS 混在でも内容が壊れない)
-- [ ] マージ/rebase/cherry-pick/revert のコンフリクトを Deck 内で解決し、continue/abort/skip できる
-- [ ] --no-ff マージ(UI 既定)・複数行 Conventional Commit(body 入力と履歴での表示)・直前コミット取り消し・全変更破棄ができる
-- [ ] リモートブランチのチェックアウト/削除、branch rename、force-with-lease push、pull --rebase、remote 管理(add/remove/set-url)ができる
-- [ ] 任意コミットへの reset(soft/mixed/hard)、cherry-pick、revert、通常 rebase ができる
-- [ ] タグ管理(作成/削除/push)、stash 差分閲覧、ファイル履歴、履歴検索ができる
-- [ ] 破壊的操作はすべて統一 ConfirmDialog(danger)経由で、キャンセルすると無変更
-- [ ] 各フェーズが verifier の実操作検証と reviewer のレビューゲートを通過している
+- [x] ハンク/行単位のステージ・アンステージ・破棄ができる(CRLF / Shift_JIS 混在でも内容が壊れない)
+- [x] マージ/rebase/cherry-pick/revert のコンフリクトを Deck 内で解決し、continue/abort/skip できる
+- [x] --no-ff マージ(UI 既定)・複数行 Conventional Commit(body 入力と履歴での表示)・直前コミット取り消し・全変更破棄ができる
+- [x] リモートブランチのチェックアウト/削除、branch rename、force-with-lease push、pull --rebase、remote 管理(add/remove/set-url)ができる
+- [x] 任意コミットへの reset(soft/mixed/hard)、cherry-pick、revert、通常 rebase ができる
+- [x] タグ管理(作成/削除/push)、stash 差分閲覧、ファイル履歴、履歴検索ができる
+- [x] 破壊的操作はすべて統一 ConfirmDialog(danger)経由で、キャンセルすると無変更
+- [x] 各フェーズが verifier の実操作検証と reviewer のレビューゲートを通過している
 
 ## Verification harness (this project's feedback loop)
 

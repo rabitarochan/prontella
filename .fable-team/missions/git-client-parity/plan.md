@@ -113,11 +113,26 @@ worktree を任意コミット/detached から作成、format-patch/am、bisect�
 | 2.1 | 純関数モジュール: `splitDiffHunks(diffText)` と `buildPartialPatch(header, hunks, selected)`。**latin1 バイト保存**前提、`\r` と `\ No newline at end of file` を保持。vitest で CRLF/末尾改行なし/複数ハンク/非ASCII を網羅 | builder | M | 該当 vitest ケースが全グリーン | 0.4 | ✅ |
 | 2.2 | `POST /api/git/apply-hunks {dir,path,scope:'stage'\|'unstage'\|'discard',hunks:number[],expectedHunkCount}`。サーバーで権威 diff を**Buffer で再生成**→ ハンク数照合(不一致は 409 で再読込指示)→ patch 組立 → `git apply --cached`/`--cached --reverse`/`--reverse`(`runGitInput`) | builder | M | 2 ハンクのファイルで 1 ハンクだけ stage → status がそのファイルを staged と unstaged **両方**に出す | 0.1, 2.1 | ✅ |
 | 2.3 | フロント: DiffPane/DiffTabsPane にハンク表示 + ハンク毎の stage/unstage/discard 操作(**git 由来の parsed hunks で駆動**) | builder | M | dev で各ハンクにボタンが出て、クリックで 2.2 を呼び status が更新される | 2.2 | ✅ |
-| 2.4 | (P1-13)行単位選択。`buildPartialPatch` にハンク内行選択→ヘッダ recount。vitest 追加。フロントで行チェック UI | builder | M | 1 ハンク内の一部行だけ stage が成立、追加 vitest グリーン | 2.1, 2.3 | ⬜ |
+| 2.4 | (P1-13)行単位選択。`buildPartialPatch` にハンク内行選択→ヘッダ recount。vitest 追加。フロントで行チェック UI | builder | M | 1 ハンク内の一部行だけ stage が成立、追加 vitest グリーン | 2.1, 2.3 | ✅ |
 | 2.V | Phase 2 動作検証 | verifier | M | CRLF/Shift_JIS ファイルで stage/unstage/discard を検証、staged diff 実内容を確認 | 2.2, 2.3 | ✅ |
 | 2.R | レビュー(パッチ生成の正確性重点) | reviewer | S | 指摘反映 | 2.V | ✅ |
 
 > 補足: 2.4(行単位)は P1 精緻化。Phase 2 の Gate は 2.1–2.3(ハンク単位)で判定し、2.4 は後続に回してよい。
+>
+> 2.4 の実施記録(2026-07-22、Phase 6 完了後に着手): 上表の 2.V / 2.R は 2.1–2.3 に対するゲートなので、
+> 2.4 には**独立したゲート**を設けた。2.4a(サーバー: `buildPartialPatchLines` + `lines` パラメーター)と
+> 2.4b(UI: 行チェックボックス)を builder が実施 → **2.4V**(verifier 実機 E2E)→ **2.4R**(reviewer、Opus)。
+> 状態は state.md を参照。
+
+| # | タスク | 担当 | サイズ | 観測可能な完了基準 | 依存 | 状態 |
+|---|---|---|---|---|---|---|
+| 2.4V | 2.4 動作検証(行単位 stage/unstage/discard、CRLF・SJIS のバイト保存、UI 実機) | verifier | M | 非選択行が失われないことを実バイトで確認、UI 実操作で非活性・選択リセット・409 を確認 | 2.4 | ❌→✅(1 回目不合格: **データ破壊 2 件検出**) |
+| 2.4F | 2.4V 検出のデータ破壊 2 件を修正(行順序の崩壊 / 409 の内容照合) | builder(新規) | M | 現行コードに対して落ちる回帰テストが修正後 green、実 git で post-image の順序が正しい、ヘッダー不変の外部編集で 409 | 2.4V | ✅ |
+| 2.4V' | 2.4F 後の再検証(+ m≠n・末尾改行なし marker の新規網羅) | verifier | M | 2.4V の全基準 + 修正 2 件の再現手順で合格 | 2.4F | ✅ |
+| 2.4R | レビュー(行単位パッチの正確性 + 楽観ロックの粒度を重点) | reviewer | S | 指摘反映(最大 2 サイクル) | 2.4V' | ✅(1 回目 **要修正**: データ破壊 1 + 楽観ロックの穴 → 2 回目 条件付き LGTM → 3 回目 **LGTM**) |
+| 2.4F2 | 2.4R 指摘の修正サイクル 1(marker 引き込み / ハッシュ楽観ロック / 純関数抽出 / 位置ベース番人 / 400 昇格) | builder | M | 指摘全件が実 git で閉じ、偽 409 なし | 2.4R | ✅ |
+| 2.4F3 | 2.4R 指摘の修正サイクル 2 = 最終(marker 破棄と引き込みの二分岐 / コメント訂正 / discard 警告) | builder | S | 過剰拒否が解消し、警告に偽陰性が無い | 2.4F2 | ✅ |
+| 2.4V'' | UI 実機の最終確認(契約変更 `expectedHunkHashes`・破棄警告文の初回実機確認) | verifier | M | 全操作が 409 化していない、警告文が正しい条件でのみ出る | 2.4F3 | ✅ |
 
 ## Phase 3: コンフリクト解決(P0)
 

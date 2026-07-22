@@ -602,3 +602,13 @@
 - **Decisions and rationale**: F-6(`rev` ガードだけ `{4,40}` のままで SHA-256 の完全ハッシュが 400)は**債務として記録し修正しない** — 1 文字修正だが**検証を緩める方向の変更**であり、レビューを通さずに広げるのは筋が悪い。`rev` は現状 UI から到達不能で実害がなく、将来配線するときに一緒にレビューすればよい。他の FYI 6 件も reviewer 判定どおり持ち越し
 - **ミッション総括**: 検証ゲートとレビューゲートが**独立に、合計 4 件の実害**を出荷前に阻止した(行順序の破壊 / 未見内容の index 混入 / EOF marker による行の融合 / SHA-256 で「空ファイル」を装う誤答)。**前 3 者はいずれも「vitest green」と「`git apply` 成功」の両方をすり抜けており**、4 番目は「エラーを出さない」ことで気付く手掛かりを消していた。さらに 6.5V' は **CSS が正しく書かれブラウザーにも認識されているのに描画されない**という、コードレビューでもユニットテストでも原理的に検出できない型を実機の `getBoundingClientRect()` で捕まえている。**「テストが緑」「ツールがエラーを返さない」「コードが正しく書かれている」のいずれも無罪の証明にならない**ことが、このミッションで 5 回実証された
 - **Next**: /fable-team:grow(未処理 inbox 25 件超)→ /fable-team:retro
+
+## 2026-07-23 08:50 — Conductor(ミッション完了後の追加修正)
+
+- **Did**: grow 第 3 回で `pj-git-route` に「エラー種別は先頭アンカー付きで照合する」を明文化した直後、**実コード(`server/git.ts` の `no such path` 判定)がその定石に違反している**ことが判明(ドキュメント作業中の builder が発見)。ユーザー判断により**コミット前に修正**。6.5 の builder を継続し、判定を純関数 `isBlameNoSuchPathError` に切り出して `message.startsWith('fatal: no such path ')` に変更。vitest 139 → **144**(+5)、typecheck green
+- **builder の実測が私の指示の誤りを防いだ(最重要)**: reviewer の提案(および私が brief に転記した案)は `/^fatal: no such path '/` = **単引用符を含む**先頭アンカーだった。builder が実物を観察したところ、**rev の有無で文言の形が違う**ことが判明 — rev 省略時は `fatal: no such path 'xxx' in HEAD`(引用符あり)、**rev 指定時は `fatal: no such path xxx in <rev>`(引用符なし)**。提案どおりの正規表現を採用していたら **rev 指定時のケース(完了基準 5)を壊していた**。共通接頭辞 `fatal: no such path `(引用符の手前まで)だけを見る形にして両方を正しく拾う。**「私の書いた正規表現を鵜呑みにせず実測して決めよ」という指示がそのまま効いた事例**
+- **もう 1 つの実測発見**: `String(e)` は JS の既定の `Error.prototype.toString()` により `"Error: " + message` になるため先頭アンカーが効かない。`runGitInput` は stderr を `trim()` しただけで prefix を付けないと実コードで確認したうえで、**`e.message` を使う**形にした
+- **F-4(判定にテストが無い)も同時に解消**: 純関数化により vitest 5 件を追加(rev 省略時・rev 指定時の両文言 / `bad object` / `Cannot lstat` / **`no such path.txt` という名前の `Cannot lstat`** = F-3 の再現)。`startsWith` を `includes`(旧実装)に一時的に戻す変異で **F-3 再現テストだけが失敗**し他 33 件は無影響であることを確認 = 修正が回帰テストで守られている
+- **実測結果(隔離実 API、完了基準 5 項目すべて)**: 未追跡ファイル → `notFound:true` / 200(**壊れていない**)/ 存在しない rev → 500 `bad object` / worktree から削除した tracked → 500 `Cannot lstat` / **`no such path.txt` の削除 → 500 `Cannot lstat`(修正前は `notFound` に化けていた)** / rev 指定 + その rev に無いパス → `notFound:true` / 200。加えて回帰・敵対的入力 400・PWNED 0 件・`git status` 無変化
+- **Decisions and rationale**: **verifier のブラウザー E2E は実施せずに受入**た。理由: (a) 回帰リスクの実体は「未追跡ファイルの blame が 500 に戻る」ことで、builder が**実 git に対する実 HTTP でその経路を直接検証済み** (b) クライアント側は**バイト単位で無変更**(`BlameResult` の形状も `notFound` の意味も不変)なのでモーダルの経路は同一 (c) ミッション完了後の締める方向の小修正。**ただしこれは判断であって、ブラウザー実機での確認は行っていない — 記録として明示する**
+- **未検証(builder の正直な申告)**: 将来の git バージョンで文言が変わる可能性、および "no such path" 以外にファイル名が偶然一致し得る未知の git エラー文言までは網羅していない(現状観測できた 5 パターンのみで判断)

@@ -1278,6 +1278,32 @@ export function decodeBlameContent(rawLines: RawBlameLine[]): BlameResult {
 }
 
 /**
+ * getBlame の catch(e) が呼ぶ判定用純関数(vitest 対象、6.5R FYI F-3 の修正 + F-4 の純関数化)。
+ * git blame が非ゼロ終了したときのエラーメッセージ(runGitInput は stderr を trim() しただけで
+ * Error.message にする — 余計な prefix は付かないことを実コードで確認済み)が「未追跡ファイル/
+ * 指定 rev にまだ存在しないパス」を意味する `no such path` 系かどうかを判定する。
+ *
+ * 実 git で観察した文言(隔離環境で runGitInput を直接呼び、e.message の実物を確認済み):
+ * - rev 省略時: `fatal: no such path 'xxx' in HEAD`(パス名を単引用符で囲む)
+ * - rev 指定 + そのバージョンに存在しないパス: `fatal: no such path xxx in <rev>`
+ *   (引用符なし — rev 省略時と文言の形が違う。両方とも先頭は必ず `fatal: no such path ` で
+ *   固定なので、この共通接頭辞だけを見れば両方を拾える)
+ * - 対照(no such path ではない失敗): `fatal: bad object <hash>`(存在しない rev)、
+ *   `fatal: Cannot lstat 'xxx': No such file or directory`(worktree から削除された
+ *   tracked ファイル)— いずれも `fatal: no such path ` では始まらない
+ *
+ * 旧実装は `String(e).includes('no such path')` という部分一致だったため、**git が引用した
+ * パス名自体にこの文字列が含まれる場合に誤って一致していた**(例: ファイル名が
+ * `no such path.txt` の tracked ファイルを worktree から削除すると `Cannot lstat 'no such
+ * path.txt': ...` という別の失敗になるが、部分一致だとこれも no such path 扱いに化けて
+ * 本来の throw が握り潰される — 6.5R FYI F-3 で指摘・実測済み)。先頭アンカー付き
+ * (`startsWith`)にすることでこの誤検出を閉じる。
+ */
+export function isBlameNoSuchPathError(message: string): boolean {
+  return message.startsWith('fatal: no such path ');
+}
+
+/**
  * ファイルの行単位 blame。`--porcelain`(`--line-porcelain` ではない — 後者は行ごとに全ヘッダーを
  * 繰り返し出力が肥大するため不採用)を使う。rev 省略時は既定どおり HEAD + 作業ツリー(未コミット
  * の変更行は擬似コミット `0000...000` として表現される)、rev 指定時はその版のみを見る(未コミット
@@ -1286,12 +1312,12 @@ export function decodeBlameContent(rawLines: RawBlameLine[]): BlameResult {
  * 一切変更しない。
  *
  * 未追跡ファイル(`?? ` 状態)や指定 rev にまだ存在しないパスは、git 自身が
- * `fatal: no such path '...' in HEAD` で非ゼロ終了する。これを呼び出し元にエラーとして
- * 投げっぱなしにすると、隣接する「ファイルの履歴...」(getLog --follow は同じ状況で
- * 単に空配列を返す — 6.5R R-4 で指摘された非対称)と体験が割れる。ここで `no such path` を
- * 検出したときだけ正常系(notFound:true, lines 空)に変換し、**それ以外の失敗(存在しない
- * rev の `bad object` 等)はそのまま再 throw する**(6.5 の敵対的入力要件 — 不正な rev は
- * 明示的なエラーのままにする、を壊さないため区別する)。
+ * `fatal: no such path ...` で非ゼロ終了する。これを呼び出し元にエラーとして投げっぱなしに
+ * すると、隣接する「ファイルの履歴...」(getLog --follow は同じ状況で単に空配列を返す —
+ * 6.5R R-4 で指摘された非対称)と体験が割れる。`isBlameNoSuchPathError` で検出したときだけ
+ * 正常系(notFound:true, lines 空)に変換し、**それ以外の失敗(存在しない rev の `bad object`、
+ * worktree から削除された tracked ファイルの `Cannot lstat` 等)はそのまま再 throw する**
+ * (6.5 の敵対的入力要件 — 不正な rev は明示的なエラーのままにする、を壊さないため区別する)。
  */
 export async function getBlame(dir: string, filePath: string, rev?: string): Promise<BlameResult> {
   const args = ['blame', '--porcelain'];
@@ -1301,7 +1327,8 @@ export async function getBlame(dir: string, filePath: string, rev?: string): Pro
   try {
     buf = await runGitInput(dir, args, Buffer.alloc(0));
   } catch (e) {
-    if (String(e).includes('no such path')) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (isBlameNoSuchPathError(message)) {
       return { lines: [], encoding: 'utf-8', binary: false, tooLarge: false, notFound: true };
     }
     throw e;

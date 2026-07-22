@@ -2,6 +2,7 @@ import iconv from 'iconv-lite';
 import { describe, expect, it } from 'vitest';
 import {
   decodeBlameContent,
+  isBlameNoSuchPathError,
   parseBlamePorcelain,
   parseFollowLog,
   parseRemotesOutput,
@@ -673,5 +674,43 @@ describe('parseBlamePorcelain (6.5R 追加修正: SHA-256 / origLine と line �
     ]);
     // 全フィクスチャで両者が同値だと、入れ替えても検出できない変異が残る(6.5R T-1 指摘)。
     expect(lines.some((l) => l.origLine !== l.line)).toBe(true);
+  });
+});
+
+describe('isBlameNoSuchPathError (6.5R FYI F-3 の修正 + F-4 の純関数化)', () => {
+  // 全ケースの文言は隔離環境で runGitInput を直接呼び、e.message の実物を確認したもの
+  // (server/git.ts の isBlameNoSuchPathError コメント参照)。
+
+  it('rev 省略時の「未追跡ファイル」文言(単引用符あり)を no such path と判定する', () => {
+    expect(isBlameNoSuchPathError("fatal: no such path 'brandnew.txt' in HEAD")).toBe(true);
+  });
+
+  it('rev 指定時の「その版にまだ存在しないパス」文言(単引用符なし)も no such path と判定する', () => {
+    expect(
+      isBlameNoSuchPathError(
+        'fatal: no such path newfile.txt in 292c04de2764d9825656bb2af565e26c12c93292',
+      ),
+    ).toBe(true);
+  });
+
+  it('存在しない rev (bad object) は no such path と判定しない(敵対的入力の明示エラーを維持)', () => {
+    expect(
+      isBlameNoSuchPathError('fatal: bad object deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'),
+    ).toBe(false);
+  });
+
+  it('worktree から削除された tracked ファイル (Cannot lstat) は no such path と判定しない', () => {
+    expect(
+      isBlameNoSuchPathError("fatal: Cannot lstat 'plain.txt': No such file or directory"),
+    ).toBe(false);
+  });
+
+  it('ファイル名自体に "no such path" を含む場合でも誤って一致しない(6.5R FYI F-3 の再現・回帰防止)', () => {
+    // 旧実装 (String(e).includes('no such path')) だと、この Cannot lstat メッセージも
+    // 「no such path」という部分文字列を含む(パス名がたまたま "no such path.txt" のため)ため
+    // 誤って notFound 扱いになり、本来 throw すべき失敗が握り潰されていた。
+    const message = "fatal: Cannot lstat 'no such path.txt': No such file or directory";
+    expect(message.includes('no such path')).toBe(true); // 旧実装なら誤検出する入力であることの確認
+    expect(isBlameNoSuchPathError(message)).toBe(false); // 新実装は先頭アンカーで正しく除外する
   });
 });

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
+import { WebglAddon } from '@xterm/addon-webgl';
 
 /**
  * One xterm.js instance bound to a PTY session (/ws/term). Mounted once per
@@ -42,6 +43,18 @@ export default function XTermView({
     // OSC 52 support — Claude Code's select-to-copy emits OSC 52; xterm core drops it without this addon.
     term.loadAddon(new ClipboardAddon());
     term.open(container);
+
+    // WebGL rendering is much faster than the default DOM renderer, but the
+    // context can be lost (GPU driver reset, tab discard) or unavailable
+    // altogether (no WebGL2 support) — fall back to the DOM renderer rather
+    // than crash or freeze the terminal.
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      term.loadAddon(webgl);
+    } catch {
+      // WebGL unavailable — keep the default DOM renderer.
+    }
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/ws/term?id=${id}`);

@@ -10,6 +10,8 @@ export type AgentStatus = 'busy' | 'waiting' | 'idle' | 'shell';
 const MAX_SCROLLBACK = 200_000; // chars of raw output kept for reattach
 const BUSY_HOLD_MS = 3_000; // spinner redraw gap tolerance
 const CARRY_MAX = 400; // stripped chars carried over to match across chunk splits
+const FLUSH_MS = 16; // ws 'data' broadcast coalescing window (~1 frame)
+const MAX_PENDING = 64 * 1024; // chars; burst guard — flush immediately past this
 
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]/g;
@@ -72,6 +74,8 @@ interface Session {
   carry: string; // stripped tail carried into the next chunk's pattern scan
   modes: Map<number, boolean>; // last seen state of TRACKED_MODES (true = set/h); unseen modes are absent
   modeCarry: string; // raw tail carried into the next chunk's DECSET_RE scan
+  pending: string; // unflushed 'data' broadcast payload, coalesced within FLUSH_MS
+  flushTimer: NodeJS.Timeout | null;
   sockets: Set<WebSocket>;
   status: AgentStatus;
   claudeDetected: boolean;
@@ -124,6 +128,8 @@ export class PtyManager {
       carry: '',
       modes: new Map(),
       modeCarry: '',
+      pending: '',
+      flushTimer: null,
       sockets: new Set(),
       status: 'shell',
       claudeDetected: false,
@@ -137,6 +143,7 @@ export class PtyManager {
 
     proc.onData((data) => this.onData(session, data));
     proc.onExit(() => {
+      this.flush(session);
       session.exited = true;
       this.broadcast(session, { type: 'exit' });
       for (const ws of session.sockets) ws.close();
@@ -161,6 +168,11 @@ export class PtyManager {
   attach(id: string, ws: WebSocket): boolean {
     const session = this.sessions.get(id);
     if (!session) return false;
+    // Flush any pending 'data' broadcast to existing sockets BEFORE adding the
+    // new one: pending is already folded into scrollback (onData updates both
+    // synchronously), so the new socket must receive it only via the snapshot
+    // below, never via a live broadcast — otherwise it would see it twice.
+    this.flush(session);
     session.sockets.add(ws);
     // Scrollback is trimmed to MAX_SCROLLBACK, so one-shot mode sequences sent
     // at startup (bracketed paste, mouse tracking) can fall out of the window.
@@ -294,7 +306,14 @@ export class PtyManager {
   private onData(session: Session, data: string): void {
     session.lastOutputAt = Date.now();
     session.scrollback = (session.scrollback + data).slice(-MAX_SCROLLBACK);
-    this.broadcast(session, { type: 'data', data });
+    session.pending += data;
+    if (session.pending.length > MAX_PENDING) {
+      // Burst guard: flush immediately rather than let pending (and latency) grow unbounded.
+      this.flush(session);
+    } else if (!session.flushTimer) {
+      session.flushTimer = setTimeout(() => this.flush(session), FLUSH_MS);
+      session.flushTimer.unref();
+    }
 
     // Track DEC private mode changes (raw, unstripped) so a reattach can replay
     // them even after the sequence itself has scrolled out of `scrollback`.
@@ -361,6 +380,18 @@ export class PtyManager {
     session.statusSince = Date.now();
     this.broadcast(session, { type: 'status', status });
     this.broadcastEvent({ type: 'session', session: this.toInfo(session) });
+  }
+
+  /** Flushes coalesced 'data' output for a session, cancelling any pending timer. */
+  private flush(session: Session): void {
+    if (session.flushTimer) {
+      clearTimeout(session.flushTimer);
+      session.flushTimer = null;
+    }
+    if (session.pending) {
+      this.broadcast(session, { type: 'data', data: session.pending });
+      session.pending = '';
+    }
   }
 
   private broadcast(session: Session, msg: object): void {

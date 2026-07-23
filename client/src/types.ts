@@ -11,6 +11,19 @@ export interface BranchStatus {
   conflicted: number;
 }
 
+// server/git.ts の GitOperation と手動同期(共有型機構がないため)
+export type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'revert';
+
+// server/git.ts の GitOperationAction と手動同期(共有型機構がないため)。merge に
+// 'skip' を渡すと 400(POST /api/git/operation 参照)。
+export type GitOperationAction = 'continue' | 'abort' | 'skip';
+
+// server/git.ts の ConflictSide と手動同期(共有型機構がないため)
+export type ConflictSide = 'ours' | 'theirs';
+
+// server/git.ts の ResetMode と手動同期(共有型機構がないため)
+export type ResetMode = 'soft' | 'mixed' | 'hard';
+
 export interface Worktree {
   path: string;
   head: string;
@@ -47,6 +60,10 @@ export interface LogEntry {
   date: string; // committer date (ISO 8601)
   subject: string;
   refs: string;
+  // opts.path (ファイル履歴, 6.3) 指定時のみ設定される。server/git.ts の LogEntry と手動同期
+  // (共有型機構がないため)。
+  path?: string;
+  origPath?: string | null;
 }
 
 export interface BranchInfo {
@@ -98,6 +115,19 @@ export interface StashEntry {
   message: string;
 }
 
+// server/git.ts の TagInfo と手動同期(共有型機構がないため)
+export interface TagInfo {
+  name: string;
+  hash: string;
+}
+
+// server/git.ts の RemoteInfo と手動同期(共有型機構がないため)
+export interface RemoteInfo {
+  name: string;
+  fetchUrl: string;
+  pushUrl: string;
+}
+
 export interface CommitFile {
   path: string;
   origPath: string | null;
@@ -109,6 +139,44 @@ export interface DiffPair {
   modified: string;
   binary: boolean;
   tooLarge: boolean;
+}
+
+// server/diffPatch.ts の DiffHunk と手動同期(共有型機構がないため)
+export interface DiffHunk {
+  header: string;
+  lines: string[];
+}
+
+// GET /api/git/diff-hunks のレスポンス形状。server/index.ts と手動同期(共有型機構がないため)
+export interface DiffHunksResult {
+  header: string;
+  hunks: DiffHunk[];
+  hunkCount: number;
+  // hunks と同順・同長。楽観ロック用ハッシュ(server/diffPatch.ts の hashHunk)。
+  // POST /api/git/apply-hunks の expectedHunkHashes にそのまま echo する。
+  hunkHashes: string[];
+}
+
+// server/git.ts の BlameLine と手動同期(共有型機構がないため)
+export interface BlameLine {
+  hash: string;
+  author: string;
+  authorTime: number; // unix epoch 秒
+  summary: string;
+  path: string;
+  line: number;
+  origLine: number;
+  content: string;
+}
+
+// GET /api/git/blame のレスポンス形状。server/index.ts と手動同期(共有型機構がないため)
+export interface BlameResult {
+  lines: BlameLine[];
+  encoding: string | null; // バイナリ判定時・tooLarge 時は null
+  // バイナリ判定、または UTF-16 等での行復元の整合性検証失敗(6.5R R-1)のとき true
+  binary: boolean;
+  tooLarge: boolean; // ファイルが大きすぎるとき true(6.5R R-3、files.ts の MAX_FILE_SIZE と同一閾値)
+  notFound: boolean; // 未追跡ファイル等、blame 対象の履歴が無いとき true(6.5R R-4)
 }
 
 export interface SearchMatch {

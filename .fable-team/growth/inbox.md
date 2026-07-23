@@ -16,11 +16,62 @@
 
 ## Signals
 
-- [ ] 2026-07-14 | task: git-branch-tree | Rework | builder が「初期値空 = 全フォルダ閉じ」と自己申告したが、実装は `collapsed` Set + `isOpen = !collapsed.has()` で論理が反転しており、実際は全部開いていた。typecheck は通るため型検査では捕まらず、挙動検証で初めて発覚
-- [ ] 2026-07-14 | task: git-branch-tree | Friction | claude-deck 自身を開発対象にすると、ユーザー稼働中のインスタンスと dev サーバのポート (8110/3711) が衝突し、さらに新クライアントが稼働中 PTY セッションに再接続してブラウザタブがフリーズして検証できなかった
-- [ ] 2026-07-14 | task: git-branch-tree | Success | 本体アプリが重くて開けないとき、対象コンポーネントだけを単独マウントする使い捨ての Vite ページ (client/*.html + entry.tsx) を立て、DOM を evaluate_script で直接アサートする検証が速くて確実だった
-- [ ] 2026-07-20 | task: terminal-clipboard | Surprise | ConPTY は子プロセスの DECSET を選別転送する: ?2004 (bracketed paste) と OSC 52 はホストへ通すが、マウストラッキング (?1002/?1006) は素の probe では飲み込んだ。「エスケープシーケンスは素通し」という前提は Windows では成立しない
-- [ ] 2026-07-20 | task: terminal-clipboard | Success | 別ポート (3799) にテストサーバーを立て、ページ内から side-WebSocket で PTY 入力を注入 + navigator.clipboard と WebSocket.send をモンキーパッチして観測する方式で、キーボードシミュレーション無しにクリップボード/ペーストの E2E 検証ができた
-- [ ] 2026-07-20 | task: non-git-dirs | Correction | 「非 git ディレクトリー対応」の初回プランで git repo の下位ディレクトリーを「一貫して非 git 扱い」に倒したが、ユーザーは下位ディレクトリーで作業することがあり Git 機能有効を要望。ディレクトリースコープの機能設計では root/subdir/none の 3 状態を最初から検討すべき
-- [ ] 2026-07-20 | task: non-git-dirs | Success | サーバー検証を PORT=3811 + USERPROFILE をスクラッチに差し替えて起動することで、稼働中インスタンス・実設定 (~/.claude-deck3/config.json) と完全隔離した API 検証ができた(config.ts が os.homedir() 起点なため)
-- [ ] 2026-07-20 | task: non-git-dirs | Friction | USERPROFILE を差し替えると Volta シムの node/npx が不安定になる(LocalAppData を見失う)。pinned node.exe で tsx の CLI (node_modules/tsx/dist/cli.mjs) を直接叩けば回避できる
+- [x] 2026-07-14 | task: git-branch-tree | Rework | builder が「初期値空 = 全フォルダ閉じ」と自己申告したが、実装は `collapsed` Set + `isOpen = !collapsed.has()` で論理が反転しており、実際は全部開いていた。typecheck は通るため型検査では捕まらず、挙動検証で初めて発覚
+- [x] 2026-07-14 | task: git-branch-tree | Friction | claude-deck 自身を開発対象にすると、ユーザー稼働中のインスタンスと dev サーバのポート (8110/3711) が衝突し、さらに新クライアントが稼働中 PTY セッションに再接続してブラウザタブがフリーズして検証できなかった
+- [x] 2026-07-14 | task: git-branch-tree | Success | 本体アプリが重くて開けないとき、対象コンポーネントだけを単独マウントする使い捨ての Vite ページ (client/*.html + entry.tsx) を立て、DOM を evaluate_script で直接アサートする検証が速くて確実だった
+- [x] 2026-07-20 | task: terminal-clipboard | Surprise | ConPTY は子プロセスの DECSET を選別転送する: ?2004 (bracketed paste) と OSC 52 はホストへ通すが、マウストラッキング (?1002/?1006) は素の probe では飲み込んだ。「エスケープシーケンスは素通し」という前提は Windows では成立しない
+- [x] 2026-07-20 | task: terminal-clipboard | Success | 別ポート (3799) にテストサーバーを立て、ページ内から side-WebSocket で PTY 入力を注入 + navigator.clipboard と WebSocket.send をモンキーパッチして観測する方式で、キーボードシミュレーション無しにクリップボード/ペーストの E2E 検証ができた
+- [x] 2026-07-20 | task: non-git-dirs | Correction | 「非 git ディレクトリー対応」の初回プランで git repo の下位ディレクトリーを「一貫して非 git 扱い」に倒したが、ユーザーは下位ディレクトリーで作業することがあり Git 機能有効を要望。ディレクトリースコープの機能設計では root/subdir/none の 3 状態を最初から検討すべき
+- [x] 2026-07-20 | task: non-git-dirs | Success | サーバー検証を PORT=3811 + USERPROFILE をスクラッチに差し替えて起動することで、稼働中インスタンス・実設定 (~/.claude-deck3/config.json) と完全隔離した API 検証ができた(config.ts が os.homedir() 起点なため)
+- [x] 2026-07-20 | task: non-git-dirs | Friction | USERPROFILE を差し替えると Volta シムの node/npx が不安定になる(LocalAppData を見失う)。pinned node.exe で tsx の CLI (node_modules/tsx/dist/cli.mjs) を直接叩けば回避できる
+- [x] 2026-07-20 22:17 | surprise: tsconfig の extends は exclude をマージしない(build 側 tsconfig にも test 除外が必要。builder C 実測)
+- [x] 2026-07-20 22:17 | success: 同一ファイルの並列編集は brief で編集領域を明示的に分割すれば worktree 隔離なしで成立(server/git.ts、builder 2 体)
+- [x] 2026-07-20 22:41 | success: レビュー指摘の小修正は元 builder へ SendMessage 継続が速い(コールドスタート回避、attempt 2 は約 2 分で完了)
+- [x] 2026-07-21 00:57 | success: ハイリスク純関数の brief に「実物を観察してから fixture を作れ」「apply --check まで通せ」を入れたことで builder が実バグを実装中に自力検出した(git-client-parity 2.1)
+- [x] 2026-07-21 | task: editor-state-persistence | Rework | 新モジュール(editorState)の brief で既存モジュールから定数 import させたら、後続タスクで逆方向 import が必要になり循環解消の手戻り。共有定数は依存の最下流(新モジュール側)に最初から置かせるべき
+- [x] 2026-07-21 | task: editor-state-persistence | Rework | localStorage sanitize にサイズ上限を入れたら reviewer が「書き込み側が無制限」の非対称を検出(未保存編集の無警告消失窓)。読み捨てる上限には書き込み側の対称ガード+ユーザー通知をセットで設計する
+- [x] 2026-07-21 | task: editor-state-persistence | Success | Monaco は隠し textarea が aria-hidden で CDP の実キー入力がブロックされる。React Fiber から editor インスタンスを取得し executeEdits() を呼べば onChange→dirty→debounce の実経路ごと検証できる(verifier 実証)
+- [x] 2026-07-21 | task: editor-state-persistence | Surprise | 選択中 worktree は 4 秒ポーリングがファイルハンドルを掴むためか Windows では git worktree remove が 500 で失敗する(force でも)。別 worktree へ切替後は成功。本機能と無関係の既存問題(verifier 発見、未修正)
+- [x] 2026-07-21 | mission: git-client-parity | Success | セッション中断で死んだ builder を SendMessage 再開し「まず自分の部分差分を git status/diff で検証→続行」パターンが機能。中断報告は失われてもトランスクリプトと作業ツリーから完全復帰できた
+- [x] 2026-07-21 | mission: git-client-parity | Success | フェーズゲート reviewer が並行編集によるハンク誤破棄を実 git で再現して検出(hunkCount のみの楽観ロックの盲点)。不可逆操作の楽観ロックは「数」でなく「対象の同一性」まで検証する — 設計原則として距離できる
+- [x] 2026-07-21 | 隔離 USERPROFILE で Volta シムが死ぬ(builder は node.exe 実体 + tsx/dist/cli.mjs 直叩きで回避)— pj-isolated-verify への追記候補 [friction]
+- [x] 2026-07-21 | E2E ゲートが実害バグを掘り当てた(PromptDialog 連続プロンプトの state 残留 — Promise ベース連続モーダルは request 毎の key 再マウントが安全パターン)。unit green でも UI 状態バグは E2E でしか出ない [success-pattern]
+- [x] 2026-07-21 | E2E ゲート通過後に敵対的レビューが実害インジェクションを発見(rename に -f)— 自由入力を git 引数に渡す新規コードは「-- セパレーター」をチェックリスト化する価値あり [failure→pattern]
+- [x] 2026-07-21 19:23 | friction | 隔離検証のスクラッチを深いパスに掘ると Windows で git rebase が Filename too long — pj-isolated-verify に「フィクスチャは短パス(例 C:t5)推奨」を追記したい(5.V で実測・切り分け済み)
+- [x] 2026-07-21 19:44 | success | 同型 UI を別コンポーネントに実装すると disabled 条件が非対称になりやすい(HistoryTab のコミットメニューが busy を見落とし、GitTab の rebase 項目だけ busy ガード)。新規 UI 配線は既存の対称物の disabled 条件を突き合わせるチェックを — 5.R が指摘
+- [x] 2026-07-22 01:37 【驚き】`String(req.body.x ?? '')` 検証は配列 body を "a,b" に化かして素通し — typeof チェックを先に置く必要(6.1 builder が敵対的テストで実測・修正)。既存ルートも同型の可能性 → pj-git-route 防壁節への追記候補
+- [x] 2026-07-22 01:56 【摩擦】既存 stash-apply/drop は git.ts 内検証+asyncHandler で不正 ref が 500(400 でない)— pj-git-route「検証はルート側」原則と非対称(6.2 builder 実測)。6.R 判断材料+プレイブック追記候補
+- [x] 2026-07-22 02:17 【成功パターン】`--follow` の per-commit 旧パスは `--name-status` 併用で取得し diff に origPath を必ず渡す — リネーム前コミットが「新規ファイル」に化ける誤表示を防ぐ(6.3 builder 隔離実測)。pj-git-route 追記候補
+- [x] 2026-07-22 02:32 【成功パターン】git log の自由入力検索は `--fixed-strings -i` + `--author=`/`--grep=` の `=` 埋め込み単一トークン — regex メタ文字 500 と `--upload-pack=` 系注入の両方を実測で封じる(6.4 builder)。pj-git-route 追記候補
+- [x] 2026-07-22 03:03 【成功パターン】ブラウザー MCP 無し環境でも Node 組込み WebSocket の CDP 直叩きで実機 E2E が成立(Runtime.evaluate + Page.handleJavaScriptDialog で native prompt 応答、consoleAPICalled 購読で新規エラー監視)— 6.V verifier 自作 cdp.mjs。pj-isolated-verify 追記候補
+
+- [x] 2026-07-22 15:58 【成功パターン】部分パッチの未選択行の扱いは **git apply の適用方向で逆転**する(forward=未選択 `-` を context 化、reverse=未選択 `+` を context 化)。discard は diff 取得元が worktree でも reverse 側という取り違えやすい組み合わせ — pj-git-route 追記候補(2.4a builder が実 git 6 パターンで実測)
+- [x] 2026-07-22 15:58 【驚き】`git apply` は部分パッチの `@@` 開始行番号のずれを forward/reverse とも許容する(fuzzy match)。ただし内部整合の取れたパッチを作る方が安全側 — 「git が通した = 正しい」で検証を終えない根拠になる(2.4a 実測)
+
+- [x] 2026-07-22 16:40 【失敗→パターン】vitest 86 件 green が実データ破壊バグを 1 件も捕まえなかった — 実装者が自分の出力を期待値に固定したため。**パッチ生成系の純関数テストは「実装が返した値」でなく「実 git に apply した後の post-image が意図どおりか」を期待値の基準にする**よう brief で強制する(2.4V が実機で検出)
+- [x] 2026-07-22 16:40 【驚き】部分パッチは pre-image さえ整合していれば `git apply` が成功するため、**post-image の行順序が壊れていても検出されない**。「apply が通った」を合格判定に使ってはいけない(2.4V 実測: line1,line3,line2-CHANGED,line4)
+- [x] 2026-07-22 16:40 【成功パターン】Conductor がコード実読で予測した論点(ヘッダーのみの楽観ロックは行内容変化を検出できない)を verifier の検証項目に明示的に載せたところ、実データ混入として再現された。**受入時のスポットチェックで見つけた「疑い」は検証項目に降ろす**と実害の有無まで確定できる
+
+- [x] 2026-07-22 20:10 【失敗→パターン】`\ No newline at end of file` marker を「内容行に紐付けて動かす」実装は、その行が context 化されて**後続に出力行が残る**と marker の意味(=両側で最終行・改行なし)と矛盾し、git が後続行を融合させる。**末尾改行なしファイルへの行追記**という日常操作で発火し、`git apply` は 200 を返す。部分パッチ生成では marker の**位置の妥当性**を不変条件として検査する必要がある(2.4R が実証)
+- [x] 2026-07-22 20:10 【驚き】`hunksUtf8` 上での内容比較は**非可逆デコード**のため非 UTF-8 ファイルで別バイト列を同一と判定する(SJIS「あ」`82a0` と「い」`82a2` が utf8 デコードで一致)。**楽観ロックの照合は生バイトのハッシュで行う**べき — 添字の対応づけは utf8/latin1 で一致するが、内容比較は一致しない(2.4R 実証)
+- [x] 2026-07-22 20:10 【成功パターン】reviewer に「壊せなかったこと」も報告させると価値が高い(前提の反例探索 11,200 サンプルで 0 件、バイト不変性 91 ケースで違反 0 等)。「探したが見つからなかった」と「探していない」の区別が、後続フェーズの再調査コストを消す
+- [x] 2026-07-22 20:10 【驚き】`server/index.ts` はモジュールスコープで `express()`・`new PtyManager(PORT)`・`app.listen` を実行するため、supertest 導入は**実サーバーと PTY 起動**を伴う = ルートテスト基盤の追加は「ルート定義の別モジュール抽出」とセット。代替は**検証ロジックの純関数抽出**(新規依存ゼロ)— pj-git-route 追記候補(2.4R 実測)
+
+- [x] 2026-07-22 22:10 【驚き】実 git は **context 行にも `\ No newline at end of file` marker を付ける**(最終行が未変更で末尾改行が無い場合)。「marker は必ず `-`/`+` に付く」という前提でロジックとテスト戦略を組むと、結論がたまたま正しくても将来の変更で崩れる(2.4R が実証、builder のコメントが誤り)
+- [x] 2026-07-22 22:10 【失敗→パターン】builder が「実 git で到達可能な入力なら必ず解消する」と**証明を主張**したが、reviewer がランダム 97 ケースで反例 3 件を発見。**証明の主張はレビューで反例探索の対象にする**(証明が正しければコストはゼロ、誤っていれば機能欠落が見つかる)
+- [x] 2026-07-22 22:10 【成功パターン】不可逆操作の許容判定は「頻度」ではなく「**確認ダイアログの申告が実際と一致するか**」で切る。2.4R は発生率 0.1% 未満と実測したうえで、なお (a) 許容を退けた — pj-git-route §4「影響件数は正確に」の再確認。可逆な操作(stage/unstage)とは許容度が違う
+
+- [x] 2026-07-23 08:30 【成功パターン】パーサーの検証は**差分オラクル**が強い — 同じ情報をより冗長な形式で出す別コマンド(`git blame --line-porcelain` は行ごとに全メタデータを繰り返すため dedup 推論が不要)を独立実装でパースし、本実装と全フィールド突合する。ランダム履歴フューズ 180 実行 / 3,682 行で全一致を示せた(6.5R)
+- [x] 2026-07-23 08:30 【成功パターン】**変異テストでテストの質を機械的に測る** — 実装者が実際に犯した誤解を変異として注入し、テスト群が殺せるかを見る。6.5R は 14 変異中 9 を KILLED、生存 4 件がそのままテストの穴の指摘になった。「テストが実装をなぞっていないか」を主観でなく数字で言える(2.4 でその事故が起きた後の対策として有効)
+- [x] 2026-07-23 08:30 【成功パターン】読み取り専用性の証明は**対照実験**で — 攻撃前後のスナップショット比較だけでなく、**stale index を作って「書き込む操作なら検出できる感度がある」ことを対照の `git status` で示す**。「差分が無かった」を「検出力があるうえで差分が無かった」に格上げできる(6.5R)
+- [x] 2026-07-23 08:30 【驚き】`git blame` は生バイトを `0x0A` で分割するため、**UTF-16LE(改行が `0A 00`)では 2 行目以降の先頭に孤児の `00` が残り 1 バイトずつずれる**。行単位デコードでは原理的に直せない。UTF-16BE は `00 0A` で偶然無傷 — Windows 主体の環境では LE が多数派なので実害が出る(6.5R 実証)
+- [x] 2026-07-23 08:30 【失敗→パターン】正規表現に**不一致だった行を黙って捨てる**(`if (!m) continue`)実装は、フォーマット不一致を必ず「空/行欠落」に変換し、**正当な空の結果とバイト単位で区別できない誤答**を生む。捨てた件数を数えて 1 件でもあれば異常系に倒すべき(6.5R が SHA-256 リポジトリーで実証)
+- [x] 2026-07-23 08:30 【摩擦】変異テストのサンドボックスをプロジェクト直下(`server/__mut__/`)に置くと、並行稼働中の別エージェントが「見覚えのないファイル」として検出して報告コストが発生する。**サンドボックスも隔離スクラッチに置く**よう pj-isolated-verify に明記したい(6.5R は自ら後始末済み・実コードは無改変)
+
+- [x] 2026-07-23 09:40 【失敗→パターン】**中身が空の要素にスタイルを当てても、親が `align-items: baseline` だと高さ 0 に収縮して何も描画されない**(`::before` の `top:0;bottom:0` も親のボックス基準なので面積 0)。`min-height` は baseline 整列では効かず、交差軸整列を `stretch` にする必要がある。この型は**コードレビューでもユニットテストでも原理的に捕まらず、実機で `getBoundingClientRect()` を測ってはじめて分かる**(6.5V' が実測で検出)
+- [x] 2026-07-23 09:40 【成功パターン】UI の見た目に関する指摘を修正したら、**同じ verifier に「自分の所見が解消したか」を判定させる**と、CSS が入っただけで効いていない事態を捕まえられる。「修正した」と「直った」は別物(6.5V' が最優先項目として不合格判定)
+
+- [x] 2026-07-23 11:20 【成功パターン】検証の健全性は**実証だけでなく構造的な導出**とセットで示すと強い。6.5R は「区切りバイトを同じ位置に埋め戻すから内部整列は常に原本どおり → デコード後の改行数は本物の改行数と厳密に一致 → 食い違うのは余分な `0x0A` がある場合に限られる」と導出したうえで 2,094 ケースの実証を添えた。導出があると「サンプルが足りないのでは」という疑いが残らない
+- [x] 2026-07-23 11:20 【成功パターン】**修正を打ち消す変異**(R-1〜R-3 の修正そのものを元に戻す変異)をテストが殺せるかを見ると、「その修正が回帰テストで守られているか」を機械的に言える。6.5R は N1〜N5 で全て KILLED を確認 — 修正の永続性を数字で保証できる
+- [x] 2026-07-23 11:20 【摩擦】async + 実 git 依存の関数は純関数テストの網に載らず、判定ロジックが無テストで残る(6.5 の `notFound` 判定)。この codebase には **2.4 で `checkApplyHunksRequest` を純関数に切り出した先例**があるので、ルート/IO 関数の中の判定は最初から純関数に切り出す規約にしたい — pj-git-route 追記候補
+- [x] 2026-07-23 11:20 【失敗→パターン】エラー種別を `String(e).includes('...')` で判定すると、**引用されたパス名の中の文字列にも当たる**(6.5R が「no such path.txt」という名のファイルで実証)。先頭アンカー付き(`/fatal: no such path '/`)で照合する

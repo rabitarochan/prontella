@@ -3,8 +3,18 @@ import Editor, { type OnMount } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import { api } from '../api';
 import type { EditorConfigSettings, FileContent } from '../types';
+import {
+  hashText,
+  loadLeafEditorState,
+  MAX_DRAFT_TEXT_LENGTH,
+  saveLeafEditorState,
+  type LeafEditorState,
+} from '../editorState';
 import { registerFilesTab, touchFilesTab, unregisterFilesTab } from '../search/registry';
+import BlameModal from './BlameModal';
+import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import EditorStatusBar from './EditorStatusBar';
+import FileHistoryModal from './FileHistoryModal';
 import FileTree from './FileTree';
 import SearchPanel from './SearchPanel';
 
@@ -13,6 +23,8 @@ interface OpenTab {
   file: FileContent | null; // null while loading
   draft: string;
   error: string;
+  /** Set when a restored draft was applied over disk content that changed while the tab was away. */
+  warning: string;
 }
 
 function basename(path: string): string {
@@ -23,6 +35,11 @@ function basename(path: string): string {
 function isDirty(t: OpenTab): boolean {
   return !!t.file && t.file.content !== null && t.draft !== t.file.content;
 }
+
+// sanitizeEditorState (editorState.ts) silently drops any draft over
+// MAX_DRAFT_TEXT_LENGTH on restore, so a draft that big is invisible to the
+// user unless flagged explicitly here.
+const OVERSIZE_DRAFT_WARNING = '未保存の編集が大きすぎるため、切替・リロード後は保持されません';
 
 const EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOptions = {
   fontSize: 13,
@@ -110,9 +127,22 @@ function disposeModelsSoon(paths: string[]) {
   }, 0);
 }
 
-export default function FilesTab({ root }: { root: string }) {
-  const [tabs, setTabs] = useState<OpenTab[]>([]);
-  const [activePath, setActivePath] = useState<string | null>(null);
+export default function FilesTab({ root, leafId }: { root: string; leafId: string }) {
+  // Restored exactly once at mount (lazy initializer — NOT re-evaluated on
+  // re-render). Root changes after mount are handled explicitly by the root
+  // effect below, which re-reads storage itself, so this value is never
+  // consulted again after the first render.
+  const [initialState] = useState<LeafEditorState | null>(() => loadLeafEditorState(root, leafId));
+  const [tabs, setTabs] = useState<OpenTab[]>(() =>
+    (initialState?.openFiles ?? []).map((path) => ({
+      path,
+      file: null,
+      draft: '',
+      error: '',
+      warning: '',
+    })),
+  );
+  const [activePath, setActivePath] = useState<string | null>(() => initialState?.activeFile ?? null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const saveRef = useRef<() => void>(() => {});
@@ -131,6 +161,24 @@ export default function FilesTab({ root }: { root: string }) {
   const searchVisitedRef = useRef(false);
   if (side === 'search') searchVisitedRef.current = true;
 
+  // ファイルツリーの右クリックメニュー(6.3: 「ファイルの履歴...」)。読み取り専用機能なので
+  // ConfirmDialog は不要 — pj-git-route の「操作系でない機能は確認不要」の原則どおり。
+  const [fileMenu, setFileMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  const [historyPath, setHistoryPath] = useState<string | null>(null);
+  const [blamePath, setBlamePath] = useState<string | null>(null);
+  const fileMenuItems = (path: string): ContextMenuItem[] => [
+    {
+      label: 'ファイルの履歴...',
+      icon: 'history',
+      onClick: () => setHistoryPath(path),
+    },
+    {
+      label: 'blame...',
+      icon: 'account',
+      onClick: () => setBlamePath(path),
+    },
+  ];
+
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   // ステータスバー用。ref と違い state にすることで、マウント後に子コンポーネントの
@@ -142,47 +190,128 @@ export default function FilesTab({ root }: { root: string }) {
   tabsRef.current = tabs;
   const activePathRef = useRef(activePath);
   activePathRef.current = activePath;
+  // The Monaco onMount callback fires once per editor instance and its
+  // closure keeps whatever `root`/`leafId` were current at that moment —
+  // read these through refs wherever a long-lived Monaco callback needs the
+  // CURRENT value (debounced cursor/scroll flush below).
+  const rootRef = useRef(root);
+  rootRef.current = root;
+  const leafIdRef = useRef(leafId);
+  leafIdRef.current = leafId;
 
   // インデント設定を適用済みのモデル(のタブパス)。モデルは閉じると破棄されるので、
   // closeTab / root 切替で該当エントリも消して再適用させる。
   const indentAppliedRef = useRef(new Set<string>());
 
-  // Worktree switched — open tabs are root-relative, so start fresh.
-  useEffect(() => {
-    setTabs([]);
-    setActivePath(null);
-    setMessage('');
-    setSide('tree');
-    pendingRevealRef.current = null;
-    indentAppliedRef.current.clear();
-    const loaded = loadedRef.current;
-    loaded.clear();
-    // On root change or unmount, drop every model this tab set created.
-    return () => disposeModelsSoon([...loaded].map(modelPath));
-  }, [root]);
+  // viewState (カーソル位置・スクロール位置) は stashActiveViewState /
+  // tryRestoreViewState でライブ管理する。
+  const viewStatesRef = useRef<Record<string, unknown>>(initialState?.viewStates ?? {});
+  // draftsRef holds only RESTORED drafts that loadFile hasn't reconciled yet
+  // (see loadFile below) — once a tab finishes loading, its entry here is
+  // deleted and flush() computes what to persist straight from the live tab
+  // state instead. So this ref is a "pending restore" queue, not the
+  // authoritative draft store.
+  const draftsRef = useRef<Record<string, { text: string; baseHash: string }>>(
+    initialState?.drafts ?? {},
+  );
 
-  const active = tabs.find((t) => t.path === activePath) ?? null;
-  const modified = active ? isDirty(active) : false;
+  // Snapshot the active tab's cursor/scroll position into viewStatesRef
+  // before the editor moves away from it. The URI-match guard is required:
+  // without it, a stash racing a model swap could overwrite the WRONG tab's
+  // entry with the just-departed model's state.
+  const stashActiveViewState = () => {
+    const editor = editorRef.current;
+    const path = activePathRef.current;
+    if (!editor || !path) return;
+    const model = editor.getModel();
+    if (!model || model.uri.toString() !== monaco.Uri.parse(modelPath(path)).toString()) return;
+    const vs = editor.saveViewState();
+    if (vs) viewStatesRef.current[path] = vs;
+  };
 
-  // Open a file: focus it if already open, otherwise add a tab and load it.
-  const openFile = useCallback(
+  // Write the current tab set to localStorage under (flushRoot, flushLeafId).
+  // Root/leafId are passed as arguments (not read from the closure) so callers
+  // — the root-change/unmount cleanup in particular — always target the
+  // worktree the flushed state actually belongs to.
+  //
+  // drafts are computed fresh from the live tabs on every flush (not read
+  // back out of draftsRef, which only ever holds RESTORED entries not yet
+  // reconciled by loadFile — see loadFile below):
+  //   - loaded, editable (non-binary/tooLarge), dirty tabs → the live draft
+  //     text + a hash of the disk content it was based on (baseHash), so a
+  //     later restore can tell whether the file changed underneath it.
+  //     Skipped when the draft is over MAX_DRAFT_TEXT_LENGTH: sanitizeEditorState
+  //     (editorState.ts) would silently drop it on restore anyway, so writing
+  //     it here would just be dead weight in localStorage. Symmetric with the
+  //     read side by construction — both reference the same constant.
+  //   - still-loading tabs (file === null) → whatever restored draft
+  //     draftsRef still has pending for that path, carried through as-is so
+  //     leaving before the load completes doesn't drop it.
+  //   - loaded binary/tooLarge/clean tabs → omitted entirely.
+  const flush = useCallback((flushRoot: string, flushLeafId: string) => {
+    stashActiveViewState(); // capture the latest cursor/scroll before writing
+    const drafts: Record<string, { text: string; baseHash: string }> = {};
+    for (const t of tabsRef.current) {
+      if (t.file === null) {
+        const pending = draftsRef.current[t.path];
+        if (pending) drafts[t.path] = pending;
+      } else if (t.file.content !== null && isDirty(t) && t.draft.length <= MAX_DRAFT_TEXT_LENGTH) {
+        drafts[t.path] = { text: t.draft, baseHash: hashText(t.file.content) };
+      }
+    }
+    saveLeafEditorState(flushRoot, flushLeafId, {
+      openFiles: tabsRef.current.map((t) => t.path),
+      activeFile: activePathRef.current,
+      viewStates: viewStatesRef.current,
+      drafts,
+    });
+  }, []);
+
+  // Load a file's content into its tab. Shared by openFile (user-initiated)
+  // and the mount / root-change restore paths (tabs whose `file` starts null).
+  const loadFile = useCallback(
     (path: string) => {
-      setMessage('');
-      setActivePath(path);
-      setTabs((prev) =>
-        prev.some((t) => t.path === path)
-          ? prev
-          : [...prev, { path, file: null, draft: '', error: '' }],
-      );
       if (loadedRef.current.has(path)) return;
       loadedRef.current.add(path);
       api
         .file(root, path)
-        .then((f) =>
+        .then((f) => {
+          // Reconcile a restored (persisted) draft against the just-loaded
+          // disk content. Resolved either way below, so drop it from the
+          // pending bucket now — flush()'s live computation takes over from
+          // here for this path.
+          const pending = draftsRef.current[path];
+          delete draftsRef.current[path];
+
           setTabs((prev) =>
-            prev.map((t) => (t.path === path ? { ...t, file: f, draft: f.content ?? '' } : t)),
-          ),
-        )
+            prev.map((t) => {
+              if (t.path !== path) return t;
+              if (!pending || f.content === null) {
+                // No persisted draft to reconcile, or the file can't be
+                // edited here (binary/too large) — normal load.
+                return { ...t, file: f, draft: f.content ?? '' };
+              }
+              if (f.content === pending.text) {
+                // Disk already matches the draft — nothing to restore.
+                return { ...t, file: f, draft: f.content };
+              }
+              if (hashText(f.content) === pending.baseHash) {
+                // Disk is unchanged from the content the draft was based on
+                // — safe to reapply.
+                return { ...t, file: f, draft: pending.text };
+              }
+              // Disk changed underneath the draft while the tab was away.
+              // Apply the draft anyway (never silently discard it) but warn,
+              // since saving now would overwrite the newer disk content.
+              return {
+                ...t,
+                file: f,
+                draft: pending.text,
+                warning: '切替中にディスク上のファイルが変更されました。保存すると上書きします',
+              };
+            }),
+          );
+        })
         .catch((e: Error) => {
           loadedRef.current.delete(path); // allow retry on reopen
           setTabs((prev) => prev.map((t) => (t.path === path ? { ...t, error: e.message } : t)));
@@ -190,6 +319,137 @@ export default function FilesTab({ root }: { root: string }) {
     },
     [root],
   );
+
+  // Open a file: focus it if already open, otherwise add a tab and load it.
+  const openFile = useCallback(
+    (path: string) => {
+      stashActiveViewState(); // leaving the current tab (if any) for a different one
+      setMessage('');
+      setActivePath(path);
+      setTabs((prev) =>
+        prev.some((t) => t.path === path)
+          ? prev
+          : [...prev, { path, file: null, draft: '', error: '', warning: '' }],
+      );
+      loadFile(path);
+    },
+    [loadFile],
+  );
+
+  // Mount-only: fires the load for tabs restored from localStorage (`file`
+  // starts null for every restored tab). Later opens go through openFile,
+  // which calls loadFile itself.
+  useEffect(() => {
+    for (const t of tabs) {
+      if (t.file === null) loadFile(t.path);
+    }
+  }, []);
+
+  // Worktree switched — open tabs are root-relative, so start fresh. This
+  // effect also fires once at mount (React runs every effect on first
+  // commit); that first run must NOT clear the tabs the lazy initializers
+  // above already restored, so it only registers the flush/dispose cleanup
+  // the first time through.
+  const rootEffectRanRef = useRef(false);
+  useEffect(() => {
+    const flushRoot = root;
+    const flushLeafId = leafId;
+    const loaded = loadedRef.current;
+
+    if (!rootEffectRanRef.current) {
+      rootEffectRanRef.current = true;
+    } else {
+      // root actually changed (defensive — WorktreeView normally remounts
+      // this component via `key` on worktree switch, so this branch isn't
+      // reached in practice).
+      setTabs([]);
+      setActivePath(null);
+      setMessage('');
+      setSide('tree');
+      pendingRevealRef.current = null;
+      indentAppliedRef.current.clear();
+      loaded.clear();
+
+      const state = loadLeafEditorState(root, leafId);
+      viewStatesRef.current = state?.viewStates ?? {};
+      draftsRef.current = state?.drafts ?? {};
+      const restoredTabs = (state?.openFiles ?? []).map((path) => ({
+        path,
+        file: null,
+        draft: '',
+        error: '',
+        warning: '',
+      }));
+      setTabs(restoredTabs);
+      setActivePath(state?.activeFile ?? null);
+      for (const t of restoredTabs) loadFile(t.path);
+    }
+
+    // On root change or unmount: persist the tabs open under the outgoing
+    // root/leafId, then drop every model this tab set created.
+    return () => {
+      flush(flushRoot, flushLeafId);
+      disposeModelsSoon([...loaded].map(modelPath));
+    };
+  }, [root, leafId, flush, loadFile]);
+
+  // Persist open tabs + active tab whenever the tab SET or the active tab
+  // changes. Keyed on the path list (not `tabs` itself, whose `draft` field
+  // changes on every keystroke) so typing never triggers a localStorage write.
+  const tabPathsKey = tabs.map((t) => t.path).join('\n');
+  useEffect(() => {
+    flush(root, leafId);
+  }, [tabPathsKey, activePath, root, leafId, flush]);
+
+  // Debounced draft persistence: unlike tabPathsKey above, this effect
+  // deliberately depends on `tabs` itself, so it re-runs on every keystroke
+  // (the `draft` field changes each time onChange fires). Only the cheap
+  // clearTimeout/setTimeout pair runs on every keystroke — flush() (and the
+  // localStorage write inside it) only actually fires once 1s has passed
+  // since the last `tabs` change. root/leafId are read via rootRef/leafIdRef
+  // rather than added to the deps array, so a reschedule never needs to wait
+  // on them specifically.
+  useEffect(() => {
+    const timer = setTimeout(() => flush(rootRef.current, leafIdRef.current), 1000);
+
+    // Same-effect, same trigger: flush() above silently skips oversize drafts
+    // (see flush()'s comment), so tell the user right here instead of leaving
+    // them to discover it on the next reload. Set/clear only ever touch OUR
+    // OVERSIZE_DRAFT_WARNING slot: setting requires warning to currently be
+    // empty (never steals the slot from an unrelated, e.g. restore-conflict,
+    // warning), and clearing requires it to currently BE our own text (never
+    // clears someone else's warning). `prev` is returned as-is when no tab
+    // actually needs a change, so this doesn't itself retrigger the effect
+    // (tabs stays referentially the same → the [tabs, flush] deps see no change).
+    setTabs((prev) => {
+      let changed = false;
+      const next = prev.map((t) => {
+        const oversize = isDirty(t) && t.draft.length > MAX_DRAFT_TEXT_LENGTH;
+        if (oversize && t.warning === '') {
+          changed = true;
+          return { ...t, warning: OVERSIZE_DRAFT_WARNING };
+        }
+        if (!oversize && t.warning === OVERSIZE_DRAFT_WARNING) {
+          changed = true;
+          return { ...t, warning: '' };
+        }
+        return t;
+      });
+      return changed ? next : prev;
+    });
+
+    return () => clearTimeout(timer);
+  }, [tabs, flush]);
+
+  // Flush on tab close / reload, where cleanup functions don't get to run.
+  useEffect(() => {
+    const onPageHide = () => flush(root, leafId);
+    window.addEventListener('pagehide', onPageHide);
+    return () => window.removeEventListener('pagehide', onPageHide);
+  }, [root, leafId, flush]);
+
+  const active = tabs.find((t) => t.path === activePath) ?? null;
+  const modified = active ? isDirty(active) : false;
 
   // Jump to a search match once the target file is loaded AND the editor has
   // switched to its model. Reads only refs, so it can be called from any
@@ -250,6 +510,28 @@ export default function FilesTab({ root }: { root: string }) {
     }
   };
 
+  // Re-apply the cursor/scroll position stashed for the active tab whenever
+  // its model becomes current again. Ref-only and timing-agnostic like
+  // tryReveal, so it's safe from onMount / onDidChangeModel. NOT consume-once
+  // — switching back to a tab always re-restores its last stashed position.
+  // pendingReveal (an explicit search jump) takes priority when both target
+  // the same tab; tryReveal runs after this and overwrites the cursor itself.
+  const tryRestoreViewState = () => {
+    const editor = editorRef.current;
+    const path = activePathRef.current;
+    if (!editor || !path) return;
+    const vs = viewStatesRef.current[path];
+    if (vs === undefined) return;
+    const model = editor.getModel();
+    if (!model || model.uri.toString() !== monaco.Uri.parse(modelPath(path)).toString()) return;
+    if (pendingRevealRef.current?.path === path) return; // explicit navigation wins
+    try {
+      editor.restoreViewState(vs as monaco.editor.ICodeEditorViewState);
+    } catch {
+      delete viewStatesRef.current[path]; // corrupt/incompatible persisted value — drop it
+    }
+  };
+
   // Covers the async paths: file load completing, tab/model switches.
   useEffect(() => {
     applyModelOptions();
@@ -288,6 +570,7 @@ export default function FilesTab({ root }: { root: string }) {
   }, [root]);
 
   const switchTo = (path: string) => {
+    stashActiveViewState(); // leaving the current tab for `path`
     setActivePath(path);
     setMessage('');
   };
@@ -300,6 +583,8 @@ export default function FilesTab({ root }: { root: string }) {
     setTabs(next);
     loadedRef.current.delete(path);
     indentAppliedRef.current.delete(path);
+    delete viewStatesRef.current[path];
+    delete draftsRef.current[path];
     disposeModelsSoon([modelPath(path)]);
     if (activePath === path) {
       const neighbor = next[idx] ?? next[idx - 1] ?? null; // right neighbor, else left
@@ -343,6 +628,7 @@ export default function FilesTab({ root }: { root: string }) {
                 ...t,
                 draft: content,
                 file: { ...t.file, content, encoding: enc.encoding, hasBom: enc.bom },
+                warning: '', // a successful save resolves any restore-time conflict
               }
             : t,
         ),
@@ -368,7 +654,11 @@ export default function FilesTab({ root }: { root: string }) {
     try {
       const f = await api.file(root, path, encoding);
       setTabs((prev) =>
-        prev.map((t) => (t.path === path ? { ...t, file: f, draft: f.content ?? '', error: '' } : t)),
+        prev.map((t) =>
+          t.path === path
+            ? { ...t, file: f, draft: f.content ?? '', error: '', warning: '' } // draft is discarded here, so any restore-time conflict no longer applies
+            : t,
+        ),
       );
       // uncontrolled モデルなので明示的に反映する(tryReveal と同じ URI 一致ガード付き。
       // undo 履歴はリセットされるがリロードなので許容)。インデントも内容が変わったので
@@ -392,11 +682,44 @@ export default function FilesTab({ root }: { root: string }) {
   const onMount: OnMount = (editor, monaco) => {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => saveRef.current());
     editorRef.current = editor;
-    editor.onDidChangeModel(() => applyModelOptions()); // タブ切替(モデル切替)を捕まえる
-    editor.onDidDispose(() => setEditorInst((cur) => (cur === editor ? null : cur)));
+    editor.onDidChangeModel(() => {
+      // タブ切替(モデル切替)を捕まえる。indent 適用 → 保存済みカーソル/スクロール
+      // 復元 → (あれば)検索ジャンプの順: 検索ジャンプは復元されたカーソル位置を
+      // 上書きして常に優先される。
+      applyModelOptions();
+      tryRestoreViewState();
+      tryReveal();
+    });
     setEditorInst(editor);
     applyModelOptions();
+    tryRestoreViewState();
     tryReveal(); // first mount happens after the initial file load completes
+
+    // Persist cursor/scroll position without waiting for a tab switch, so a
+    // reload right after moving the cursor doesn't lose it. Debounced so
+    // rapid cursor/scroll events don't hammer localStorage. These events also
+    // fire on model swaps, but stashActiveViewState's URI-match guard makes
+    // that a no-op — it only ever writes the CURRENTLY active model's state.
+    // root/leafId are read through rootRef/leafIdRef (not this closure's own
+    // parameters): onMount fires once per editor instance and must stay
+    // correct even if the props were to change later without a remount.
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleFlush = () => {
+      if (debounceTimer !== undefined) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = undefined;
+        flush(rootRef.current, leafIdRef.current);
+      }, 500);
+    };
+    const cursorSub = editor.onDidChangeCursorPosition(scheduleFlush);
+    const scrollSub = editor.onDidScrollChange(scheduleFlush);
+
+    editor.onDidDispose(() => {
+      setEditorInst((cur) => (cur === editor ? null : cur));
+      if (debounceTimer !== undefined) clearTimeout(debounceTimer);
+      cursorSub.dispose();
+      scrollSub.dispose();
+    });
   };
 
   const onChange = (value: string | undefined) => {
@@ -425,7 +748,12 @@ export default function FilesTab({ root }: { root: string }) {
           </button>
         </div>
         <div className="side-view" style={{ display: side === 'tree' ? undefined : 'none' }}>
-          <FileTree root={root} selectedPath={activePath} onSelectFile={openFile} />
+          <FileTree
+            root={root}
+            selectedPath={activePath}
+            onSelectFile={openFile}
+            onFileContextMenu={(e, path) => setFileMenu({ x: e.clientX, y: e.clientY, path })}
+          />
         </div>
         {searchVisitedRef.current && (
           <div className="side-view" style={{ display: side === 'search' ? undefined : 'none' }}>
@@ -498,6 +826,7 @@ export default function FilesTab({ root }: { root: string }) {
                     {saving ? '保存中...' : '保存'}
                   </button>
                 </div>
+                {active.warning && <div className="editor-warning">⚠ {active.warning}</div>}
                 <div className="editor-host">
                   {/* Uncontrolled on purpose: passing `value` makes the library rewrite the
                       whole model whenever a re-render (e.g. the 4s repo poll) races a
@@ -526,6 +855,18 @@ export default function FilesTab({ root }: { root: string }) {
           </>
         )}
       </div>
+      {fileMenu && (
+        <ContextMenu
+          x={fileMenu.x}
+          y={fileMenu.y}
+          items={fileMenuItems(fileMenu.path)}
+          onClose={() => setFileMenu(null)}
+        />
+      )}
+      {historyPath && (
+        <FileHistoryModal dir={root} path={historyPath} onClose={() => setHistoryPath(null)} />
+      )}
+      {blamePath && <BlameModal dir={root} path={blamePath} onClose={() => setBlamePath(null)} />}
     </div>
   );
 }

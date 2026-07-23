@@ -3,7 +3,9 @@ import path from 'node:path';
 import { decodeBuffer, encodeText } from './encoding.js';
 import { resolveEditorConfig, type EditorConfigSettings } from './editorconfig.js';
 
-const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
+// server/git.ts の blame (getBlame/decodeBlameContent) も同じ閾値を使う(6.5R 指摘 R-3 —
+// エディターが開けないファイルを blame では丸ごと読めてしまう非対称を閉じるため export する)。
+export const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
 const HIDDEN_NAMES = new Set(['.git']);
 
 /** Resolve `rel` under `root`, rejecting traversal outside the root. */

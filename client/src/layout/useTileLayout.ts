@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TerminalSession } from '../types';
+import { pruneEditorState, TILE_LAYOUT_STORAGE_PREFIX } from '../editorState';
 import {
   adoptSessions,
   appendSession,
@@ -20,11 +21,9 @@ import {
   type WorktreeLayout,
 } from './tileTree';
 
-const STORAGE_PREFIX = 'claude-deck.tileLayout.';
-
 function loadLayout(worktreePath: string): WorktreeLayout {
   try {
-    const raw = localStorage.getItem(STORAGE_PREFIX + worktreePath);
+    const raw = localStorage.getItem(TILE_LAYOUT_STORAGE_PREFIX + worktreePath);
     if (raw) {
       const parsed = sanitize(JSON.parse(raw));
       if (parsed) return parsed;
@@ -72,10 +71,12 @@ export function useTileLayout(
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_PREFIX + worktreePath, JSON.stringify(layout));
+      localStorage.setItem(TILE_LAYOUT_STORAGE_PREFIX + worktreePath, JSON.stringify(layout));
     } catch {
       // storage full / unavailable — layout just won't persist
     }
+    // タイル閉鎖やレイアウト初期化(reset)で消えた leaf の editorState スライスを回収する
+    pruneEditorState(worktreePath, layout.root ? leaves(layout.root).map((l) => l.id) : []);
   }, [worktreePath, layout]);
 
   // Handlers read the latest tree through a ref so rapid successive actions

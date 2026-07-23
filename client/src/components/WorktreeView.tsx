@@ -4,6 +4,8 @@ import { useDeck } from '../store';
 import type { Repo, Worktree } from '../types';
 import { useTerminalSessions } from '../layout/useTerminalSessions';
 import { useTileLayout } from '../layout/useTileLayout';
+import { useConfirm } from './ConfirmDialog';
+import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import StatusBadge from './StatusBadge';
 import TileGrid from './tiles/TileGrid';
 
@@ -15,16 +17,23 @@ import TileGrid from './tiles/TileGrid';
 export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree: Worktree }) {
   const { refresh, setError } = useDeck();
   const [syncing, setSyncing] = useState<string | null>(null);
+  const [syncMenu, setSyncMenu] = useState<{ x: number; y: number; kind: 'pull' | 'push' } | null>(
+    null,
+  );
+  const { confirm: confirmDialog, dialog } = useConfirm();
   const { sessions, create, kill } = useTerminalSessions(worktree.path);
   const tiles = useTileLayout(worktree.path, sessions, create, kill);
 
-  const sync = async (kind: 'fetch' | 'pull' | 'push') => {
+  const sync = async (
+    kind: 'fetch' | 'pull' | 'push',
+    opts?: { rebase?: boolean; forceWithLease?: boolean },
+  ) => {
     setSyncing(kind);
     setError(null);
     try {
       if (kind === 'fetch') await api.fetch(worktree.path);
-      else if (kind === 'pull') await api.pull(worktree.path);
-      else await api.push(worktree.path);
+      else if (kind === 'pull') await api.pull(worktree.path, { rebase: opts?.rebase });
+      else await api.push(worktree.path, { forceWithLease: opts?.forceWithLease });
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -32,6 +41,42 @@ export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree:
       setSyncing(null);
     }
   };
+
+  // force-with-lease は履歴を書き換える破壊的操作 (fetch 済みの stale info と食い違えば
+  // git 自身が拒否するとはいえ、成功時はリモートの履歴が変わる) なので ConfirmDialog(danger) 必須。
+  // rebase でのプルは非破壊 (競合すれば操作バナー側で拾う) のため確認なしで即実行する。
+  const forcePush = async () => {
+    const ok = await confirmDialog({
+      title: 'force-with-lease でプッシュ',
+      message: 'リモートの履歴を書き換えます (--force-with-lease)。よろしいですか?',
+      confirmLabel: 'プッシュ',
+      severity: 'danger',
+    });
+    if (!ok) return;
+    void sync('push', { forceWithLease: true });
+  };
+
+  const syncMenuItems: ContextMenuItem[] =
+    syncMenu?.kind === 'pull'
+      ? [
+          {
+            label: 'rebase でプル',
+            icon: 'arrow-down',
+            disabled: syncing !== null,
+            onClick: () => void sync('pull', { rebase: true }),
+          },
+        ]
+      : syncMenu?.kind === 'push'
+        ? [
+            {
+              label: 'force-with-lease でプッシュ',
+              icon: 'arrow-up',
+              disabled: syncing !== null,
+              danger: true,
+              onClick: () => void forcePush(),
+            },
+          ]
+        : [];
 
   return (
     <div className="wt-view">
@@ -54,9 +99,13 @@ export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree:
               </button>
               <button
                 className="icon-btn"
-                title={`プル${worktree.status?.behind ? ` (↓${worktree.status.behind})` : ''}`}
+                title={`プル${worktree.status?.behind ? ` (↓${worktree.status.behind})` : ''} (右クリック: rebase でプル)`}
                 disabled={syncing !== null}
                 onClick={() => void sync('pull')}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setSyncMenu({ x: e.clientX, y: e.clientY, kind: 'pull' });
+                }}
               >
                 <span className={`codicon codicon-arrow-down ${syncing === 'pull' ? 'spin' : ''}`} />
                 {(worktree.status?.behind ?? 0) > 0 && (
@@ -65,9 +114,13 @@ export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree:
               </button>
               <button
                 className="icon-btn"
-                title={`プッシュ${worktree.status?.ahead ? ` (↑${worktree.status.ahead})` : ''}${worktree.status?.upstream ? '' : ' — upstream 未設定のため -u origin で公開'}`}
+                title={`プッシュ${worktree.status?.ahead ? ` (↑${worktree.status.ahead})` : ''}${worktree.status?.upstream ? '' : ' — upstream 未設定のため -u origin で公開'} (右クリック: force-with-lease でプッシュ)`}
                 disabled={syncing !== null}
                 onClick={() => void sync('push')}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setSyncMenu({ x: e.clientX, y: e.clientY, kind: 'push' });
+                }}
               >
                 <span className={`codicon codicon-arrow-up ${syncing === 'push' ? 'spin' : ''}`} />
                 {(worktree.status?.ahead ?? 0) > 0 && (
@@ -101,6 +154,15 @@ export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree:
       <div className="wt-body">
         <TileGrid repo={repo} worktree={worktree} sessions={sessions} actions={tiles} />
       </div>
+      {syncMenu && (
+        <ContextMenu
+          x={syncMenu.x}
+          y={syncMenu.y}
+          items={syncMenuItems}
+          onClose={() => setSyncMenu(null)}
+        />
+      )}
+      {dialog}
     </div>
   );
 }

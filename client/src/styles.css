@@ -52,6 +52,14 @@ button.primary {
 button.primary:hover:not(:disabled) {
   background: var(--accent);
 }
+button.danger {
+  background: #7a2e26;
+  border-color: var(--red);
+  color: #fff;
+}
+button.danger:hover:not(:disabled) {
+  background: #99392e;
+}
 
 input,
 select,
@@ -578,6 +586,12 @@ textarea:focus {
   font-size: 12px;
   color: var(--green);
 }
+.editor-warning {
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--yellow);
+  border-bottom: 1px solid var(--border);
+}
 .editor-host {
   flex: 1;
   min-height: 0;
@@ -768,6 +782,9 @@ button.statusbar-menu-item:hover:not(:disabled) {
   letter-spacing: 0.08em;
   color: var(--fg-dim);
 }
+.changes-section-actions {
+  display: flex;
+}
 .change-actions {
   display: flex;
   visibility: hidden;
@@ -898,6 +915,15 @@ button.statusbar-menu-item:hover:not(:disabled) {
   font-weight: 600;
   margin-bottom: 4px;
 }
+.commit-body {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  max-height: 160px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
 .commit-meta {
   display: flex;
   gap: 12px;
@@ -948,6 +974,20 @@ button.statusbar-menu-item:hover:not(:disabled) {
 .graph-count {
   font-size: 11px;
   color: var(--fg-dim);
+}
+.history-filter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.history-filter-kind {
+  font-size: 12px;
+  padding: 2px 4px;
+}
+.history-filter-input {
+  font-size: 12px;
+  padding: 2px 6px;
+  width: 200px;
 }
 .graph-scroll {
   flex: 1;
@@ -1146,6 +1186,31 @@ button.statusbar-menu-item:hover:not(:disabled) {
   flex: 1;
   min-width: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.git-main-content {
+  flex: 1;
+  min-height: 0;
+}
+.operation-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--yellow);
+  border-radius: 6px;
+  color: var(--yellow);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.operation-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
 }
 .git-section-head {
   display: flex;
@@ -1188,6 +1253,13 @@ button.statusbar-menu-item:hover:not(:disabled) {
   background: var(--bg-hover);
 }
 .git-branch-row.current {
+  background: var(--bg-active);
+}
+/* スタッシュ行だけクリックで差分タブを開ける (リモート/タグ行は行クリックの意味を持たない) */
+.git-stash-row {
+  cursor: pointer;
+}
+.git-stash-row.selected {
   background: var(--bg-active);
 }
 .git-branch-folder-row {
@@ -1493,6 +1565,239 @@ button.context-menu-item:hover:not(:disabled) {
   flex: 1;
   min-height: 0;
 }
+.diff-pane-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.diff-editor-host {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---- stash diff text (StashDiffPane: git stash show -p の読み取り専用プレーン表示) ---- */
+
+.stash-diff-text {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 10px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.sdiff-line {
+  min-height: 1.4em;
+}
+.sdiff-meta {
+  color: var(--fg-dim);
+}
+.sdiff-hunk {
+  color: var(--blue);
+}
+.sdiff-add {
+  color: var(--green);
+}
+.sdiff-del {
+  color: var(--red);
+}
+.sdiff-context {
+  color: var(--fg);
+}
+
+/* ---- hunk strip (DiffHunkStrip: ハンク単位 stage/unstage/discard) ---- */
+
+.hunk-strip {
+  flex: none;
+  max-height: 96px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+/* 行選択パネルを展開中は 1 ハンク分では収まらないことが多いので、展開時だけ広げる
+   (何も展開していない既定状態の見た目・挙動は従来から一切変えない)。 */
+.hunk-strip.expanded {
+  max-height: 360px;
+}
+.hunk-strip-notice {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+.hunk-strip-error {
+  color: var(--red);
+}
+.hunk-strip-list {
+  display: flex;
+  flex-direction: column;
+}
+/* ハンク 1 行 (.hunk-chip) + その行単位選択パネル (.hunk-chip-lines, 展開時のみ) をまとめる
+   グループ。区切り線はここに付ける (行単位選択パネルの有無で最後の要素が変わっても
+   :last-child が正しく効くように)。 */
+.hunk-chip-group {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border);
+}
+.hunk-chip-group:last-child {
+  border-bottom: none;
+}
+.hunk-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 6px 2px 4px;
+}
+.hunk-chip-toggle {
+  flex: none;
+}
+.hunk-chip-chevron {
+  transition: transform 0.1s;
+}
+.hunk-chip-chevron.open {
+  transform: rotate(90deg);
+}
+.hunk-chip-loc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+.hunk-chip-loc:hover:not(:disabled) {
+  color: var(--fg);
+  background: transparent;
+}
+.hunk-chip-stat {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+}
+.hunk-add {
+  color: var(--green);
+}
+.hunk-del {
+  color: var(--red);
+}
+.hunk-chip-actions {
+  flex: none;
+  display: flex;
+}
+
+/* ---- hunk chip lines (DiffHunkStrip: 行単位 stage/unstage/discard の展開パネル) ---- */
+
+.hunk-chip-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 10px 8px 30px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+.hunk-line-list {
+  display: flex;
+  flex-direction: column;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+}
+.hunk-line-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.hunk-line-row input[type="checkbox"] {
+  margin: 2px 0 0;
+  flex-shrink: 0;
+  padding: 0;
+}
+.hunk-line-checkbox-spacer {
+  display: inline-block;
+  width: 13px;
+  flex-shrink: 0;
+}
+.hunk-line-text {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.hunk-line-add .hunk-line-text {
+  color: var(--green);
+}
+.hunk-line-del .hunk-line-text {
+  color: var(--red);
+}
+.hunk-line-context .hunk-line-text {
+  color: var(--fg-dim);
+}
+.hunk-line-marker .hunk-line-text {
+  color: var(--fg-dim);
+  font-style: italic;
+}
+.hunk-line-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* ---- conflict resolve pane (ConflictResolvePane: 競合ファイルの ours/theirs/both 解決) ---- */
+
+.conflict-pane-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.conflict-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--fg-dim);
+  flex: none;
+}
+.conflict-marker-count {
+  flex-shrink: 0;
+  color: var(--yellow);
+}
+.conflict-marker-count.ok {
+  color: var(--green);
+}
+.conflict-toolbar-msg {
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: pre-wrap;
+}
+.conflict-chip-actions {
+  gap: 4px;
+}
+.conflict-editor-host {
+  flex: 1;
+  min-height: 0;
+}
+.conflict-actions-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  flex: none;
+}
+.conflict-actions-left {
+  display: flex;
+  gap: 6px;
+}
 
 /* ---- terminal panel (2 段目タブ: セッションごと) ---- */
 
@@ -1549,7 +1854,7 @@ button.context-menu-item:hover:not(:disabled) {
 .xterm-container {
   position: absolute;
   inset: 0;
-  padding: 4px 0 0 8px;
+  padding: 0 0 0 8px;
 }
 
 /* ---- modal ---- */
@@ -1602,6 +1907,180 @@ button.context-menu-item:hover:not(:disabled) {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 14px;
+}
+.confirm-message {
+  color: var(--fg);
+  font-size: 12px;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+/* ---- file history modal (6.3: ファイルツリーの「ファイルの履歴...」) ---- */
+
+.file-history-modal {
+  width: 900px;
+  max-width: 92vw;
+  height: 640px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+.file-history-modal h3 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.file-history-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.file-history-list {
+  width: 300px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+.file-history-row {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 12px;
+}
+.file-history-row:hover {
+  background: var(--bg-hover);
+}
+.file-history-row.selected {
+  background: var(--bg-active);
+}
+.file-history-row-top {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+.file-history-date {
+  color: var(--fg-dim);
+}
+.file-history-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 2px;
+}
+.file-history-author {
+  color: var(--fg-dim);
+}
+.file-history-rename {
+  color: var(--blue);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.file-history-diff {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ---- blame modal (6.5: ファイルツリーの「blame...」— git blame --porcelain のプレーン表示) ---- */
+
+.blame-modal {
+  width: 900px;
+  max-width: 92vw;
+  height: 640px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+.blame-modal h3 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.blame-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+}
+.blame-row {
+  display: flex;
+  align-items: baseline;
+  white-space: pre;
+}
+.blame-row:hover {
+  background: var(--bg-hover);
+}
+.blame-row-uncommitted {
+  background: rgba(230, 180, 80, 0.08);
+}
+.blame-line-no {
+  flex: none;
+  width: 44px;
+  padding: 0 8px 0 4px;
+  text-align: right;
+  color: var(--fg-dim);
+  user-select: none;
+}
+.blame-annotation {
+  flex: none;
+  width: 220px;
+  display: flex;
+  gap: 8px;
+  padding: 0 10px;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+/* 直前行と同一コミットのため注釈(hash/author)を間引いた行。空欄のまま罫線だけだと
+   「情報なし」と「同上(直前行と同じ)」の区別がつかない(6.5V 実機所見)ため、薄い縦罫と
+   淡い背景で「直前行の続き」であることを視覚的に示す。 */
+.blame-annotation-repeat {
+  border-right: 1px solid var(--border);
+  position: relative;
+  background: rgba(255, 255, 255, 0.025);
+  /* .blame-row は align-items: baseline (行番号・注釈・内容のテキストベースラインを揃えるため)。
+     この間引き行の <span> はテキストノードを一切持たないため、baseline 整列下では内容ゼロの
+     まま高さ 0 に収縮してしまい、背景も ::before の縦罫(top:0/bottom:0 は自分自身の高さが
+     基準)も面積 0 で描画されない(6.5V' 実機で確認された不具合)。align-self でこの要素だけ
+     交差軸方向に伸長させ、行の高さ(他の列の文字が確立する行高)いっぱいに広げる — 親の
+     align-items は変えないため、テキストを持つ他の行(run 先頭 .blame-annotation・
+     .blame-line-no・.blame-content)の baseline 整列には影響しない。 */
+  align-self: stretch;
+}
+.blame-annotation-repeat::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+.blame-hash {
+  color: var(--orange);
+  flex-shrink: 0;
+}
+.blame-author {
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.blame-content {
+  flex: 1;
+  min-width: 0;
+  padding: 0 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 /* ---- attention bell (要対応キュー) ---- */

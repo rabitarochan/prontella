@@ -97,6 +97,15 @@ export function decodeBuffer(buf: Buffer, forcedEncoding?: string): DecodedText 
 }
 
 /**
+ * 既知のエンコーディング名(SUPPORTED_ENCODINGS のいずれか)でバッファを文字列にデコードする。
+ * decodeBuffer と違い自動判定・BOM 検出は行わない(呼び出し側が既に検出済みのエンコーディングを
+ * 使い回して 1 行ずつデコードする用途、例: server/git.ts の blame 行内容)。
+ */
+export function decodeWithEncoding(buf: Buffer, encoding: string): string {
+  return iconv.decode(buf, normalizeEncoding(encoding));
+}
+
+/**
  * テキストをエンコードする。BOM は iconv-lite に任せず自前で結合する
  * (utf-16 系の addBOM 既定挙動に依存しない)。エンコード先で表現できない
  * 文字(例: Shift_JIS に絵文字)は iconv-lite の仕様で '?' に置換される。

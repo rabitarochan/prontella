@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Tree, type NodeRendererProps, type TreeApi } from 'react-arborist';
 import { api } from '../api';
 import type { TreeEntry, TreeStatusEntry } from '../types';
@@ -128,6 +128,113 @@ export function fileIcon(name: string): { icon: string; color: string } {
     default:
       return { icon: 'file', color: '#9a9aa3' };
   }
+}
+
+interface FileTreeCtxValue {
+  selectedPath: string | null;
+  onSelectFile: (path: string) => void;
+  onFileContextMenu?: (e: React.MouseEvent, path: string) => void;
+  loadDir: (id: string) => Promise<void>;
+  setActiveDir: (id: string) => void;
+  colorClass: (path: string, isDir: boolean) => string;
+  confirmCreate: (rawName: string) => Promise<void>;
+  cancelCreate: () => void;
+}
+
+const FileTreeCtx = createContext<FileTreeCtxValue>(null!);
+
+// idAccessor / childrenAccessor も <Tree> の props として TreeProvider の updateCount
+// (provider.tsx L57-60: Object.values(treeProps) を依存配列に丸ごと積む) を毎レンダー回すため、
+// インライン関数にせずモジュールスコープの定数として identity を固定する。
+const idAccessor = (d: TNode) => d.id;
+const childrenAccessor = (d: TNode) => (d.type === 'dir' ? (d.children ?? []) : null);
+
+/**
+ * react-arborist は <Tree> の children (= 行レンダラー) を props.children として保持し、
+ * row-container.tsx L75-79 で `const Node = tree.renderNode; <Node .../>` と要素タイプ
+ * そのものとして描画する。そのため FileTree のレンダー関数の内側でこのコンポーネントを
+ * 定義すると、再レンダーのたびに identity が変わり React が全行の subtree を
+ * unmount/remount してしまう(インライン input の入力値が数秒おきに消える不具合の原因)。
+ * 必ずモジュールスコープに置き、FileTree のクロージャーが必要な値は FileTreeCtx 経由で渡すこと。
+ */
+function TreeNode({ node, style }: NodeRendererProps<TNode>) {
+  const {
+    selectedPath,
+    onSelectFile,
+    onFileContextMenu,
+    loadDir,
+    setActiveDir,
+    colorClass,
+    confirmCreate,
+    cancelCreate,
+  } = useContext(FileTreeCtx);
+
+  if (node.data.placeholder) {
+    const isDirPh = node.data.placeholder === 'dir';
+    return (
+      <div className="tree-row" style={style}>
+        <span
+          className="tree-chevron codicon codicon-chevron-right"
+          style={{ visibility: isDirPh ? 'visible' : 'hidden' }}
+        />
+        <span
+          className={`tree-icon codicon codicon-${isDirPh ? 'folder' : 'file'}`}
+          style={{ color: isDirPh ? '#dcb67a' : '#9a9aa3' }}
+        />
+        <input
+          className="tree-name-input"
+          autoFocus
+          placeholder={isDirPh ? '新規フォルダー名' : '新規ファイル名'}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void confirmCreate(e.currentTarget.value);
+            else if (e.key === 'Escape') cancelCreate();
+          }}
+          onBlur={(e) => {
+            const v = e.target.value.trim();
+            if (v) void confirmCreate(v);
+            else cancelCreate();
+          }}
+        />
+      </div>
+    );
+  }
+
+  const isDir = node.data.type === 'dir';
+  const { icon, color } = isDir
+    ? { icon: node.isOpen ? 'folder-opened' : 'folder', color: '#dcb67a' }
+    : fileIcon(node.data.name);
+  return (
+    <div
+      className={`tree-row ${!isDir && selectedPath === node.data.id ? 'selected' : ''}`}
+      style={style}
+      title={node.data.id}
+      onClick={() => {
+        if (isDir) {
+          node.toggle();
+          if (node.data.children === null) void loadDir(node.data.id);
+          setActiveDir(node.data.id);
+        } else {
+          onSelectFile(node.data.id);
+          setActiveDir(parentOf(node.data.id));
+        }
+      }}
+      onContextMenu={
+        !isDir && onFileContextMenu
+          ? (e) => {
+              e.preventDefault();
+              onFileContextMenu(e, node.data.id);
+            }
+          : undefined
+      }
+    >
+      <span
+        className={`tree-chevron codicon codicon-chevron-right ${node.isOpen ? 'open' : ''}`}
+        style={{ visibility: isDir ? 'visible' : 'hidden' }}
+      />
+      <span className={`tree-icon codicon codicon-${icon}`} style={{ color }} />
+      <span className={`tree-name ${colorClass(node.data.id, isDir)}`}>{node.data.name}</span>
+    </div>
+  );
 }
 
 export default function FileTree({
@@ -325,74 +432,19 @@ export default function FileTree({
     return insertPlaceholder(nodes, creating.parentId, ph);
   }, [nodes, creating]);
 
-  function Node({ node, style }: NodeRendererProps<TNode>) {
-    if (node.data.placeholder) {
-      const isDirPh = node.data.placeholder === 'dir';
-      return (
-        <div className="tree-row" style={style}>
-          <span
-            className="tree-chevron codicon codicon-chevron-right"
-            style={{ visibility: isDirPh ? 'visible' : 'hidden' }}
-          />
-          <span
-            className={`tree-icon codicon codicon-${isDirPh ? 'folder' : 'file'}`}
-            style={{ color: isDirPh ? '#dcb67a' : '#9a9aa3' }}
-          />
-          <input
-            className="tree-name-input"
-            autoFocus
-            placeholder={isDirPh ? '新規フォルダー名' : '新規ファイル名'}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void confirmCreate(e.currentTarget.value);
-              else if (e.key === 'Escape') cancelCreate();
-            }}
-            onBlur={(e) => {
-              const v = e.target.value.trim();
-              if (v) void confirmCreate(v);
-              else cancelCreate();
-            }}
-          />
-        </div>
-      );
-    }
-
-    const isDir = node.data.type === 'dir';
-    const { icon, color } = isDir
-      ? { icon: node.isOpen ? 'folder-opened' : 'folder', color: '#dcb67a' }
-      : fileIcon(node.data.name);
-    return (
-      <div
-        className={`tree-row ${!isDir && selectedPath === node.data.id ? 'selected' : ''}`}
-        style={style}
-        title={node.data.id}
-        onClick={() => {
-          if (isDir) {
-            node.toggle();
-            if (node.data.children === null) void loadDir(node.data.id);
-            setActiveDir(node.data.id);
-          } else {
-            onSelectFile(node.data.id);
-            setActiveDir(parentOf(node.data.id));
-          }
-        }}
-        onContextMenu={
-          !isDir && onFileContextMenu
-            ? (e) => {
-                e.preventDefault();
-                onFileContextMenu(e, node.data.id);
-              }
-            : undefined
-        }
-      >
-        <span
-          className={`tree-chevron codicon codicon-chevron-right ${node.isOpen ? 'open' : ''}`}
-          style={{ visibility: isDir ? 'visible' : 'hidden' }}
-        />
-        <span className={`tree-icon codicon codicon-${icon}`} style={{ color }} />
-        <span className={`tree-name ${colorClass(node.data.id, isDir)}`}>{node.data.name}</span>
-      </div>
-    );
-  }
+  const ctx = useMemo<FileTreeCtxValue>(
+    () => ({
+      selectedPath,
+      onSelectFile,
+      onFileContextMenu,
+      loadDir,
+      setActiveDir,
+      colorClass,
+      confirmCreate,
+      cancelCreate,
+    }),
+    [selectedPath, onSelectFile, onFileContextMenu, loadDir, setActiveDir, colorClass, confirmCreate, cancelCreate],
+  );
 
   if (error) return <div className="tree-error">⚠ {error}</div>;
 
@@ -414,23 +466,25 @@ export default function FileTree({
         {displayNodes === null ? (
           <div className="tree-loading">読み込み中...</div>
         ) : (
-          <Tree<TNode>
-            ref={treeRef}
-            data={displayNodes}
-            idAccessor={(d) => d.id}
-            childrenAccessor={(d) => (d.type === 'dir' ? d.children ?? [] : null)}
-            width={size.width}
-            height={size.height}
-            rowHeight={24}
-            indent={12}
-            openByDefault={false}
-            disableDrag
-            disableDrop
-            disableEdit
-            disableMultiSelection
-          >
-            {Node}
-          </Tree>
+          <FileTreeCtx.Provider value={ctx}>
+            <Tree<TNode>
+              ref={treeRef}
+              data={displayNodes}
+              idAccessor={idAccessor}
+              childrenAccessor={childrenAccessor}
+              width={size.width}
+              height={size.height}
+              rowHeight={24}
+              indent={12}
+              openByDefault={false}
+              disableDrag
+              disableDrop
+              disableEdit
+              disableMultiSelection
+            >
+              {TreeNode}
+            </Tree>
+          </FileTreeCtx.Provider>
         )}
       </div>
     </div>

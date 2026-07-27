@@ -868,6 +868,10 @@ app.get('/api/fs/file', asyncHandler(async (req, res) => {
   res.json(files.readFileContent(queryStr(req, 'root'), queryStr(req, 'path'), encoding));
 }));
 
+app.get('/api/fs/editorconfig', asyncHandler(async (req, res) => {
+  res.json(files.editorConfigFor(queryStr(req, 'root'), queryStr(req, 'path')));
+}));
+
 app.put('/api/fs/file', asyncHandler(async (req, res) => {
   const { root, path: rel, content, encoding, bom } = req.body as {
     root: string;

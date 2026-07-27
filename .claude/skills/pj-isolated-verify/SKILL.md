@@ -24,14 +24,17 @@ description: claude-deck3 の動作検証を、ユーザーの実設定・実リ
    **Volta シムが `Could not determine LocalAppData directory` で死ぬ場合**(罠 2)は
    Volta 実体 node.exe で `node_modules/tsx/dist/cli.mjs` を直叩き
 4. リポジトリー登録は UI から、または API(`server/index.ts` の repos 系ルートを参照)
-5. **ブラウザー検証は Node 組込み `WebSocket` による CDP 直叩きが第一候補**(検証を担当した
-   verifier 3 体全員がブラウザー MCP を持たず、全員が独自に自作した実績あり。chrome-devtools MCP
-   が使える環境ならそちらでもよいが、それは代替であってこの手順の前提ではない):
+5. **ブラウザー検証は Node 組込み `WebSocket` による CDP 直叩きが第一候補**
+   (chrome-devtools MCP が使える環境ならそちらでもよいが、代替であって前提ではない):
    - Chrome を `--remote-debugging-port=<ポート> --user-data-dir=<隔離プロファイル>` 付きで起動し、
      `WebSocket` で CDP エンドポイントに直接つなぐ
    - `Runtime.evaluate` で操作する。React の実イベント経路(`onChange`/`onClick`/`onContextMenu`)を
      発火させる必要がある(**罠 3** の Monaco 入力と同種の注意。単純な DOM プロパティ書き換えでは
-     React が検知しない)
+     React が検知しない)。**`replMode: true` は付けない** — `awaitPromise` が効かなくなり、
+     非同期評価が即座に空値を返す
+   - **フォーカス・blur・クリック起因の検証だけは `Input.dispatchMouseEvent`(trusted event)を使う**。
+     `element.dispatchEvent(new MouseEvent(...))`(untrusted)ではブラウザー既定のフォーカス移動が
+     起きないため、**正常な実装を NG と誤判定する**(実測で踏んだ)
    - アプリ内ダイアログは React 製(ConfirmDialog)なので native dialog 処理は不要。native の
      `prompt`/`confirm` が残る箇所(Sidebar の worktree 削除等)は `Page.handleJavaScriptDialog` で
      先に応答を仕込む

@@ -87,6 +87,11 @@ export function readFileContent(root: string, rel: string, forcedEncoding?: stri
   };
 }
 
+/** タブの editorconfig スナップショット再取得用(.editorconfig 保存時に開いているタブへ反映するため)。 */
+export function editorConfigFor(root: string, rel: string): EditorConfigSettings | null {
+  return resolveEditorConfig(root, safeResolve(root, rel));
+}
+
 export function writeFileContent(
   root: string,
   rel: string,

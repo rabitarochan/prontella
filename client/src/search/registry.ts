@@ -10,6 +10,8 @@ export interface FilesTabHandle {
   isVisible: () => boolean;
   openFile: (path: string) => void;
   openAtLine: (path: string, line: number, column?: number) => void;
+  /** Editor tabs only — a preview tab (see editorState.ts's TabKind) isn't "a file open
+   *  for editing" in the sense Ctrl+P callers care about. */
   getOpenTabPaths: () => string[];
   showSearchPanel: () => void;
 }

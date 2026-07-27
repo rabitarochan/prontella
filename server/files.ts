@@ -6,6 +6,9 @@ import { resolveEditorConfig, type EditorConfigSettings } from './editorconfig.j
 // server/git.ts の blame (getBlame/decodeBlameContent) も同じ閾値を使う(6.5R 指摘 R-3 —
 // エディターが開けないファイルを blame では丸ごと読めてしまう非対称を閉じるため export する)。
 export const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
+// エディターのテキスト上限(MAX_FILE_SIZE)とは無関係な別定数。画像は Markdown プレビューで
+// 表示するだけでパースはしないため、テキストより緩い上限を独立に持つ。
+export const MAX_RAW_SIZE = 10 * 1024 * 1024; // 10MB
 const HIDDEN_NAMES = new Set(['.git']);
 
 /** Resolve `rel` under `root`, rejecting traversal outside the root. */
@@ -115,4 +118,68 @@ export function createDir(root: string, rel: string): void {
   const abs = safeResolve(root, rel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.mkdirSync(abs); // throws EEXIST if the directory already exists
+}
+
+// ---- raw file serving (GET /api/fs/raw、Markdown プレビューのローカル画像用) --------------
+
+// 許可拡張子のみ MIME を返すホワイトリスト(拡張子偽装で任意ファイルを画像として配信させない防壁)。
+const RAW_MIME_BY_EXT: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.ico': 'image/x-icon',
+  '.avif': 'image/avif',
+  '.svg': 'image/svg+xml',
+};
+
+/** 拡張子から配信用 MIME を引く純関数。ホワイトリスト外(拡張子無し含む)は null。 */
+export function rawMimeFor(name: string): string | null {
+  const ext = path.extname(name).toLowerCase();
+  if (!ext) return null;
+  return RAW_MIME_BY_EXT[ext] ?? null;
+}
+
+export type ResolveRawFileResult =
+  | { ok: true; abs: string; mime: string; size: number }
+  | { ok: false; status: 400; error: string }
+  | { ok: false; status: 404; error: string }
+  | { ok: false; status: 413; error: string }
+  | { ok: false; status: 415; error: string };
+
+/**
+ * GET /api/fs/raw の検証をまとめた純関数寄りのヘルパー(checkApplyHunksRequest と同じ流儀:
+ * ルートテスト基盤が無いため、400/404/413/415 の判定をタグ付き戻り値として切り出し vitest で
+ * 直接固定する)。root 外参照(400)を最優先で弾いてから拡張子(415)・存在(404)・サイズ(413)を
+ * 見る — この順序でないと、root 外の非画像パスが 415(存在確認前)として漏れてしまう。
+ */
+export function resolveRawFile(root: string, rel: string): ResolveRawFileResult {
+  let abs: string;
+  try {
+    abs = safeResolve(root, rel);
+  } catch {
+    return { ok: false, status: 400, error: 'パスがルート外を指しています' };
+  }
+
+  const mime = rawMimeFor(rel);
+  if (!mime) {
+    return { ok: false, status: 415, error: '画像として配信できない拡張子です' };
+  }
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(abs);
+  } catch {
+    return { ok: false, status: 404, error: 'ファイルが見つかりません' };
+  }
+  if (!stat.isFile()) {
+    return { ok: false, status: 404, error: 'ファイルが見つかりません' };
+  }
+  if (stat.size > MAX_RAW_SIZE) {
+    return { ok: false, status: 413, error: 'ファイルサイズが上限を超えています' };
+  }
+
+  return { ok: true, abs, mime, size: stat.size };
 }

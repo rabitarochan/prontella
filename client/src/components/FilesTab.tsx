@@ -79,6 +79,7 @@ function formatOnSave(
   model: monaco.editor.ITextModel,
   ec: EditorConfigSettings | null,
   beforeCursorState: monaco.Selection[] | null,
+  skipEol: boolean,
 ): void {
   if (!ec) return;
   const edits: monaco.editor.IIdentifiedSingleEditOperation[] = [];
@@ -104,7 +105,9 @@ function formatOnSave(
   }
   model.pushStackElement();
   if (edits.length > 0) model.pushEditOperations(beforeCursorState, edits, () => null);
-  if (ec.endOfLine) {
+  // skipEol: ユーザーがステータスバーで EOL を明示選択したタブ(eolOverrideRef)では、
+  // ここでの editorconfig 強制を止める(修正 A)。トリム/最終行改行は対象外なので上のブロックは常に動く。
+  if (ec.endOfLine && !skipEol) {
     const want = ec.endOfLine === 'crlf' ? '\r\n' : '\n';
     if (model.getEOL() !== want) {
       model.pushEOL(
@@ -202,6 +205,12 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
   // インデント設定を適用済みのモデル(のタブパス)。モデルは閉じると破棄されるので、
   // closeTab / root 切替で該当エントリも消して再適用させる。
   const indentAppliedRef = useRef(new Set<string>());
+
+  // ステータスバーで EOL を明示選択したタブパスの集合。保存時にこの集合に含まれる
+  // タブは formatOnSave の editorconfig 由来 EOL 強制をスキップする(ユーザーの意思が
+  // .editorconfig より優先)。indentAppliedRef と同じ寿命管理(closeTab / root 切替で削除)。
+  // ただし保存成功時にはクリアしない — 同じタブで保存を繰り返しても選択は維持される。
+  const eolOverrideRef = useRef(new Set<string>());
 
   // viewState (カーソル位置・スクロール位置) は stashActiveViewState /
   // tryRestoreViewState でライブ管理する。
@@ -368,6 +377,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
       setSide('tree');
       pendingRevealRef.current = null;
       indentAppliedRef.current.clear();
+      eolOverrideRef.current.clear();
       loaded.clear();
 
       const state = loadLeafEditorState(root, leafId);
@@ -583,6 +593,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
     setTabs(next);
     loadedRef.current.delete(path);
     indentAppliedRef.current.delete(path);
+    eolOverrideRef.current.delete(path);
     delete viewStatesRef.current[path];
     delete draftsRef.current[path];
     disposeModelsSoon([modelPath(path)]);
@@ -617,7 +628,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
       const model = editorRef.current?.getModel();
       let content = tab.draft;
       if (model && model.uri.toString() === monaco.Uri.parse(modelPath(path)).toString()) {
-        formatOnSave(model, ec, editorRef.current?.getSelections() ?? null);
+        formatOnSave(model, ec, editorRef.current?.getSelections() ?? null, eolOverrideRef.current.has(path));
         content = model.getValue();
       }
       await api.saveFile(root, path, content, enc);
@@ -633,6 +644,30 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
             : t,
         ),
       );
+      // .editorconfig を保存したら、開いている全タブの editorconfig スナップショットを
+      // 再取得して反映する(修正 C — 開いた時点のスナップショットのままだと保存直後の
+      // 変更が反映されない)。draft/content/encoding/hasBom には触れない(専用エンドポイント
+      // を使うのはこの未保存編集の破壊を避けるため)。個別のタブの再取得失敗は無視して
+      // 旧値を保持し、保存自体の成功扱いは変えない。
+      if (basename(path) === '.editorconfig') {
+        const updates = await Promise.all(
+          tabsRef.current
+            .filter((t) => t.file !== null)
+            .map(async (t) => {
+              try {
+                return { path: t.path, editorconfig: await api.editorConfig(root, t.path) };
+              } catch {
+                return null;
+              }
+            }),
+        );
+        setTabs((prev) =>
+          prev.map((t) => {
+            const u = updates.find((x) => x?.path === t.path);
+            return u && t.file ? { ...t, file: { ...t.file, editorconfig: u.editorconfig } } : t;
+          }),
+        );
+      }
       setMessage('✓ 保存しました');
       setTimeout(() => setMessage(''), 2500);
     } catch (e) {
@@ -671,6 +706,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
       ) {
         model.setValue(f.content);
         indentAppliedRef.current.delete(path);
+        eolOverrideRef.current.delete(path);
         applyModelOptions();
       }
       setMessage('');
@@ -849,6 +885,10 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
                   file={active.file}
                   onReloadWithEncoding={(encoding) => void reloadWithEncoding(encoding)}
                   onSaveWithEncoding={(encoding, bom) => void save({ encoding, bom })}
+                  onEolOverride={() => {
+                    const path = activePathRef.current;
+                    if (path) eolOverrideRef.current.add(path);
+                  }}
                 />
               </>
             )}

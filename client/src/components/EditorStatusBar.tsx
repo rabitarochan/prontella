@@ -74,12 +74,14 @@ export default function EditorStatusBar({
   file,
   onReloadWithEncoding,
   onSaveWithEncoding,
+  onEolOverride,
 }: {
   editor: EditorInstance | null;
   activePath: string;
   file: FileContent;
   onReloadWithEncoding: (encoding: string) => void;
   onSaveWithEncoding: (encoding: string, bom: boolean) => void;
+  onEolOverride: () => void;
 }) {
   const [position, setPosition] = useState<{ line: number; column: number } | null>(null);
   const [indent, setIndent] = useState<{ insertSpaces: boolean; size: number } | null>(null);
@@ -142,6 +144,10 @@ export default function EditorStatusBar({
     const model = editor?.getModel();
     setOpenMenu(null);
     if (!model) return;
+    // 既に同じ EOL でも、ユーザーが明示選択した事実は記録する。理由: ファイルが既に
+    // 望みの EOL・.editorconfig が別指定のケースでは pushEOL は不要だが、ここで記録
+    // しないと保存時に formatOnSave が editorconfig 側へ戻してしまう。
+    onEolOverride();
     const want = kind === 'crlf' ? '\r\n' : '\n';
     if (model.getEOL() === want) return;
     // pushEOL は undo に乗り、onDidChangeModelContent 経由で draft も dirty になる

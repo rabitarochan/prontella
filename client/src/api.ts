@@ -6,6 +6,7 @@ import type {
   ConflictSide,
   DiffHunksResult,
   DiffPair,
+  EditorConfigSettings,
   FileContent,
   GitOperation,
   GitOperationAction,
@@ -206,6 +207,8 @@ export const api = {
     request<FileContent>(
       `/api/fs/file?root=${q(root)}&path=${q(path)}${encoding ? `&encoding=${q(encoding)}` : ''}`,
     ),
+  editorConfig: (root: string, path: string) =>
+    request<EditorConfigSettings | null>(`/api/fs/editorconfig?root=${q(root)}&path=${q(path)}`),
   saveFile: (
     root: string,
     path: string,

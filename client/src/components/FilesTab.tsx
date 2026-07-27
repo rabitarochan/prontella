@@ -9,17 +9,26 @@ import {
   MAX_DRAFT_TEXT_LENGTH,
   saveLeafEditorState,
   type LeafEditorState,
+  type TabKind,
 } from '../editorState';
+import { isMarkdownPath } from '../markdown/paths';
 import { registerFilesTab, touchFilesTab, unregisterFilesTab } from '../search/registry';
 import BlameModal from './BlameModal';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import EditorStatusBar from './EditorStatusBar';
 import FileHistoryModal from './FileHistoryModal';
 import FileTree from './FileTree';
+import MarkdownPreview from './MarkdownPreview';
 import SearchPanel from './SearchPanel';
 
+// Tab identity is `{kind, path}` (see editorState.ts's OpenTabRef), not `path` alone — an
+// editor tab and a preview tab for the same path are distinct tabs. `key` is the derived
+// identity string used for React keys / lookups; `path` stays on the tab too since most
+// code (api.file, modelPath, viewStates, ...) only ever needs the path.
 interface OpenTab {
+  kind: TabKind;
   path: string;
+  key: string;
   file: FileContent | null; // null while loading
   draft: string;
   error: string;
@@ -27,13 +36,19 @@ interface OpenTab {
   warning: string;
 }
 
+function tabKey(kind: TabKind, path: string): string {
+  return `${kind}:${path}`;
+}
+
 function basename(path: string): string {
   const i = path.lastIndexOf('/');
   return i === -1 ? path : path.slice(i + 1);
 }
 
+// Preview tabs have no draft/file-content notion of their own (they render the editor
+// tab's — or disk's — content read-only), so dirtiness is an editor-only concept.
 function isDirty(t: OpenTab): boolean {
-  return !!t.file && t.file.content !== null && t.draft !== t.file.content;
+  return t.kind === 'editor' && !!t.file && t.file.content !== null && t.draft !== t.file.content;
 }
 
 // sanitizeEditorState (editorState.ts) silently drops any draft over
@@ -137,19 +152,23 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
   // consulted again after the first render.
   const [initialState] = useState<LeafEditorState | null>(() => loadLeafEditorState(root, leafId));
   const [tabs, setTabs] = useState<OpenTab[]>(() =>
-    (initialState?.openFiles ?? []).map((path) => ({
-      path,
+    (initialState?.openFiles ?? []).map((ref) => ({
+      kind: ref.kind,
+      path: ref.path,
+      key: tabKey(ref.kind, ref.path),
       file: null,
       draft: '',
       error: '',
       warning: '',
     })),
   );
-  const [activePath, setActivePath] = useState<string | null>(() => initialState?.activeFile ?? null);
+  const [activeKey, setActiveKey] = useState<string | null>(() =>
+    initialState?.activeTab ? tabKey(initialState.activeTab.kind, initialState.activeTab.path) : null,
+  );
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const saveRef = useRef<() => void>(() => {});
-  const loadedRef = useRef(new Set<string>()); // paths whose load is in flight or done
+  const loadedRef = useRef(new Set<string>()); // tab keys whose load is in flight or done
   // Monaco models are global; two FilesTab instances (one per tile) opening
   // the same path would fight over one model and dispose each other's drafts.
   // Namespace every model URI with a per-instance prefix.
@@ -180,6 +199,17 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
       icon: 'account',
       onClick: () => setBlamePath(path),
     },
+    // Markdown 以外のファイルには出さない(disabled ではなく非表示 — 読み取り専用機能なので
+    // 「押せるが意味がない」項目を並べない)。
+    ...(isMarkdownPath(path)
+      ? [
+          {
+            label: 'プレビューを開く',
+            icon: 'preview',
+            onClick: () => openPreview(path),
+          },
+        ]
+      : []),
   ];
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -191,8 +221,8 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
   const pendingRevealRef = useRef<{ path: string; line: number; column: number } | null>(null);
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
-  const activePathRef = useRef(activePath);
-  activePathRef.current = activePath;
+  const activeKeyRef = useRef(activeKey);
+  activeKeyRef.current = activeKey;
   // The Monaco onMount callback fires once per editor instance and its
   // closure keeps whatever `root`/`leafId` were current at that moment —
   // read these through refs wherever a long-lived Monaco callback needs the
@@ -212,6 +242,15 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
   // ただし保存成功時にはクリアしない — 同じタブで保存を繰り返しても選択は維持される。
   const eolOverrideRef = useRef(new Set<string>());
 
+  // R-3 (2026-07-27 レビュー指摘): プレビュー本文のスクロール位置 (path → scrollTop)。
+  // メモリのみ (localStorage へは永続化しない)。MarkdownPreview 自身の state に
+  // 持たせていたが、`active.kind === 'preview'` の分岐によりアクティブタブがエディター
+  // に切り替わった瞬間 MarkdownPreview は unmount され、その state ごと失われていた
+  // (プレビュー同士の切替では同一インスタンスが使い回されるため気づきにくかった)。
+  // FilesTab (MarkdownPreview の親、プレビュー/エディター間の切替でも unmount しない)
+  // 側の ref に引き上げ、MarkdownPreview には Map をそのまま渡して直接読み書きさせる。
+  const previewScrollPositionsRef = useRef(new Map<string, number>());
+
   // viewState (カーソル位置・スクロール位置) は stashActiveViewState /
   // tryRestoreViewState でライブ管理する。
   const viewStatesRef = useRef<Record<string, unknown>>(initialState?.viewStates ?? {});
@@ -230,12 +269,14 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
   // entry with the just-departed model's state.
   const stashActiveViewState = () => {
     const editor = editorRef.current;
-    const path = activePathRef.current;
-    if (!editor || !path) return;
+    const key = activeKeyRef.current;
+    if (!editor || !key) return;
+    const tab = tabsRef.current.find((t) => t.key === key);
+    if (!tab || tab.kind !== 'editor') return; // viewStatesRef is editor-only (keyed by path)
     const model = editor.getModel();
-    if (!model || model.uri.toString() !== monaco.Uri.parse(modelPath(path)).toString()) return;
+    if (!model || model.uri.toString() !== monaco.Uri.parse(modelPath(tab.path)).toString()) return;
     const vs = editor.saveViewState();
-    if (vs) viewStatesRef.current[path] = vs;
+    if (vs) viewStatesRef.current[tab.path] = vs;
   };
 
   // Write the current tab set to localStorage under (flushRoot, flushLeafId).
@@ -261,6 +302,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
     stashActiveViewState(); // capture the latest cursor/scroll before writing
     const drafts: Record<string, { text: string; baseHash: string }> = {};
     for (const t of tabsRef.current) {
+      if (t.kind !== 'editor') continue; // drafts are editor-only, keyed by path
       if (t.file === null) {
         const pending = draftsRef.current[t.path];
         if (pending) drafts[t.path] = pending;
@@ -268,9 +310,10 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
         drafts[t.path] = { text: t.draft, baseHash: hashText(t.file.content) };
       }
     }
+    const activeTab = tabsRef.current.find((t) => t.key === activeKeyRef.current) ?? null;
     saveLeafEditorState(flushRoot, flushLeafId, {
-      openFiles: tabsRef.current.map((t) => t.path),
-      activeFile: activePathRef.current,
+      openFiles: tabsRef.current.map((t) => ({ kind: t.kind, path: t.path })),
+      activeTab: activeTab ? { kind: activeTab.kind, path: activeTab.path } : null,
       viewStates: viewStatesRef.current,
       drafts,
     });
@@ -279,42 +322,49 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
   // Load a file's content into its tab. Shared by openFile (user-initiated)
   // and the mount / root-change restore paths (tabs whose `file` starts null).
   const loadFile = useCallback(
-    (path: string) => {
-      if (loadedRef.current.has(path)) return;
-      loadedRef.current.add(path);
+    (key: string, path: string) => {
+      if (loadedRef.current.has(key)) return;
+      loadedRef.current.add(key);
       api
         .file(root, path)
         .then((f) => {
-          // Reconcile a restored (persisted) draft against the just-loaded
-          // disk content. Resolved either way below, so drop it from the
-          // pending bucket now — flush()'s live computation takes over from
-          // here for this path.
-          const pending = draftsRef.current[path];
-          delete draftsRef.current[path];
+          // Reconcile a restored (persisted) draft against the just-loaded disk
+          // content. draftsRef is editor-only (keyed by path), so only the editor
+          // tab for this path consults it — a preview tab loading the same path
+          // must not steal or drop the editor tab's pending restore. Resolved
+          // either way below, so drop it from the pending bucket now — flush()'s
+          // live computation takes over from here for this path.
+          const isEditorLoad = key === tabKey('editor', path);
+          const pending = isEditorLoad ? draftsRef.current[path] : undefined;
+          if (isEditorLoad) delete draftsRef.current[path];
 
           setTabs((prev) =>
             prev.map((t) => {
-              if (t.path !== path) return t;
+              if (t.key !== key) return t;
+              // R-1 (2026-07-27 レビュー指摘): 成功したロードは必ず前回のエラー表示を
+              // クリアする。以前はここで t.error を引き継いでいたため、一度エラーに
+              // なったタブ (プレビューの「更新」・エディターの再読み込み共通) は disk
+              // 側が復旧して 200 が返ってきても永久にエラー表示のままだった。
+              const base = { ...t, file: f, error: '' };
               if (!pending || f.content === null) {
                 // No persisted draft to reconcile, or the file can't be
                 // edited here (binary/too large) — normal load.
-                return { ...t, file: f, draft: f.content ?? '' };
+                return { ...base, draft: f.content ?? '' };
               }
               if (f.content === pending.text) {
                 // Disk already matches the draft — nothing to restore.
-                return { ...t, file: f, draft: f.content };
+                return { ...base, draft: f.content };
               }
               if (hashText(f.content) === pending.baseHash) {
                 // Disk is unchanged from the content the draft was based on
                 // — safe to reapply.
-                return { ...t, file: f, draft: pending.text };
+                return { ...base, draft: pending.text };
               }
               // Disk changed underneath the draft while the tab was away.
               // Apply the draft anyway (never silently discard it) but warn,
               // since saving now would overwrite the newer disk content.
               return {
-                ...t,
-                file: f,
+                ...base,
                 draft: pending.text,
                 warning: '切替中にディスク上のファイルが変更されました。保存すると上書きします',
               };
@@ -322,35 +372,65 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
           );
         })
         .catch((e: Error) => {
-          loadedRef.current.delete(path); // allow retry on reopen
-          setTabs((prev) => prev.map((t) => (t.path === path ? { ...t, error: e.message } : t)));
+          loadedRef.current.delete(key); // allow retry on reopen
+          setTabs((prev) => prev.map((t) => (t.key === key ? { ...t, error: e.message } : t)));
         });
     },
     [root],
   );
 
-  // Open a file: focus it if already open, otherwise add a tab and load it.
-  const openFile = useCallback(
-    (path: string) => {
-      stashActiveViewState(); // leaving the current tab (if any) for a different one
-      setMessage('');
-      setActivePath(path);
-      setTabs((prev) =>
-        prev.some((t) => t.path === path)
-          ? prev
-          : [...prev, { path, file: null, draft: '', error: '', warning: '' }],
-      );
-      loadFile(path);
+  // Preview tabs render disk content directly (no draft of their own), so a save made
+  // through the editor tab isn't visible until the preview's content is refetched. Used
+  // by openTab (reactivating an already-open preview tab), switchTo (switching TO a
+  // preview tab via the tab strip), and MarkdownPreview's own refresh button.
+  // Editor tabs never call this — they have their own reload path (reloadWithEncoding).
+  const refreshPreviewTab = useCallback(
+    (key: string, path: string) => {
+      loadedRef.current.delete(key);
+      loadFile(key, path);
     },
     [loadFile],
   );
+
+  // Open a tab: focus it if already open, otherwise add it and load it.
+  // `openFile` (below) is the public, editor-only entry point every existing
+  // caller uses; `openTab` itself stays kind-general so a future preview caller
+  // can reuse the same focus/add/load logic.
+  const openTab = useCallback(
+    (kind: TabKind, path: string) => {
+      stashActiveViewState(); // leaving the current tab (if any) for a different one
+      setMessage('');
+      const key = tabKey(kind, path);
+      // R-2 (2026-07-27 レビュー指摘): 既に開いているプレビュータブを「プレビューを
+      // 開く」(ツールバー/右クリックメニュー/プレビュー内の .md リンク、いずれも
+      // openPreview → openTab 経由) で再度アクティブにするとき、loadFile は
+      // loadedRef に阻まれて no-op になり、保存直後でも古い内容のままだった。
+      // タブバーを直接クリックする switchTo と同じ「既存プレビューは再取得する」
+      // という規則に揃える。
+      const alreadyOpen = tabsRef.current.some((t) => t.key === key);
+      setActiveKey(key);
+      setTabs((prev) =>
+        prev.some((t) => t.key === key)
+          ? prev
+          : [...prev, { kind, path, key, file: null, draft: '', error: '', warning: '' }],
+      );
+      if (alreadyOpen && kind === 'preview') {
+        refreshPreviewTab(key, path);
+      } else {
+        loadFile(key, path);
+      }
+    },
+    [loadFile, refreshPreviewTab],
+  );
+  const openFile = useCallback((path: string) => openTab('editor', path), [openTab]);
+  const openPreview = useCallback((path: string) => openTab('preview', path), [openTab]);
 
   // Mount-only: fires the load for tabs restored from localStorage (`file`
   // starts null for every restored tab). Later opens go through openFile,
   // which calls loadFile itself.
   useEffect(() => {
     for (const t of tabs) {
-      if (t.file === null) loadFile(t.path);
+      if (t.file === null) loadFile(t.key, t.path);
     }
   }, []);
 
@@ -363,7 +443,6 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
   useEffect(() => {
     const flushRoot = root;
     const flushLeafId = leafId;
-    const loaded = loadedRef.current;
 
     if (!rootEffectRanRef.current) {
       rootEffectRanRef.current = true;
@@ -372,46 +451,54 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
       // this component via `key` on worktree switch, so this branch isn't
       // reached in practice).
       setTabs([]);
-      setActivePath(null);
+      setActiveKey(null);
       setMessage('');
       setSide('tree');
       pendingRevealRef.current = null;
       indentAppliedRef.current.clear();
       eolOverrideRef.current.clear();
-      loaded.clear();
+      previewScrollPositionsRef.current.clear();
+      loadedRef.current.clear();
 
       const state = loadLeafEditorState(root, leafId);
       viewStatesRef.current = state?.viewStates ?? {};
       draftsRef.current = state?.drafts ?? {};
-      const restoredTabs = (state?.openFiles ?? []).map((path) => ({
-        path,
+      const restoredTabs = (state?.openFiles ?? []).map((ref) => ({
+        kind: ref.kind,
+        path: ref.path,
+        key: tabKey(ref.kind, ref.path),
         file: null,
         draft: '',
         error: '',
         warning: '',
       }));
       setTabs(restoredTabs);
-      setActivePath(state?.activeFile ?? null);
-      for (const t of restoredTabs) loadFile(t.path);
+      setActiveKey(state?.activeTab ? tabKey(state.activeTab.kind, state.activeTab.path) : null);
+      for (const t of restoredTabs) loadFile(t.key, t.path);
     }
 
     // On root change or unmount: persist the tabs open under the outgoing
-    // root/leafId, then drop every model this tab set created.
+    // root/leafId, then drop every model this tab set created. Models are
+    // keyed by path only (not kind), so the dispose list is derived from the
+    // outgoing tabs' `kind === 'editor'` paths (tabsRef still holds the
+    // pre-change tabs here — cleanup runs before the new root's effect body).
     return () => {
       flush(flushRoot, flushLeafId);
-      disposeModelsSoon([...loaded].map(modelPath));
+      disposeModelsSoon(
+        tabsRef.current.filter((t) => t.kind === 'editor').map((t) => modelPath(t.path)),
+      );
     };
   }, [root, leafId, flush, loadFile]);
 
   // Persist open tabs + active tab whenever the tab SET or the active tab
-  // changes. Keyed on the path list (not `tabs` itself, whose `draft` field
+  // changes. Keyed on the tab key list (not `tabs` itself, whose `draft` field
   // changes on every keystroke) so typing never triggers a localStorage write.
-  const tabPathsKey = tabs.map((t) => t.path).join('\n');
+  const tabKeysKey = tabs.map((t) => t.key).join('\n');
   useEffect(() => {
     flush(root, leafId);
-  }, [tabPathsKey, activePath, root, leafId, flush]);
+  }, [tabKeysKey, activeKey, root, leafId, flush]);
 
-  // Debounced draft persistence: unlike tabPathsKey above, this effect
+  // Debounced draft persistence: unlike tabKeysKey above, this effect
   // deliberately depends on `tabs` itself, so it re-runs on every keystroke
   // (the `draft` field changes each time onChange fires). Only the cheap
   // clearTimeout/setTimeout pair runs on every keystroke — flush() (and the
@@ -458,19 +545,21 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
     return () => window.removeEventListener('pagehide', onPageHide);
   }, [root, leafId, flush]);
 
-  const active = tabs.find((t) => t.path === activePath) ?? null;
+  const active = tabs.find((t) => t.key === activeKey) ?? null;
   const modified = active ? isDirty(active) : false;
 
   // Jump to a search match once the target file is loaded AND the editor has
   // switched to its model. Reads only refs, so it can be called from any
   // timing (onMount, the effect below, openAtLine) without stale closures.
   // Never rewrites model content — the uncontrolled-editor invariant holds.
+  // Search jumps always target the editor tab for a path (openAtLine → openFile).
   const tryReveal = () => {
     const p = pendingRevealRef.current;
     const editor = editorRef.current;
     if (!p || !editor) return;
-    if (activePathRef.current !== p.path) return;
-    const tab = tabsRef.current.find((t) => t.path === p.path);
+    const key = tabKey('editor', p.path);
+    if (activeKeyRef.current !== key) return;
+    const tab = tabsRef.current.find((t) => t.key === key);
     if (!tab?.file || tab.file.content === null) return; // loading / binary / tooLarge
     const model = editor.getModel();
     if (!model || model.uri.toString() !== monaco.Uri.parse(modelPath(p.path)).toString()) return;
@@ -492,10 +581,13 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
   // 毎レンダー effect のどこから呼んでも stale にならない。
   const applyModelOptions = () => {
     const editor = editorRef.current;
-    const path = activePathRef.current;
-    if (!editor || !path || indentAppliedRef.current.has(path)) return;
-    const tab = tabsRef.current.find((t) => t.path === path);
-    if (!tab?.file || tab.file.content === null) return;
+    const key = activeKeyRef.current;
+    if (!editor || !key) return;
+    const tab = tabsRef.current.find((t) => t.key === key);
+    // indentAppliedRef is editor-only, keyed by path.
+    if (!tab || tab.kind !== 'editor' || indentAppliedRef.current.has(tab.path)) return;
+    if (!tab.file || tab.file.content === null) return;
+    const path = tab.path;
     const model = editor.getModel();
     if (!model || model.uri.toString() !== monaco.Uri.parse(modelPath(path)).toString()) return;
     indentAppliedRef.current.add(path);
@@ -528,8 +620,11 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
   // the same tab; tryReveal runs after this and overwrites the cursor itself.
   const tryRestoreViewState = () => {
     const editor = editorRef.current;
-    const path = activePathRef.current;
-    if (!editor || !path) return;
+    const key = activeKeyRef.current;
+    if (!editor || !key) return;
+    const tab = tabsRef.current.find((t) => t.key === key);
+    if (!tab || tab.kind !== 'editor') return; // viewStatesRef is editor-only (keyed by path)
+    const path = tab.path;
     const vs = viewStatesRef.current[path];
     if (vs === undefined) return;
     const model = editor.getModel();
@@ -573,33 +668,44 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
       },
       openFile: (path) => openFileRef.current(path),
       openAtLine: (path, line, column) => openAtLineRef.current(path, line, column),
-      getOpenTabPaths: () => tabsRef.current.map((t) => t.path),
+      // Ctrl+P should only surface files with an editor tab open — a preview tab isn't
+      // "a file open for editing" in the sense that registry's callers care about.
+      getOpenTabPaths: () => tabsRef.current.filter((t) => t.kind === 'editor').map((t) => t.path),
       showSearchPanel: () => showSearchPanelRef.current(),
     });
     return () => unregisterFilesTab(id);
   }, [root]);
 
-  const switchTo = (path: string) => {
-    stashActiveViewState(); // leaving the current tab for `path`
-    setActivePath(path);
+  const switchTo = (key: string) => {
+    stashActiveViewState(); // leaving the current tab for `key`
+    setActiveKey(key);
     setMessage('');
+    const target = tabs.find((t) => t.key === key);
+    if (target?.kind === 'preview') refreshPreviewTab(key, target.path);
   };
 
-  const closeTab = (path: string) => {
-    const target = tabs.find((t) => t.path === path);
-    if (target && isDirty(target) && !confirm(`${basename(path)} の変更を破棄して閉じますか?`)) return;
-    const idx = tabs.findIndex((t) => t.path === path);
-    const next = tabs.filter((t) => t.path !== path);
+  const closeTab = (key: string) => {
+    const target = tabs.find((t) => t.key === key);
+    if (!target) return;
+    if (isDirty(target) && !confirm(`${basename(target.path)} の変更を破棄して閉じますか?`)) return;
+    const idx = tabs.findIndex((t) => t.key === key);
+    const next = tabs.filter((t) => t.key !== key);
     setTabs(next);
-    loadedRef.current.delete(path);
-    indentAppliedRef.current.delete(path);
-    eolOverrideRef.current.delete(path);
-    delete viewStatesRef.current[path];
-    delete draftsRef.current[path];
-    disposeModelsSoon([modelPath(path)]);
-    if (activePath === path) {
+    loadedRef.current.delete(key);
+    // indentAppliedRef / eolOverrideRef / viewStatesRef / draftsRef / the Monaco model
+    // are keyed by path, not by tab key. Closing a preview tab must NOT clear the
+    // editor tab's resources for the same path (nor vice versa) — this is the biggest
+    // accident point for silently destroying unsaved edits, so it's gated on kind here.
+    if (target.kind === 'editor') {
+      indentAppliedRef.current.delete(target.path);
+      eolOverrideRef.current.delete(target.path);
+      delete viewStatesRef.current[target.path];
+      delete draftsRef.current[target.path];
+      disposeModelsSoon([modelPath(target.path)]);
+    }
+    if (activeKey === key) {
       const neighbor = next[idx] ?? next[idx - 1] ?? null; // right neighbor, else left
-      setActivePath(neighbor?.path ?? null);
+      setActiveKey(neighbor?.key ?? null);
       setMessage('');
     }
   };
@@ -608,9 +714,10 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
   // なら保存する(エンコーディング変換だけの保存を許す)。ref 経由で読むので
   // ステータスバーのハンドラーからも stale なく呼べる。
   const save = async (encOverride?: { encoding: string; bom: boolean }) => {
-    const path = activePathRef.current;
-    const tab = path ? tabsRef.current.find((t) => t.path === path) : null;
-    if (!path || !tab?.file || tab.file.content === null) return;
+    const key = activeKeyRef.current;
+    const tab = key ? tabsRef.current.find((t) => t.key === key) : null;
+    if (!tab || tab.kind !== 'editor' || !tab.file || tab.file.content === null) return;
+    const path = tab.path;
     if (tab.draft === tab.file.content && !encOverride) return;
     const ec = tab.file.editorconfig;
     // 新規(空)ファイルに限り editorconfig の charset を保存エンコーディングの
@@ -634,7 +741,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
       await api.saveFile(root, path, content, enc);
       setTabs((prev) =>
         prev.map((t) =>
-          t.path === path && t.file
+          t.key === key && t.file
             ? {
                 ...t,
                 draft: content,
@@ -644,15 +751,17 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
             : t,
         ),
       );
-      // .editorconfig を保存したら、開いている全タブの editorconfig スナップショットを
-      // 再取得して反映する(修正 C — 開いた時点のスナップショットのままだと保存直後の
-      // 変更が反映されない)。draft/content/encoding/hasBom には触れない(専用エンドポイント
-      // を使うのはこの未保存編集の破壊を避けるため)。個別のタブの再取得失敗は無視して
-      // 旧値を保持し、保存自体の成功扱いは変えない。
+      // .editorconfig を保存したら、開いている全「エディター」タブの editorconfig
+      // スナップショットを再取得して反映する(修正 C — 開いた時点のスナップショットの
+      // ままだと保存直後の変更が反映されない)。プレビュータブには適用対象の
+      // editorconfig スナップショットがない(将来 T6 で導入)ので対象外。
+      // draft/content/encoding/hasBom には触れない(専用エンドポイントを使うのはこの
+      // 未保存編集の破壊を避けるため)。個別のタブの再取得失敗は無視して旧値を保持し、
+      // 保存自体の成功扱いは変えない。
       if (basename(path) === '.editorconfig') {
         const updates = await Promise.all(
           tabsRef.current
-            .filter((t) => t.file !== null)
+            .filter((t) => t.kind === 'editor' && t.file !== null)
             .map(async (t) => {
               try {
                 return { path: t.path, editorconfig: await api.editorConfig(root, t.path) };
@@ -663,6 +772,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
         );
         setTabs((prev) =>
           prev.map((t) => {
+            if (t.kind !== 'editor') return t;
             const u = updates.find((x) => x?.path === t.path);
             return u && t.file ? { ...t, file: { ...t.file, editorconfig: u.editorconfig } } : t;
           }),
@@ -680,9 +790,10 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
 
   // 「エンコーディング指定で再読み込み」。dirty なら確認してから破棄する。
   const reloadWithEncoding = async (encoding: string) => {
-    const path = activePathRef.current;
-    const tab = path ? tabsRef.current.find((t) => t.path === path) : null;
-    if (!path || !tab) return;
+    const key = activeKeyRef.current;
+    const tab = key ? tabsRef.current.find((t) => t.key === key) : null;
+    if (!tab || tab.kind !== 'editor') return;
+    const path = tab.path;
     if (tab.file && tab.file.content !== null && tab.draft !== tab.file.content) {
       if (!confirm(`${basename(path)} の未保存の変更を破棄して再読み込みしますか?`)) return;
     }
@@ -690,7 +801,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
       const f = await api.file(root, path, encoding);
       setTabs((prev) =>
         prev.map((t) =>
-          t.path === path
+          t.key === key
             ? { ...t, file: f, draft: f.content ?? '', error: '', warning: '' } // draft is discarded here, so any restore-time conflict no longer applies
             : t,
         ),
@@ -752,6 +863,11 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
 
     editor.onDidDispose(() => {
       setEditorInst((cur) => (cur === editor ? null : cur));
+      // Closes the hole where a disposed instance lingers in editorRef: harmless today
+      // since Editor never unmounts mid-tab-set, but preview tabs (T6) will make editor
+      // unmount/remount routine, and a stale editorRef would make stashActiveViewState /
+      // save / etc. operate on a dead instance.
+      if (editorRef.current === editor) editorRef.current = null;
       if (debounceTimer !== undefined) clearTimeout(debounceTimer);
       cursorSub.dispose();
       scrollSub.dispose();
@@ -759,7 +875,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
   };
 
   const onChange = (value: string | undefined) => {
-    setTabs((prev) => prev.map((t) => (t.path === activePath ? { ...t, draft: value ?? '' } : t)));
+    setTabs((prev) => prev.map((t) => (t.key === activeKey ? { ...t, draft: value ?? '' } : t)));
   };
 
   const touch = () => touchFilesTab(instanceRef.current);
@@ -786,7 +902,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
         <div className="side-view" style={{ display: side === 'tree' ? undefined : 'none' }}>
           <FileTree
             root={root}
-            selectedPath={activePath}
+            selectedPath={active?.path ?? null}
             onSelectFile={openFile}
             onFileContextMenu={(e, path) => setFileMenu({ x: e.clientX, y: e.clientY, path })}
           />
@@ -811,11 +927,12 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
             <div className="editor-tabs">
               {tabs.map((t) => (
                 <div
-                  key={t.path}
-                  className={`editor-tab ${activePath === t.path ? 'active' : ''}`}
-                  title={t.path}
-                  onClick={() => switchTo(t.path)}
+                  key={t.key}
+                  className={`editor-tab ${activeKey === t.key ? 'active' : ''}`}
+                  title={t.kind === 'preview' ? `プレビュー: ${t.path}` : t.path}
+                  onClick={() => switchTo(t.key)}
                 >
+                  {t.kind === 'preview' && <span className="codicon codicon-preview" />}
                   <span className="editor-tab-name">{basename(t.path)}</span>
                   <span className="editor-tab-actions">
                     {isDirty(t) && <span className="editor-tab-dirty">●</span>}
@@ -824,7 +941,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
                       title="閉じる"
                       onClick={(e) => {
                         e.stopPropagation();
-                        closeTab(t.path);
+                        closeTab(t.key);
                       }}
                     >
                       <span className="codicon codicon-close" />
@@ -833,7 +950,25 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
                 </div>
               ))}
             </div>
-            {!active ? null : active.error ? (
+            {/* active.kind === 'preview' branches out entirely to MarkdownPreview before any
+                of the editor-only checks below run, so EditorStatusBar / <Editor> stay
+                structurally unreachable from a preview tab (no `file` non-null narrowing
+                games needed — MarkdownPreview handles its own error/loading/binary/tooLarge
+                placeholders internally from the raw tab fields). */}
+            {!active ? null : active.kind === 'preview' ? (
+              <MarkdownPreview
+                root={root}
+                path={active.path}
+                source={active.file?.content ?? null}
+                error={active.error}
+                tooLarge={active.file?.tooLarge}
+                binary={active.file?.binary}
+                onRefresh={() => refreshPreviewTab(active.key, active.path)}
+                onOpenPreview={openPreview}
+                onOpenFile={openFile}
+                scrollPositions={previewScrollPositionsRef.current}
+              />
+            ) : active.error ? (
               <div className="placeholder">⚠ {active.error}</div>
             ) : !active.file ? (
               <div className="placeholder">読み込み中...</div>
@@ -853,6 +988,15 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
                     {modified && <span className="editor-modified"> ●</span>}
                   </span>
                   <span className="editor-msg">{message}</span>
+                  {isMarkdownPath(active.path) && (
+                    <button
+                      className="icon-btn"
+                      onClick={() => openPreview(active.path)}
+                      title="プレビューを開く"
+                    >
+                      <span className="codicon codicon-open-preview" />
+                    </button>
+                  )}
                   <button
                     className="primary"
                     disabled={!modified || saving}
@@ -886,8 +1030,9 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
                   onReloadWithEncoding={(encoding) => void reloadWithEncoding(encoding)}
                   onSaveWithEncoding={(encoding, bom) => void save({ encoding, bom })}
                   onEolOverride={() => {
-                    const path = activePathRef.current;
-                    if (path) eolOverrideRef.current.add(path);
+                    // eolOverrideRef is editor-only, keyed by path (see closeTab's comment).
+                    const tab = tabsRef.current.find((t) => t.key === activeKeyRef.current);
+                    if (tab?.kind === 'editor') eolOverrideRef.current.add(tab.path);
                   }}
                 />
               </>

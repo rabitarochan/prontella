@@ -872,6 +872,37 @@ app.get('/api/fs/editorconfig', asyncHandler(async (req, res) => {
   res.json(files.editorConfigFor(queryStr(req, 'root'), queryStr(req, 'path')));
 }));
 
+// Markdown プレビューのローカル画像配信。asyncHandler は常に 500 になるため使わず、
+// 400/404/413/415 を出し分ける自前ラップにする(pj-git-route の定石)。
+app.get('/api/fs/raw', (req, res) => {
+  // typeof を先に見る: 配列 body/query (?root=a&root=b) が string[] に化けて後段を壊すのを防ぐ。
+  const root = req.query.root;
+  const rel = req.query.path;
+  if (typeof root !== 'string' || !root || typeof rel !== 'string' || !rel) {
+    res.status(400).json({ error: 'root と path が必要です' });
+    return;
+  }
+  const result = files.resolveRawFile(root, rel);
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error });
+    return;
+  }
+  // send パッケージは Content-Type/Cache-Control が既に設定済みなら上書きしない
+  // (node_modules/send/index.js の type()/cacheControl 分岐で res.getHeader を確認済み)。
+  res.setHeader('Content-Type', result.mime);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'no-cache');
+  if (result.mime === 'image/svg+xml') {
+    // URL を直接開かれた場合に SVG 内スクリプトが動くのを防ぐ。
+    res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+  }
+  res.sendFile(result.abs, (err: unknown) => {
+    if (err && !res.headersSent) {
+      res.status(404).json({ error: 'ファイルが見つかりません' });
+    }
+  });
+});
+
 app.put('/api/fs/file', asyncHandler(async (req, res) => {
   const { root, path: rel, content, encoding, bom } = req.body as {
     root: string;

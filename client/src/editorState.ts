@@ -3,13 +3,27 @@
 // WorktreeLayout persistence but a separate document, since which files are open is a
 // property of a leaf's editor, not of the tile tree shape.
 
+export type TabKind = 'editor' | 'preview';
+
+/** Identifies one open tab. Tab identity is the `{kind, path}` pair, not `path` alone —
+ *  an editor tab and a preview tab for the same path are distinct tabs. */
+export interface OpenTabRef {
+  kind: TabKind;
+  path: string;
+}
+
 export interface LeafEditorState {
-  /** worktree-root-relative paths, in tab order */
-  openFiles: string[];
-  activeFile: string | null;
-  /** path -> opaque Monaco viewState JSON */
+  /** worktree-root-relative paths, in tab order. Also accepts the legacy `string[]`
+   *  shape on read (each entry treated as an `'editor'` tab) — see sanitizeOpenFiles. */
+  openFiles: OpenTabRef[];
+  /** Also accepts the legacy `activeFile: string` shape on read (treated as an
+   *  `'editor'` tab) — see sanitizeLeafState. */
+  activeTab: OpenTabRef | null;
+  /** path -> opaque Monaco viewState JSON. Editor tabs only, keyed by path (unchanged) —
+   *  a preview tab has no Monaco view state to persist. */
   viewStates: Record<string, unknown>;
-  /** path -> unsaved edit, for dirty tabs only */
+  /** path -> unsaved edit, for dirty tabs only. Editor tabs only, keyed by path
+   *  (unchanged) — preview tabs are never dirty. */
   drafts: Record<string, { text: string; baseHash: string }>;
 }
 
@@ -32,16 +46,43 @@ function hasDotDotSegment(p: string): boolean {
   return p.split('/').includes('..');
 }
 
-function sanitizeOpenFiles(raw: unknown): string[] {
+/** Validates one open-tab entry. Accepts the legacy bare-string shape (always
+ *  treated as an `'editor'` tab) as well as the current `{kind, path}` shape. */
+function sanitizeTabRef(entry: unknown): OpenTabRef | null {
+  if (typeof entry === 'string') {
+    if (entry === '' || hasDotDotSegment(entry)) return null;
+    return { kind: 'editor', path: entry };
+  }
+  if (typeof entry === 'object' && entry !== null) {
+    const e = entry as { kind?: unknown; path?: unknown };
+    if (
+      (e.kind === 'editor' || e.kind === 'preview') &&
+      typeof e.path === 'string' &&
+      e.path !== '' &&
+      !hasDotDotSegment(e.path)
+    ) {
+      return { kind: e.kind, path: e.path };
+    }
+  }
+  return null;
+}
+
+function tabRefsEqual(a: OpenTabRef, b: OpenTabRef): boolean {
+  return a.kind === b.kind && a.path === b.path;
+}
+
+function sanitizeOpenFiles(raw: unknown): OpenTabRef[] {
   if (!Array.isArray(raw)) return [];
   const seen = new Set<string>();
-  const out: string[] = [];
+  const out: OpenTabRef[] = [];
   for (const entry of raw) {
     if (out.length >= MAX_OPEN_FILES) break;
-    if (typeof entry !== 'string' || entry === '' || hasDotDotSegment(entry)) continue;
-    if (seen.has(entry)) continue;
-    seen.add(entry);
-    out.push(entry);
+    const ref = sanitizeTabRef(entry);
+    if (!ref) continue;
+    const key = `${ref.kind}:${ref.path}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(ref);
   }
   return out;
 }
@@ -59,20 +100,38 @@ function sanitizeLeafState(raw: unknown): LeafEditorState | null {
   const l = raw as {
     openFiles?: unknown;
     activeFile?: unknown;
+    activeTab?: unknown;
     viewStates?: unknown;
     drafts?: unknown;
   };
 
   const openFiles = sanitizeOpenFiles(l.openFiles);
-  const activeFile =
-    typeof l.activeFile === 'string' && openFiles.includes(l.activeFile)
-      ? l.activeFile
-      : (openFiles[openFiles.length - 1] ?? null);
+
+  // activeTab: read the new field first; fall back to the legacy `activeFile: string`
+  // (always an editor tab); fall back to the last open tab if neither is valid or open.
+  let activeTab: OpenTabRef | null = null;
+  const activeTabCandidate = sanitizeTabRef(l.activeTab);
+  const legacyActiveFileCandidate =
+    typeof l.activeFile === 'string' ? sanitizeTabRef(l.activeFile) : null;
+  if (activeTabCandidate && openFiles.some((f) => tabRefsEqual(f, activeTabCandidate))) {
+    activeTab = activeTabCandidate;
+  } else if (
+    legacyActiveFileCandidate &&
+    openFiles.some((f) => tabRefsEqual(f, legacyActiveFileCandidate))
+  ) {
+    activeTab = legacyActiveFileCandidate;
+  } else {
+    activeTab = openFiles[openFiles.length - 1] ?? null;
+  }
+
+  // viewStates / drafts are keyed by path and only ever belong to editor tabs — a
+  // path that is only open as a preview tab has no Monaco state or dirty draft to keep.
+  const editorPaths = new Set(openFiles.filter((f) => f.kind === 'editor').map((f) => f.path));
 
   const viewStates: Record<string, unknown> = {};
   if (typeof l.viewStates === 'object' && l.viewStates !== null) {
     for (const [path, v] of Object.entries(l.viewStates as Record<string, unknown>)) {
-      if (openFiles.includes(path) && typeof v === 'object' && v !== null) {
+      if (editorPaths.has(path) && typeof v === 'object' && v !== null) {
         viewStates[path] = v;
       }
     }
@@ -81,13 +140,13 @@ function sanitizeLeafState(raw: unknown): LeafEditorState | null {
   const drafts: Record<string, { text: string; baseHash: string }> = {};
   if (typeof l.drafts === 'object' && l.drafts !== null) {
     for (const [path, v] of Object.entries(l.drafts as Record<string, unknown>)) {
-      if (!openFiles.includes(path)) continue;
+      if (!editorPaths.has(path)) continue;
       const draft = sanitizeDraft(v);
       if (draft) drafts[path] = draft;
     }
   }
 
-  return { openFiles, activeFile, viewStates, drafts };
+  return { openFiles, activeTab, viewStates, drafts };
 }
 
 /** Defensive validation for editor state loaded from localStorage. */

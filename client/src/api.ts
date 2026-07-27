@@ -207,6 +207,9 @@ export const api = {
     request<FileContent>(
       `/api/fs/file?root=${q(root)}&path=${q(path)}${encoding ? `&encoding=${q(encoding)}` : ''}`,
     ),
+  // fetch でなく URL ビルダー(<img src> にそのまま入れるため)。相対 URL にして
+  // Vite dev のプロキシと本番の同一オリジン配信の両方で動くようにする。
+  rawUrl: (root: string, path: string): string => `/api/fs/raw?root=${q(root)}&path=${q(path)}`,
   editorConfig: (root: string, path: string) =>
     request<EditorConfigSettings | null>(`/api/fs/editorconfig?root=${q(root)}&path=${q(path)}`),
   saveFile: (

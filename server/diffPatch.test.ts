@@ -1,6 +1,5 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import iconv from 'iconv-lite';
@@ -14,6 +13,10 @@ import {
   type DiffHunk,
 } from './diffPatch.js';
 import { runGitInput } from './git.js';
+
+// vitest はリポジトリールートから走るため process.cwd() はリポジトリールートになる。
+// ドライブ直下(C:\vt5 等)は後片付けがツール保護に弾かれるため使わず、./vt 配下を使う。
+const TMP_ROOT = path.join(process.cwd(), 'vt');
 
 /**
  * 以下の fixture 文字列は想像で書いたものではなく、scratchpad の一時 git リポジトリーで
@@ -283,7 +286,8 @@ describe('integration: real git apply --cached --check', () => {
    * `git apply --cached --check` に通すところまで確認する。
    */
   it('accepts a partial patch selecting a non-final hunk (regression: missing trailing newline)', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diffpatch-it-'));
+    fs.mkdirSync(TMP_ROOT, { recursive: true });
+    const dir = fs.mkdtempSync(path.join(TMP_ROOT, 'diffpatch-it-'));
     try {
       const run = (args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
       run(['init', '-q']);
@@ -391,7 +395,8 @@ describe('buildPartialPatchLines: invalid input', () => {
 
 /** 一時 git リポジトリーを作り、コマンド実行ヘルパーを返す(既存の integration テストと同じ流儀)。 */
 function makeRepo(): { dir: string; run: (args: string[]) => string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diffpatch-lines-it-'));
+  fs.mkdirSync(TMP_ROOT, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(TMP_ROOT, 'diffpatch-lines-it-'));
   const run = (args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
   run(['init', '-q']);
   run(['config', 'user.email', 'test@test.com']);
@@ -1270,7 +1275,8 @@ describe('transformHunkLines (via buildPartialPatchLines): must-fix — EOF mark
     'forward/stage: selecting only a later addition (+c) while the earlier EOF-fixing pair (-b/+b) is unselected ' +
       'must NOT fuse "b" and "c" into "bc" (reviewer repro: HEAD "a\\nb" no-eof -> worktree "a\\nb\\nc\\n")',
     async () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'marker-fuse-stage-'));
+      fs.mkdirSync(TMP_ROOT, { recursive: true });
+      const dir = fs.mkdtempSync(path.join(TMP_ROOT, 'marker-fuse-stage-'));
       try {
         const run = (args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
         run(['init', '-q']);
@@ -1310,7 +1316,8 @@ describe('transformHunkLines (via buildPartialPatchLines): must-fix — EOF mark
     'reverse/discard: discarding only "-r" while the EOF-fixing pair sharing its run is unselected ' +
       'must NOT fuse lines (reviewer repro: HEAD "p\\nq\\nr\\ns\\n" -> worktree "p\\nQ" no-eof, discard "-r" only)',
     async () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'marker-fuse-discard-'));
+      fs.mkdirSync(TMP_ROOT, { recursive: true });
+      const dir = fs.mkdtempSync(path.join(TMP_ROOT, 'marker-fuse-discard-'));
       try {
         const run = (args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
         run(['init', '-q']);
@@ -1570,7 +1577,8 @@ describe('transformHunkLines (via buildPartialPatchLines): EOF sentinel is posit
     'a blank context line mid-hunk (diff.suppressBlankEmpty=true) is treated as context, not the EOF sentinel, ' +
       'and survives a partial line selection correctly',
     async () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blank-ctx-mid-'));
+      fs.mkdirSync(TMP_ROOT, { recursive: true });
+      const dir = fs.mkdtempSync(path.join(TMP_ROOT, 'blank-ctx-mid-'));
       try {
         const run = (args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
         run(['init', '-q']);
@@ -1612,7 +1620,8 @@ describe('transformHunkLines (via buildPartialPatchLines): EOF sentinel is posit
     'a blank context line at the tail of a NON-final hunk (diff.suppressBlankEmpty=true) is treated as context, ' +
       'not mistaken for the trailing-newline sentinel of the whole hunks array',
     async () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blank-ctx-nonfinal-tail-'));
+      fs.mkdirSync(TMP_ROOT, { recursive: true });
+      const dir = fs.mkdtempSync(path.join(TMP_ROOT, 'blank-ctx-nonfinal-tail-'));
       try {
         const run = (args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
         run(['init', '-q']);
@@ -1678,7 +1687,8 @@ describe('transformHunkLines (via buildPartialPatchLines): N-1 — marker suppre
       'unselected leftover "-b" (with its own EOF marker) follows must NOT over-reject with 500 ' +
       '(HEAD "d\\nd\\ne\\nf\\na\\na\\ng\\nb" no-eof -> worktree "d\\nd\\ne\\nf\\na\\na\\ne" no-eof)',
     async () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'n1-marker-suppress-'));
+      fs.mkdirSync(TMP_ROOT, { recursive: true });
+      const dir = fs.mkdtempSync(path.join(TMP_ROOT, 'n1-marker-suppress-'));
       try {
         const run = (args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
         run(['init', '-q']);
@@ -1729,7 +1739,8 @@ describe('transformHunkLines (via buildPartialPatchLines): N-1 — marker suppre
       'while unselected leftover additions ("+Y2"/"+Y3", becoming context in reverse) follow must NOT over-reject ' +
       '(HEAD "x\\ny" no-eof -> staged "x\\nY1\\nY2\\nY3\\n", unstage "-y" only)',
     async () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'n1-marker-suppress-reverse-'));
+      fs.mkdirSync(TMP_ROOT, { recursive: true });
+      const dir = fs.mkdtempSync(path.join(TMP_ROOT, 'n1-marker-suppress-reverse-'));
       try {
         const run = (args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
         run(['init', '-q']);
@@ -1776,7 +1787,8 @@ describe('transformHunkLines (via buildPartialPatchLines): N-2 — genuine conte
       'newline) is preserved correctly when the preceding pair is partially staged ' +
       '(reviewer repro: HEAD "a\\nb" no-eof -> worktree "X\\nb" no-eof)',
     async () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'n2-ctx-marker-'));
+      fs.mkdirSync(TMP_ROOT, { recursive: true });
+      const dir = fs.mkdtempSync(path.join(TMP_ROOT, 'n2-ctx-marker-'));
       try {
         const run = (args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
         run(['init', '-q']);

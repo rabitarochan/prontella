@@ -1,8 +1,11 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, afterEach } from 'vitest';
 import { MAX_RAW_SIZE, rawMimeFor, resolveRawFile } from './files.js';
+
+// vitest はリポジトリールートから走るため process.cwd() はリポジトリールートになる。
+// ドライブ直下(C:\vt5 等)は後片付けがツール保護に弾かれるため使わず、./vt 配下を使う。
+const TMP_ROOT = path.join(process.cwd(), 'vt');
 
 describe('rawMimeFor', () => {
   it.each([
@@ -56,7 +59,8 @@ describe('resolveRawFile', () => {
   });
 
   function makeTmpDir(): string {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'files-raw-it-'));
+    fs.mkdirSync(TMP_ROOT, { recursive: true });
+    tmpDir = fs.mkdtempSync(path.join(TMP_ROOT, 'files-raw-it-'));
     return tmpDir;
   }
 

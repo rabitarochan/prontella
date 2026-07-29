@@ -169,6 +169,10 @@ export const api = {
     post<void>('/api/git/branch-rename', { dir, oldName, newName }),
   deleteRemoteBranch: (dir: string, remoteBranch: string) =>
     post<void>('/api/git/branch-delete-remote', { dir, remoteBranch }),
+  branchFetchFf: (dir: string, branch: string) =>
+    post<{ result: string }>('/api/git/branch-fetch-ff', { dir, branch }),
+  branchPush: (dir: string, branch: string, remoteBranch: string) =>
+    post<{ result: string }>('/api/git/branch-push', { dir, branch, remoteBranch }),
   remotes: (dir: string) => request<RemoteInfo[]>(`/api/git/remotes?dir=${q(dir)}`),
   addRemote: (dir: string, name: string, url: string) =>
     post<void>('/api/git/remote-add', { dir, name, url }),

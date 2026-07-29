@@ -617,6 +617,122 @@ app.post('/api/git/branch-rename', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// branch/remoteBranch はどちらも git のブランチ名なので、区別せず同じ検証を通す
+// (git は仕様上 ':' / 空白 / '..' を含むブランチ名を作れないため、branch 側にも
+// remoteBranch 相当の厳しめのチェックを適用しても正当な値を弾かない)。
+// typeof チェックを最初に置くのは、配列 body (`["a","b"]`) が `String(x)` で
+// `"a,b"` に化けて素通りする既知の穴 (pj-git-route スキル参照) を塞ぐため。
+export function checkBranchRefParam(
+  v: unknown,
+  label: string,
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof v !== 'string') {
+    return { ok: false, error: `${label} は文字列である必要があります` };
+  }
+  const trimmed = v.trim();
+  if (!trimmed) {
+    return { ok: false, error: `${label} が必要です` };
+  }
+  if (trimmed.startsWith('-')) {
+    return { ok: false, error: `不正な${label}です: ${trimmed}` };
+  }
+  if (trimmed.includes(':') || /\s/.test(trimmed) || trimmed.includes('..')) {
+    return { ok: false, error: `不正な${label}です: ${trimmed}` };
+  }
+  return { ok: true, value: trimmed };
+}
+
+// F2: upstream からフェッチして早送り。branch はクライアントの自由入力を
+// listBranches(dir) の結果と厳密一致させてから BranchInfo を git.ts に渡す
+// (ブランチ名を直接 git コマンドへ渡さない)。checkBranchRefParam が 400 を
+// 返し得るため asyncHandler (常に 500) ではなく自前ラップにする。
+app.post('/api/git/branch-fetch-ff', (req, res) => {
+  handleBranchFetchFf(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+async function handleBranchFetchFf(req: express.Request, res: express.Response): Promise<void> {
+  const dir = bodyDir(req);
+  const branchCheck = checkBranchRefParam(req.body.branch, 'branch');
+  if (!branchCheck.ok) {
+    res.status(400).json({ error: branchCheck.error });
+    return;
+  }
+  const branch = branchCheck.value;
+
+  // b.current はこの操作が走る dir (選択中の worktree) ではなく repo.path (メイン
+  // worktree) で評価された値のことがあるため、isCurrent の判定には使わない
+  // (取り違えるとリンク worktree で作業中のブランチが黙って別ブランチへ早送りされる、
+  // 実測で再現済みの P0)。
+  const branches = await git.listBranches(dir);
+  const found = branches.find((b) => !b.remote && b.name === branch);
+  if (!found) {
+    res.status(400).json({ error: `ブランチが見つかりません: ${branch}` });
+    return;
+  }
+  if (!found.upstreamRemote || !found.upstreamRemoteRef || found.upstreamGone || found.upstreamRemote === '.') {
+    res.status(400).json({ error: `upstream が設定されていません: ${branch}` });
+    return;
+  }
+
+  const isCurrent = (await git.currentBranchOf(dir)) === branch;
+  const result = await git.ffFromUpstream(dir, found, isCurrent);
+  res.json({ result });
+}
+
+// F3: ローカルブランチをローカル名と異なる名前で push。remote はリクエストボディで
+// 受け取らない (`git fetch "--upload-pack=echo pwned" <remote> <refspec>` は echo を
+// 実際に実行する実測があるため、remote は git 由来の値 (listBranches/listRemotes の
+// 出力) しか使わない設計にする)。
+app.post('/api/git/branch-push', (req, res) => {
+  handleBranchPush(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+async function handleBranchPush(req: express.Request, res: express.Response): Promise<void> {
+  const dir = bodyDir(req);
+  const branchCheck = checkBranchRefParam(req.body.branch, 'branch');
+  if (!branchCheck.ok) {
+    res.status(400).json({ error: branchCheck.error });
+    return;
+  }
+  const remoteBranchCheck = checkBranchRefParam(req.body.remoteBranch, 'remoteBranch');
+  if (!remoteBranchCheck.ok) {
+    res.status(400).json({ error: remoteBranchCheck.error });
+    return;
+  }
+  const branch = branchCheck.value;
+  const remoteBranch = remoteBranchCheck.value;
+
+  const branches = await git.listBranches(dir);
+  const found = branches.find((b) => !b.remote && b.name === branch);
+  if (!found) {
+    res.status(400).json({ error: `ブランチが見つかりません: ${branch}` });
+    return;
+  }
+
+  const remotes = await git.listRemotes(dir);
+  let remote: string;
+  if (found.upstreamRemote && found.upstreamRemote !== '.') {
+    remote = found.upstreamRemote;
+  } else if (remotes.some((r) => r.name === 'origin')) {
+    remote = 'origin';
+  } else {
+    res.status(400).json({ error: 'プッシュ先のリモートがありません' });
+    return;
+  }
+  // 決まったリモート名が実在することを最終確認 (listRemotes(dir) に無ければ 400)。
+  if (!remotes.some((r) => r.name === remote)) {
+    res.status(400).json({ error: `リモートが見つかりません: ${remote}` });
+    return;
+  }
+
+  const result = await git.pushBranchToName(dir, branch, remote, remoteBranch, { setUpstream: true });
+  res.json({ result });
+}
+
 app.get('/api/git/remotes', asyncHandler(async (req, res) => {
   const dir = requireKnownDir(req);
   res.json(await git.listRemotes(dir));

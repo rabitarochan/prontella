@@ -66,12 +66,22 @@ export interface LogEntry {
   origPath?: string | null;
 }
 
+// server/git.ts の BranchInfo と手動同期(共有型機構がないため)
 export interface BranchInfo {
   name: string;
   hash: string;
   current: boolean;
   remote: boolean;
   worktreePath: string | null;
+  upstream: string | null; // 例 'origin/main'(表示用)
+  upstreamFullRef: string | null; // 例 'refs/remotes/origin/main'
+  upstreamRemote: string | null; // 例 'origin'
+  upstreamRemoteRef: string | null; // 例 'refs/heads/main' — 短縮名 'main' のこともある
+  ahead: number | null; // 不明は null(0 ではない)
+  behind: number | null;
+  upstreamGone: boolean;
+  pushRemote: string | null; // %(push:remotename)。upstreamRemote と異なれば三角ワークフロー
+  pushRef: string | null; // %(push)。空 = git がプッシュ先を一意に解決できない
 }
 
 export interface TreeEntry {

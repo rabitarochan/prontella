@@ -6,6 +6,7 @@ import { useTerminalSessions } from '../layout/useTerminalSessions';
 import { useTileLayout } from '../layout/useTileLayout';
 import { useConfirm } from './ConfirmDialog';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
+import { usePrompt } from './PromptDialog';
 import StatusBadge from './StatusBadge';
 import TileGrid from './tiles/TileGrid';
 
@@ -21,6 +22,7 @@ export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree:
     null,
   );
   const { confirm: confirmDialog, dialog } = useConfirm();
+  const { prompt: promptDialog, dialog: promptDlg } = usePrompt();
   const { sessions, create, kill } = useTerminalSessions(worktree.path);
   const tiles = useTileLayout(worktree.path, sessions, create, kill);
 
@@ -56,6 +58,47 @@ export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree:
     void sync('push', { forceWithLease: true });
   };
 
+  // 別名プッシュ (-u 相当) は常にカレントブランチ (worktree.branch) が対象。detached HEAD
+  // (branch === null) のときはメニュー項目自体を disabled にするので、ここに来る時点で非 null。
+  // sync() は kind を 'fetch'|'pull'|'push' に固定した既存 3 操作向けのため、任意のリモート名を
+  // 渡す必要があるこの操作は同じ setSyncing/setError/refresh の流儀で別関数として書く。
+  const pushAs = async () => {
+    if (!worktree.branch) return;
+    const branch = worktree.branch;
+    const name = await promptDialog({
+      title: '別名でプッシュ',
+      message: `'${branch}' をプッシュする先のリモートブランチ名を入力してください。`,
+      defaultValue: branch,
+      confirmLabel: 'プッシュ',
+    });
+    if (!name) return;
+    // -u は既存の upstream 設定を書き換えるため、既に upstream があるときは確認を挟む
+    // (GitTab の branchMenuItems「別名でプッシュ…」と対称。pj-git-route §3: 同型 UI を
+    // 別コンポーネントに作るときは既存の対称物と条件を突き合わせる)。
+    const currentUpstream = worktree.status?.upstream;
+    if (currentUpstream) {
+      const ok = await confirmDialog({
+        title: '別名でプッシュ',
+        message:
+          `'${branch}' をリモート側の '${name}' へプッシュします。\n` +
+          `upstream は '${currentUpstream}' から '${name}' を指すよう変わります。`,
+        confirmLabel: 'プッシュ',
+        severity: 'normal',
+      });
+      if (!ok) return;
+    }
+    setSyncing('push');
+    setError(null);
+    try {
+      await api.branchPush(worktree.path, branch, name);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSyncing(null);
+    }
+  };
+
   const syncMenuItems: ContextMenuItem[] =
     syncMenu?.kind === 'pull'
       ? [
@@ -74,6 +117,12 @@ export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree:
               disabled: syncing !== null,
               danger: true,
               onClick: () => void forcePush(),
+            },
+            {
+              label: '別名でプッシュ…',
+              icon: 'cloud-upload',
+              disabled: syncing !== null || !worktree.branch,
+              onClick: () => void pushAs(),
             },
           ]
         : [];
@@ -163,6 +212,7 @@ export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree:
         />
       )}
       {dialog}
+      {promptDlg}
     </div>
   );
 }

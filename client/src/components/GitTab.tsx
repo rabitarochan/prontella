@@ -281,34 +281,72 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
     void act(() => api.operationAction(dir, operation, action), successMsg);
   };
 
+  // BranchInfo.upstreamRemoteRef は 'refs/heads/foo' 形式のことも短縮 'foo' のこともある
+  // (server 側の for-each-ref フォーマット依存)。server/git.ts に同趣旨のヘルパーがあるが
+  // 共有型機構がないためこのファイル内にも小さく複製する。
+  const stripHeadsPrefix = (ref: string): string => ref.replace(/^refs\/heads\//, '');
+
+  // 別名プッシュ (-u 相当) はリモート側ブランチ名をユーザーに指定させる。デフォルト値は
+  // ローカル名そのまま (自動推測はしない)。既に upstream が設定されている場合のみ、
+  // この操作が upstream を書き換えることを実行前に確認する (merge/rebase と同じ severity: 'normal')。
+  const pushBranchAs = async (b: BranchInfo) => {
+    const name = await promptDialog({
+      title: '別名でプッシュ',
+      message: `'${b.name}' をプッシュする先のリモートブランチ名を入力してください。`,
+      defaultValue: b.name,
+      confirmLabel: 'プッシュ',
+    });
+    if (!name) return;
+    if (b.upstream) {
+      const remote = b.upstreamRemote ?? 'origin';
+      const ok = await confirmDialog({
+        title: '別名でプッシュ',
+        message:
+          `'${b.name}' を ${remote}/${name} にプッシュします。\n` +
+          `upstream は '${b.upstream}' から '${remote}/${name}' に変わります。`,
+        confirmLabel: 'プッシュ',
+        severity: 'normal',
+      });
+      if (!ok) return;
+    }
+    void act(() => api.branchPush(dir, b.name, name), `${b.name} を ${name} としてプッシュしました`);
+  };
+
   // BranchTree はカレントブランチ行でも右クリックを許すので、ここで項目別に制御する:
   // 切り替え/マージ 2 種/削除は git 自身も拒否する自明な無効操作なので UI 上も disabled にし、
   // 「名前を変更…」だけはカレントブランチでも動作する (renameBranch 参照) ので有効のままにする。
+  //
+  // カレント判定は b.current (api.branches(repo.id) が repo.path = メイン worktree の HEAD で
+  // 評価した値) ではなく b.name === currentBranch (= worktree.branch。選択中の worktree の HEAD、
+  // BranchTree の ✓ 印と同じ値) を使う。リンク worktree ではこの 2 つが食い違い、b.current のまま
+  // だと他 worktree がチェックアウト中のブランチを誤って「カレントではない」扱いにして
+  // 切り替え/マージ/リベース/削除を実行できてしまう。
   const branchMenuItems = (b: BranchInfo): ContextMenuItem[] => {
     const usedElsewhere = !!b.worktreePath && b.worktreePath !== worktree.path.replace(/\\/g, '/');
+    const isCurrent = b.name === currentBranch;
     return [
       {
         label: '切り替え',
         icon: 'arrow-swap',
-        disabled: busy || usedElsewhere || b.current,
+        disabled: busy || usedElsewhere || isCurrent,
         onClick: () => void act(() => api.switchBranch(dir, b.name), `${b.name} に切り替えました`),
       },
       {
         label: `'${b.name}' を現在のブランチにマージ (--no-ff)`,
         icon: 'git-merge',
-        disabled: busy || b.current,
+        disabled: busy || isCurrent,
         onClick: () => void mergeBranch(b, false),
       },
       {
         label: 'fast-forward のみでマージ',
         icon: 'git-merge',
-        disabled: busy || b.current,
+        disabled: busy || isCurrent,
         onClick: () => void mergeBranch(b, true),
       },
       {
         label: '現在のブランチをこのブランチにリベース…',
         icon: 'git-branch',
-        disabled: busy || b.current || operation != null,
+        disabled: busy || isCurrent || operation != null,
         onClick: () => void rebaseOntoBranch(b),
       },
       {
@@ -320,9 +358,45 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
       {
         label: '削除',
         icon: 'trash',
-        disabled: busy || usedElsewhere || b.current,
+        disabled: busy || usedElsewhere || isCurrent,
         danger: true,
         onClick: () => deleteBranch(b.name),
+      },
+      {
+        label: 'upstream からフェッチして早送り',
+        icon: 'cloud-download',
+        // 非破壊 (早送りのみ・非 FF は git 自身が拒否する) なので ConfirmDialog は挟まない。
+        disabled:
+          busy ||
+          operation != null ||
+          !b.upstream ||
+          b.upstreamGone ||
+          b.upstreamRemote === '.' ||
+          usedElsewhere,
+        onClick: () =>
+          void act(() => api.branchFetchFf(dir, b.name), `${b.name} を upstream まで進めました`),
+      },
+      {
+        label: 'プッシュ',
+        icon: 'cloud-upload',
+        // push は作業ツリーに触らないため usedElsewhere では無効化しない。
+        disabled: busy || operation != null,
+        onClick: () =>
+          void act(
+            () =>
+              api.branchPush(
+                dir,
+                b.name,
+                b.upstreamRemoteRef ? stripHeadsPrefix(b.upstreamRemoteRef) : b.name,
+              ),
+            `${b.name} をプッシュしました`,
+          ),
+      },
+      {
+        label: '別名でプッシュ…',
+        icon: 'cloud-upload',
+        disabled: busy || operation != null,
+        onClick: () => void pushBranchAs(b),
       },
     ];
   };

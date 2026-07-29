@@ -263,6 +263,8 @@ export default function FileTree({
   const treeRef = useRef<TreeApi<TNode> | null>(null);
   const loadingRef = useRef(new Set<string>());
   const handledRef = useRef(false); // guards against double confirm/cancel of an inline input
+  const genRef = useRef(0); // loadRoot の世代カウンター。古い非同期結果を setNodes/setError から弾く
+  const prevRootRef = useRef<string | null>(null); // root が実際に切り替わったかを判定するための直前値
 
   const loadStatus = useCallback(() => {
     api
@@ -272,11 +274,52 @@ export default function FileTree({
   }, [root]);
 
   const loadRoot = useCallback(() => {
+    // root が実際に切り替わったときだけ開閉状態をリセットする。前の root のパスに対する
+    // 開閉状態が残ったまま新しい root のパスを再取得すると、無関係な id を開こうとしてしまう。
+    // openState を読む前に閉じ切る必要があるため、必ずこの読み出しより先に呼ぶ。
+    if (prevRootRef.current !== null && prevRootRef.current !== root) {
+      treeRef.current?.closeAll();
+    }
+    prevRootRef.current = root;
+
+    const myGen = ++genRef.current;
     loadingRef.current.clear();
+
+    // 再読み込み前に開いていた dir の id を集める。openByDefault={false} なのでマップに
+    // 無い id (または値が false) は閉じている扱いでよい。
+    const openState = treeRef.current?.openState ?? {};
+    const openIds = new Set(Object.keys(openState).filter((id) => openState[id]));
+
+    // 開いている dir だけ子階層を再取得し、子が埋まった木を組み立て直す。閉じている dir の
+    // children は null のままにする(次に開いたときに loadDir が取り直し、内容も最新化される)。
+    const fetchOpenChildren = async (levelNodes: TNode[]): Promise<TNode[]> =>
+      Promise.all(
+        levelNodes.map(async (n) => {
+          if (n.type !== 'dir' || !openIds.has(n.id)) return n;
+          try {
+            const entries = await api.tree(root, n.id);
+            if (myGen !== genRef.current) return n; // 世代が古ければ以降の合成をやめる
+            loadingRef.current.add(n.id); // loadDir の二重ロードガードと矛盾させない
+            const children = await fetchOpenChildren(toNodes(entries));
+            return { ...n, children };
+          } catch {
+            // 削除された等で取得できなかった dir。children は null のままにしつつ、
+            // 開閉状態も閉じ側に落として「開いて見えるのに空」という不具合状態を残さない。
+            if (myGen === genRef.current) treeRef.current?.close(n.id);
+            return n;
+          }
+        }),
+      );
+
     api
       .tree(root)
-      .then((entries) => setNodes(toNodes(entries)))
-      .catch((e: Error) => setError(e.message));
+      .then((entries) => fetchOpenChildren(toNodes(entries)))
+      .then((rebuilt) => {
+        if (myGen === genRef.current) setNodes(rebuilt);
+      })
+      .catch((e: Error) => {
+        if (myGen === genRef.current) setError(e.message);
+      });
     loadStatus();
   }, [root, loadStatus]);
 

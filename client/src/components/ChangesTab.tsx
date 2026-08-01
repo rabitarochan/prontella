@@ -11,6 +11,7 @@ export default function ChangesTab({
   onOpenDiff,
   onOpenConflict,
   selectedKey,
+  visible,
 }: {
   dir: string;
   onOpenDiff: (file: StatusFile, staged: boolean) => void;
@@ -18,6 +19,8 @@ export default function ChangesTab({
   onOpenConflict: (file: StatusFile) => void;
   /** アクティブな diff/競合タブのキー (`s:`/`w:`/`c:` + path) — 行のハイライト用 */
   selectedKey?: string | null;
+  /** このタブが現在表示中かどうか。非表示中はポーリングを止める。 */
+  visible: boolean;
 }) {
   const refreshDeck = useDeck((s) => s.refresh);
   const { confirm: confirmDialog, dialog } = useConfirm();
@@ -43,10 +46,13 @@ export default function ChangesTab({
   }, [dir]);
 
   useEffect(() => {
+    // タブが非表示の間はポーリングしない。visible が false→true になった瞬間も
+    // この effect が再実行されるので、即 load() してから interval を張り直す形になる。
+    if (!visible) return;
     void load();
     const timer = setInterval(() => void load(), POLL_MS);
     return () => clearInterval(timer);
-  }, [load]);
+  }, [load, visible]);
 
   const stagedFiles = files.filter((f) => f.staged !== '.' && f.staged !== '?' && !f.conflicted);
   const unstagedFiles = files.filter((f) => f.unstaged !== '.' || f.untracked || f.conflicted);

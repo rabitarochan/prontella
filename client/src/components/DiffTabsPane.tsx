@@ -6,14 +6,19 @@ import StashDiffPane from './StashDiffPane';
 /**
  * 変更リストで選択したファイルの左右 diff (+ 競合ファイルの解決) をタブで並べるペイン。
  * ワークスペース/変更リストと違い、ここだけがタブ化される。
- * ページはマウントしたまま display で切り替え (スクロール位置保持)。
- * 内容は開いた時点のもの — 同じ行の再クリック・↻・サイドバー操作
- * (reloadKey) で取り直す。
  *
- * 競合タブ (kind: 'conflict') は編集可能な状態を保持するステートフルなタブなので、
- * diff タブと違って gen/reloadKey で強制再マウントはしない (サイドバーの無関係な操作の
- * たびに未保存の解決作業が消えるのを避けるため)。ConflictResolvePane 自身が
- * onResolved で必要な再読込をトリガーする。
+ * diff/stash タブは読み取り専用でマウント時に再フェッチする設計なので、非アクティブな
+ * タブは DOM ごとアンマウントする (display:none での常時マウントはしない)。タブ数だけ
+ * Monaco DiffEditor が常駐して長時間セッションを劣化させていた問題への対処。
+ * タブ切替のたびに再フェッチが起きるのは意図した挙動 (むしろ内容が新鮮になる)。
+ * スクロール位置は切替のたびにリセットされる (許容されたトレードオフ)。
+ *
+ * 競合タブ (kind: 'conflict') だけは例外で、編集可能な状態を保持するステートフルな
+ * タブなので、非アクティブでもアンマウントせず display:none で隠したまま維持する
+ * (アンマウントすると未保存の解決作業が消えるため)。gen/reloadKey による強制再マウントも
+ * 競合タブには効かせない (ConflictResolvePane 自身が onResolved で必要な再読込をトリガーする)。
+ * ただし GitTab の view を history タブへ切り替えると DiffTabsPane ごと unmount されるため、
+ * その場合は競合タブでも未保存の解決作業は失われる (既知の既存挙動、ここでの対処範囲外)。
  */
 
 export interface DiffTab {
@@ -61,6 +66,7 @@ function basename(path: string): string {
 
 export default function DiffTabsPane({
   dir,
+  leafId,
   tabs,
   activeKey,
   reloadKey,
@@ -70,6 +76,8 @@ export default function DiffTabsPane({
   onStatusChanged,
 }: {
   dir: string;
+  /** タイルの leaf id。ConflictResolvePane の Monaco モデル名前空間に渡す。 */
+  leafId: string;
   tabs: WorkTab[];
   activeKey: string | null;
   /** サイドバー操作 (コミット/ブランチ切替等) 後に全 diff を取り直すためのキー */
@@ -86,6 +94,10 @@ export default function DiffTabsPane({
   // 「差分を取り直す」と同じ経路 (onReload → gen++ → DiffPane の key が変わって再マウント)
   // で再読込させる。競合タブは gen を持たない (DiffTabsPane 冒頭コメント参照) ため対象外。
   // 操作した本人のタブは呼び出し元で既に更新済みなので除外する。
+  // gen は非アクティブタブの再マウント方式に切り替えた後も削除できない: 競合解決の
+  // await 中にユーザーがタブを切り替えて sourceKey とは別の diff タブがアクティブ (=既に
+  // マウント済み) になっているケースでは、単に「マウントされている」だけでは古い内容の
+  // ままなので、gen++ で key を変えて明示的に再マウント/再フェッチさせる必要がある。
   const notifySiblings = (path: string, sourceKey: string) => {
     for (const t of tabs) {
       // StashTab は path を持たないため、t.kind === 'diff' を先に見て絞り込んでから t.path
@@ -137,63 +149,79 @@ export default function DiffTabsPane({
               </div>
             ))}
           </div>
-          {tabs.map((t) => (
-            <div
-              key={t.key}
-              className="diff-page"
-              style={{ display: activeKey === t.key ? undefined : 'none' }}
-            >
-              {t.kind === 'diff' ? (
-                <>
-                  <div className="diff-toolbar">
-                    <span className="diff-path" title={t.path}>
-                      {t.path}
-                    </span>
-                    <span className="diff-scope">
-                      {t.staged
-                        ? 'ステージ済みの変更 (HEAD ↔ インデックス)'
-                        : '未ステージの変更 (インデックス ↔ 作業ツリー)'}
-                    </span>
-                    <button className="icon-btn" title="差分を取り直す" onClick={() => onReload(t.key)}>
-                      <span className="codicon codicon-refresh" />
-                    </button>
-                  </div>
-                  <div className="diff-body">
-                    <DiffPane
-                      key={`${t.gen}:${reloadKey}`}
-                      dir={dir}
-                      path={t.path}
-                      scope={t.staged ? 'staged' : 'worktree'}
-                      origPath={t.origPath}
-                      untracked={t.untracked}
-                      onHunksChanged={() => notifySiblings(t.path, t.key)}
-                    />
-                  </div>
-                </>
-              ) : t.kind === 'conflict' ? (
-                <ConflictResolvePane
-                  dir={dir}
-                  path={t.path}
-                  onResolved={() => {
-                    notifySiblings(t.path, t.key);
-                    onStatusChanged?.();
-                  }}
-                />
-              ) : (
-                <>
-                  <div className="diff-toolbar">
-                    <span className="diff-path" title={t.ref}>
-                      {t.message || t.ref}
-                    </span>
-                    <span className="diff-scope">スタッシュの差分 (読み取り専用)</span>
-                  </div>
-                  <div className="diff-body">
-                    <StashDiffPane dir={dir} stashRef={t.ref} />
-                  </div>
-                </>
-              )}
-            </div>
-          ))}
+          {tabs.map((t) => {
+            // 競合タブは編集途中の状態を保持するステートフルなタブなので、非アクティブ時も
+            // アンマウントせず display:none で隠す (冒頭コメント参照)。diff/stash タブは
+            // 読み取り専用でマウント時に再フェッチする設計なので、非アクティブなら
+            // DOM ごと作らない (Monaco DiffEditor / ResizeObserver をタブ数だけ常駐させない)。
+            if (t.kind === 'conflict') {
+              return (
+                <div
+                  key={t.key}
+                  className="diff-page"
+                  style={{ display: activeKey === t.key ? undefined : 'none' }}
+                >
+                  <ConflictResolvePane
+                    dir={dir}
+                    leafId={leafId}
+                    path={t.path}
+                    onResolved={() => {
+                      notifySiblings(t.path, t.key);
+                      onStatusChanged?.();
+                    }}
+                  />
+                </div>
+              );
+            }
+            if (activeKey !== t.key) return null;
+            return (
+              <div key={t.key} className="diff-page">
+                {t.kind === 'diff' ? (
+                  <>
+                    <div className="diff-toolbar">
+                      <span className="diff-path" title={t.path}>
+                        {t.path}
+                      </span>
+                      <span className="diff-scope">
+                        {t.staged
+                          ? 'ステージ済みの変更 (HEAD ↔ インデックス)'
+                          : '未ステージの変更 (インデックス ↔ 作業ツリー)'}
+                      </span>
+                      {/* このボタンはアクティブ (= 既にマウント済み) なタブ自身を対象にする。
+                          非アクティブタブのアンマウントとは無関係に、gen++ で key を変えて
+                          DiffPane を明示的に再マウントさせないと再フェッチが起きない。 */}
+                      <button className="icon-btn" title="差分を取り直す" onClick={() => onReload(t.key)}>
+                        <span className="codicon codicon-refresh" />
+                      </button>
+                    </div>
+                    <div className="diff-body">
+                      <DiffPane
+                        key={`${t.gen}:${reloadKey}`}
+                        dir={dir}
+                        path={t.path}
+                        scope={t.staged ? 'staged' : 'worktree'}
+                        origPath={t.origPath}
+                        untracked={t.untracked}
+                        onHunksChanged={() => notifySiblings(t.path, t.key)}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="diff-toolbar">
+                      <span className="diff-path" title={t.ref}>
+                        {t.message || t.ref}
+                      </span>
+                      <span className="diff-scope">スタッシュの差分 (読み取り専用)</span>
+                    </div>
+                    <div className="diff-body">
+                      <StashDiffPane dir={dir} stashRef={t.ref} />
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })}
         </>
       )}
     </div>

@@ -21,8 +21,8 @@ import { useConfirm } from './ConfirmDialog';
  *   (SJIS 等の非 UTF-8 競合ファイルも正しく読める)。
  * - Monaco は FilesTab と同じ「uncontrolled」運用: defaultValue は初回のみ、以降は
  *   onChange で draft state に一方向反映するだけで、value prop での書き戻しはしない。
- * - モデル URI は FilesTab 同様インスタンス prefix を付け、他タブ (FilesTab / 別の
- *   ConflictResolvePane) の同名パスモデルと衝突しないようにする。
+ * - モデル URI は `${leafId}-conflict/` prefix で名前空間を切り、他タブ (FilesTab / 別の
+ *   ConflictResolvePane) の同名パスモデルと衝突しないようにする (詳細は modelPath のコメント)。
  */
 
 const EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOptions = {
@@ -45,12 +45,15 @@ function disposeModelSoon(uriPath: string) {
 export default function ConflictResolvePane({
   dir,
   path,
+  leafId,
   /** 全体採用 (resolveSide) / 解決済み (保存+ステージ) が成功した後に呼ばれる。
    *  呼び出し側で status の再取得・兄弟タブの再読込などに使う。 */
   onResolved,
 }: {
   dir: string;
   path: string;
+  /** タイルの leaf id (安定・leaf 間で重複しない)。Monaco モデルの名前空間に使う。 */
+  leafId: string;
   onResolved?: () => void;
 }) {
   const { confirm: confirmDialog, dialog } = useConfirm();
@@ -60,10 +63,18 @@ export default function ConflictResolvePane({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
-  // Monaco モデルはグローバルなので、同じ path を別タブ (FilesTab / 他の
-  // ConflictResolvePane) が同時に開いても衝突しないようインスタンス単位で名前空間を切る。
-  const instanceRef = useRef(crypto.randomUUID().slice(0, 8));
-  const modelPath = `${instanceRef.current}/${path}`;
+  // Monaco モデルは @monaco-editor/react のモジュールスコープ Map (path -> viewState) に
+  // 登録され、そのパッケージ内に delete する経路が無い (FilesTab で先に踏んだのと同じ機構)。
+  // マウントごとの乱数 (旧: crypto.randomUUID()) で名前空間を切ると、GitTab の
+  // status ⇄ history 切替のたびに DiffTabsPane ごと unmount → 再マウントされてこの
+  // タブも作り直され、Map にエントリーが際限なく積み上がる。leafId (タイルの leaf ごとに
+  // 安定、他 leaf とは衝突しない) を名前空間に使う。判別子 `-conflict` は第 1 セグメント側
+  // (ユーザーのパスが届かない位置) に付ける: `${leafId}/conflict/${path}` 形式だと、リポジトリーに
+  // 実在する `conflict/...` パスを FilesTab (`${leafId}/${path}`) で開いたとき URI が完全一致し、
+  // モデルを取り合って別ファイルの内容を保存し得る。leafId は 8 桁 hex 固定 (tileTree.newId) で
+  // `-` を含まないため `<hex8>-conflict` はどの leafId とも一致しない。これで Map の増加は
+  // 「leaf 数 × これまで開いた競合ファイル数」で頭打ちになる。
+  const modelPath = `${leafId}-conflict/${path}`;
 
   const load = useCallback(() => {
     setError('');

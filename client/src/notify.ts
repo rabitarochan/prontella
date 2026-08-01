@@ -31,6 +31,13 @@ export function chime(kind: 'waiting' | 'done'): void {
         gain.gain.exponentialRampToValueAtTime(kind === 'waiting' ? 0.12 : 0.06, t0 + 0.02);
         gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.5);
         osc.connect(gain).connect(ac.destination);
+        // stop() alone leaves the node graph connected forever (the AudioContext itself
+        // is reused across calls per `ctx()`'s comment, so nothing else ever tears this
+        // down) — disconnect both nodes once the oscillator actually finishes.
+        osc.onended = () => {
+          osc.disconnect();
+          gain.disconnect();
+        };
         osc.start(t0);
         osc.stop(t0 + 0.55);
       });

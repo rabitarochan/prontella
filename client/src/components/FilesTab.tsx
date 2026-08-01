@@ -7,6 +7,7 @@ import {
   hashText,
   loadLeafEditorState,
   MAX_DRAFT_TEXT_LENGTH,
+  MAX_OPEN_FILES,
   saveLeafEditorState,
   type LeafEditorState,
   type TabKind,
@@ -169,11 +170,21 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
   const [message, setMessage] = useState('');
   const saveRef = useRef<() => void>(() => {});
   const loadedRef = useRef(new Set<string>()); // tab keys whose load is in flight or done
-  // Monaco models are global; two FilesTab instances (one per tile) opening
-  // the same path would fight over one model and dispose each other's drafts.
-  // Namespace every model URI with a per-instance prefix.
+  // Monaco models are global and keyed by path; two FilesTab instances (one per tile)
+  // opening the same path would otherwise fight over one model and dispose each other's
+  // drafts. Namespace every model URI with `leafId` (stable per tile leaf, unique across
+  // leaves — a leaf id is never reused by another leaf) rather than a mount-random id.
+  // @monaco-editor/react keeps a module-scope path -> viewState Map with no delete path
+  // in the package, so a namespace that changes on every mount grows that Map without
+  // bound (mounts × files opened, over a browser session's lifetime). Keying on leafId
+  // instead bounds it to leaves × files ever opened, and as a side effect restores
+  // cursor/scroll position when a leaf's FilesTab remounts (e.g. leaving and returning
+  // to a worktree) since the model path is now stable across remounts.
+  const modelPath = (path: string) => `${leafId}/${path}`;
+  // Per-mount id for the Ctrl+P/Ctrl+Shift+F hotkey registry (search/registry.ts) only.
+  // Unlike modelPath's namespace above, this one MAY be mount-random: the registry is a
+  // small Map explicitly cleared via unregisterFilesTab on unmount, so it can't leak.
   const instanceRef = useRef(crypto.randomUUID().slice(0, 8));
-  const modelPath = (path: string) => `${instanceRef.current}/${path}`;
 
   // Left pane: file tree or the Ctrl+Shift+F search panel. The panel stays
   // mounted after first visit (display:none) so query and results survive
@@ -392,6 +403,28 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
     [loadFile],
   );
 
+  // Path/kind-keyed cleanup for one tab being removed — shared by closeTab (below) and
+  // openTab's auto-eviction (below it). Does NOT touch `tabs` state itself; callers
+  // remove the tab. indentAppliedRef / eolOverrideRef / viewStatesRef / draftsRef / the
+  // Monaco model are keyed by path, not by tab key. Removing a preview tab must NOT
+  // clear the editor tab's resources for the same path (nor vice versa) — this is the
+  // biggest accident point for silently destroying unsaved edits, so it's gated on kind
+  // here. Preview tabs have no draft/viewState/model of their own but DO own an entry in
+  // previewScrollPositionsRef (path-keyed, written by MarkdownPreview) that nothing else
+  // ever clears.
+  const disposeTabResources = (target: OpenTab) => {
+    loadedRef.current.delete(target.key);
+    if (target.kind === 'editor') {
+      indentAppliedRef.current.delete(target.path);
+      eolOverrideRef.current.delete(target.path);
+      delete viewStatesRef.current[target.path];
+      delete draftsRef.current[target.path];
+      disposeModelsSoon([modelPath(target.path)]);
+    } else {
+      previewScrollPositionsRef.current.delete(target.path);
+    }
+  };
+
   // Open a tab: focus it if already open, otherwise add it and load it.
   // `openFile` (below) is the public, editor-only entry point every existing
   // caller uses; `openTab` itself stays kind-general so a future preview caller
@@ -408,12 +441,35 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
       // タブバーを直接クリックする switchTo と同じ「既存プレビューは再取得する」
       // という規則に揃える。
       const alreadyOpen = tabsRef.current.some((t) => t.key === key);
+      const prevActiveKey = activeKeyRef.current; // before the switch below — used by eviction
       setActiveKey(key);
-      setTabs((prev) =>
-        prev.some((t) => t.key === key)
-          ? prev
-          : [...prev, { kind, path, key, file: null, draft: '', error: '', warning: '' }],
-      );
+      if (!alreadyOpen) {
+        const appended: OpenTab[] = [
+          ...tabsRef.current,
+          { kind, path, key, file: null, draft: '', error: '', warning: '' },
+        ];
+        // MAX_OPEN_FILES was previously enforced only on restore (sanitizeOpenFiles in
+        // editorState.ts); nothing capped how many tabs could pile up during a live
+        // session. Auto-close the single oldest tab that's safe to lose: not dirty (an
+        // unsaved edit must never be silently discarded), not the tab the user was just
+        // on, and not the tab being opened right now. `t.file !== null` is required too —
+        // isDirty() reads `t.file`, so a still-loading OR load-FAILED tab (file === null)
+        // always looks non-dirty even though it may be carrying a restored draft that
+        // loadFile hasn't reconciled yet (draftsRef; see loadFile's comment) or that will
+        // never load to reconcile it; evicting it would silently drop that draft the
+        // instant flush() next runs. If every open tab is dirty or still unresolved, the
+        // cap is exceeded rather than discarding anything.
+        if (appended.length > MAX_OPEN_FILES) {
+          const evictIdx = appended.findIndex(
+            (t) => t.key !== key && t.key !== prevActiveKey && t.file !== null && !isDirty(t),
+          );
+          if (evictIdx !== -1) {
+            disposeTabResources(appended[evictIdx]);
+            appended.splice(evictIdx, 1);
+          }
+        }
+        setTabs(appended);
+      }
       if (alreadyOpen && kind === 'preview') {
         refreshPreviewTab(key, path);
       } else {
@@ -691,18 +747,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
     const idx = tabs.findIndex((t) => t.key === key);
     const next = tabs.filter((t) => t.key !== key);
     setTabs(next);
-    loadedRef.current.delete(key);
-    // indentAppliedRef / eolOverrideRef / viewStatesRef / draftsRef / the Monaco model
-    // are keyed by path, not by tab key. Closing a preview tab must NOT clear the
-    // editor tab's resources for the same path (nor vice versa) — this is the biggest
-    // accident point for silently destroying unsaved edits, so it's gated on kind here.
-    if (target.kind === 'editor') {
-      indentAppliedRef.current.delete(target.path);
-      eolOverrideRef.current.delete(target.path);
-      delete viewStatesRef.current[target.path];
-      delete draftsRef.current[target.path];
-      disposeModelsSoon([modelPath(target.path)]);
-    }
+    disposeTabResources(target);
     if (activeKey === key) {
       const neighbor = next[idx] ?? next[idx - 1] ?? null; // right neighbor, else left
       setActiveKey(neighbor?.key ?? null);

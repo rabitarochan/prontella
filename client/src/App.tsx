@@ -20,8 +20,32 @@ export default function App() {
   useEffect(() => {
     void refresh();
     connectAgentEvents();
-    const timer = setInterval(() => void refresh(), POLL_MS);
-    return () => clearInterval(timer);
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (timer !== null) return;
+      timer = setInterval(() => void refresh(), POLL_MS);
+    };
+    const stop = () => {
+      if (timer === null) return;
+      clearInterval(timer);
+      timer = null;
+    };
+    // ブラウザータブが非表示の間は 4 秒ポーリングを止める (サーバー側の git.exe 起動を抑える)。
+    // 再表示された瞬間に即 refresh() してから interval を再開する。
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        stop();
+      } else {
+        void refresh();
+        start();
+      }
+    };
+    if (document.visibilityState !== 'hidden') start();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      stop();
+    };
   }, [refresh]);
 
   // タブタイトルにバッジ: 他のタブで作業中でも確認待ちの発生が分かる

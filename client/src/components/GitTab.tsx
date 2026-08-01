@@ -34,7 +34,20 @@ const OPERATION_LABELS: Record<GitOperation, string> = {
 // git merge に --skip は存在しない (server/git.ts の OPERATION_SKIP_UNSUPPORTED と手動同期)。
 const OPERATION_SKIP_UNSUPPORTED: readonly GitOperation[] = ['merge'];
 
-export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Worktree }) {
+export default function GitTab({
+  repo,
+  worktree,
+  visible,
+  leafId,
+}: {
+  repo: Repo;
+  worktree: Worktree;
+  /** このタイルが現在表示中(タイルのタブが 'git')かどうか。非表示中はポーリングを止める。 */
+  visible: boolean;
+  /** タイルの leaf id (安定・leaf 間で重複しない)。DiffTabsPane → ConflictResolvePane の
+   *  Monaco モデル名前空間に使う (FilesTab の modelPath と同じ機構)。 */
+  leafId: string;
+}) {
   const refreshDeck = useDeck((s) => s.refresh);
   const { confirm: confirmDialog, dialog } = useConfirm();
   const { prompt: promptDialog, dialog: promptDlg } = usePrompt();
@@ -136,10 +149,14 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
 
   useEffect(() => {
     if (repo.gitMode === 'none') return;
+    // タイルが非表示の間はポーリングしない (サーバー側の git.exe 起動を抑える)。
+    // visible が false→true になった瞬間もこの effect が再実行されるので、
+    // 即 load() してから interval を張り直す形に自然になる。
+    if (!visible) return;
     load();
     const timer = setInterval(load, POLL_MS);
     return () => clearInterval(timer);
-  }, [load, repo.gitMode]);
+  }, [load, repo.gitMode, visible]);
 
   // 競合解決 (ConflictResolvePane の全体採用/解決済み) が成功した後の「status 更新」。
   // GitTab 自身の act() と同じ 3 点セット (branches/stashes/operation の再取得・
@@ -792,9 +809,11 @@ export default function GitTab({ repo, worktree }: { repo: Repo; worktree: Workt
                 onOpenDiff={openDiff}
                 onOpenConflict={openConflict}
                 selectedKey={activeDiff}
+                visible={visible}
               />
               <DiffTabsPane
                 dir={dir}
+                leafId={leafId}
                 tabs={diffTabs}
                 activeKey={activeDiff}
                 reloadKey={reloadKey}

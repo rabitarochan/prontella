@@ -1626,6 +1626,12 @@ button.context-menu-item:hover:not(:disabled) {
 .sdiff-context {
   color: var(--fg);
 }
+.sdiff-truncated {
+  margin-top: 8px;
+  padding: 6px 0;
+  color: var(--fg-dim);
+  border-top: 1px solid var(--border);
+}
 
 /* ---- hunk strip (DiffHunkStrip: ハンク単位 stage/unstage/discard) ---- */
 

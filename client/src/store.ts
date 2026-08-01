@@ -74,7 +74,13 @@ function restoreSelection(repos: Repo[]): Selection | null {
 // 試みたときにだけ true にし、失敗パスでは立てない(→ 次の成功時に再挑戦できる)。
 let restoreAttempted = false;
 
-export const useDeck = create<DeckState>((set) => ({
+// 直近に set() した repos の内容 (JSON化) を覚えておき、次回取得分と一致するなら
+// set() 自体を呼ばない。useDeck をセレクターなしで購読している App 以下のツリーは
+// 4 秒ごとに毎回再レンダーされてしまうため、内容が変わらないポーリングでは
+// 再レンダーの引き金を作らないようにする。
+let lastReposJson: string | null = null;
+
+export const useDeck = create<DeckState>((set, get) => ({
   repos: [],
   loaded: false,
   selected: null,
@@ -82,6 +88,17 @@ export const useDeck = create<DeckState>((set) => ({
   refresh: async () => {
     try {
       const repos = await api.repos();
+      const reposJson = JSON.stringify(repos);
+      const current = get();
+      // 内容が前回と同一で、かつ既に loaded/エラー解消済み/復元試行済みなら
+      // 何もすることがない (set() で新しい repos 配列を作ると参照が変わり、
+      // useDeck() をセレクターなしで購読している側が無条件で再レンダーされる)。
+      // error からの回復 (error !== null) や初回ロードはこの条件に当たらないため
+      // 従来どおり set() を通る。
+      if (reposJson === lastReposJson && current.loaded && current.error === null && restoreAttempted) {
+        return;
+      }
+      lastReposJson = reposJson;
       set((state) => {
         if (!restoreAttempted && state.selected === null) {
           restoreAttempted = true;

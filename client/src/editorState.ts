@@ -33,7 +33,10 @@ export interface WorktreeEditorState {
   leaves: Record<string, LeafEditorState>;
 }
 
-const MAX_OPEN_FILES = 50;
+// Caps openFiles on RESTORE (sanitizeOpenFiles below). Exported so FilesTab.tsx's
+// openTab can enforce the same cap at runtime (auto-closing the oldest safe-to-lose tab
+// once open tabs would exceed it) — restore-time and live-session caps must agree.
+export const MAX_OPEN_FILES = 50;
 // Matches server/files.ts's MAX_FILE_SIZE (2MB) so the invariant "any file the
 // server will open has a draft size limit that can hold its full content"
 // holds. If this were smaller than MAX_FILE_SIZE, an edited draft for a file

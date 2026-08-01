@@ -23,9 +23,33 @@ export function useTerminalSessions(cwd: string) {
   }, [cwd]);
 
   useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (timer !== null) return;
+      timer = setInterval(() => void reload(), POLL_MS);
+    };
+    const stop = () => {
+      if (timer === null) return;
+      clearInterval(timer);
+      timer = null;
+    };
+    // ブラウザータブが非表示の間はポーリングを止める (App.tsx の deck ポーリングと同じ対応)。
+    // 再表示された瞬間に即 reload() してから interval を再開する。
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        stop();
+      } else {
+        void reload();
+        start();
+      }
+    };
     void reload();
-    const timer = setInterval(() => void reload(), POLL_MS);
-    return () => clearInterval(timer);
+    if (document.visibilityState !== 'hidden') start();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      stop();
+    };
   }, [reload]);
 
   const create = useCallback(

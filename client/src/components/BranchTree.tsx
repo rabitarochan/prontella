@@ -108,6 +108,20 @@ export default function BranchTree({
       !!worktreePath &&
       b.worktreePath !== worktreePath.replace(/\\/g, "/");
 
+    // ahead/behind は不明時 null (0 と区別)。サーバー未更新で undefined が来ても
+    // ?? 0 で吸収し、バッジは出さない (0 と同じ扱い)。
+    const ahead = b.ahead ?? 0;
+    const behind = b.behind ?? 0;
+    const showAhead = ahead > 0;
+    const showBehind = behind > 0;
+    const showSync = showAhead || showBehind;
+    const syncTitleParts: string[] = [];
+    if (showAhead) syncTitleParts.push(`↑${ahead}`);
+    if (showBehind) syncTitleParts.push(`↓${behind}`);
+    const syncTitle = b.upstream
+      ? `${b.upstream} ${syncTitleParts.join(" ")}`
+      : syncTitleParts.join(" ");
+
     return (
       <div
         key={`f:${b.name}`}
@@ -134,6 +148,17 @@ export default function BranchTree({
             </span>
           )}
         </span>
+        {showSync && (
+          <span className="branch-sync-badge" title={syncTitle}>
+            {showAhead && <span className="branch-sync-ahead">↑{ahead}</span>}
+            {showBehind && <span className="branch-sync-behind">↓{behind}</span>}
+          </span>
+        )}
+        {b.upstreamGone === true && (
+          <span className="branch-upstream-gone" title="upstream が見つかりません">
+            ⚠
+          </span>
+        )}
         {isCurrent && <span className="branch-current-mark">✓</span>}
       </div>
     );

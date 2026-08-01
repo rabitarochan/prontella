@@ -4,9 +4,14 @@ import {
   decodeBlameContent,
   isBlameNoSuchPathError,
   parseBlamePorcelain,
+  parseBranchLines,
   parseFollowLog,
   parseRemotesOutput,
+  parseUpstreamTrack,
+  qualifyRef,
+  resolveExplicitPushRefspec,
   unquoteGitPath,
+  type PushResolveInput,
   type RawBlameLine,
 } from './git.js';
 
@@ -712,5 +717,280 @@ describe('isBlameNoSuchPathError (6.5R FYI F-3 の修正 + F-4 の純関数化)'
     const message = "fatal: Cannot lstat 'no such path.txt': No such file or directory";
     expect(message.includes('no such path')).toBe(true); // 旧実装なら誤検出する入力であることの確認
     expect(isBlameNoSuchPathError(message)).toBe(false); // 新実装は先頭アンカーで正しく除外する
+  });
+});
+
+describe('parseUpstreamTrack', () => {
+  it('空文字列は同期済み (ahead 0, behind 0, gone false) を返す', () => {
+    expect(parseUpstreamTrack('')).toEqual({ ahead: 0, behind: 0, gone: false });
+  });
+
+  it('ahead N のみ', () => {
+    expect(parseUpstreamTrack('ahead 3')).toEqual({ ahead: 3, behind: 0, gone: false });
+  });
+
+  it('behind N のみ', () => {
+    expect(parseUpstreamTrack('behind 2')).toEqual({ ahead: 0, behind: 2, gone: false });
+  });
+
+  it('ahead N, behind M の両方', () => {
+    expect(parseUpstreamTrack('ahead 1, behind 2')).toEqual({ ahead: 1, behind: 2, gone: false });
+  });
+
+  it('gone は ahead/behind を null にして gone:true を返す', () => {
+    expect(parseUpstreamTrack('gone')).toEqual({ ahead: null, behind: null, gone: true });
+  });
+
+  it('未知の文字列は 0 に倒さず ahead/behind を null にする(バッジが嘘をつかないため)', () => {
+    expect(parseUpstreamTrack('some unexpected format')).toEqual({ ahead: null, behind: null, gone: false });
+  });
+});
+
+describe('qualifyRef', () => {
+  it('refs/ で始まる値はそのまま返す', () => {
+    expect(qualifyRef('refs/heads/main')).toBe('refs/heads/main');
+  });
+
+  it('refs/ で始まらない値には refs/heads/ を前置する', () => {
+    expect(qualifyRef('main')).toBe('refs/heads/main');
+  });
+
+  it('空文字列は空文字列のまま返す', () => {
+    expect(qualifyRef('')).toBe('');
+  });
+});
+
+describe('parseBranchLines', () => {
+  // 実 git (vt/ff-01/w1 — Git タブ upstream 連携 F1〜F3 検証用フィクスチャ、
+  // vt/ff-01/make-fixture.sh で再生成可) に対して実際に
+  // `git for-each-ref --format=<US 区切り 13 アトム> refs/heads refs/remotes` を実行して観察した
+  // 生出力からの抜粋(期待値を先に決めてから実装したのではなく、実 git の出力を先に確認してから
+  // 書き写した — 2.4 の教訓「期待値は実装の自己言及であってはならない」に従う。worktreepath の
+  // 絶対パスのみ可読性のため短縮している)。フィールド順: refname, name, hash, head, worktreePath,
+  // symref, upstream:short, upstream, upstream:remotename, upstream:remoteref,
+  // upstream:track(nobracket), push:remotename, push。
+  const realRows: string[][] = [
+    ['refs/heads/-dash', '-dash', '00b822f', ' ', '', '', '', '', '', '', '', '', ''],
+    [
+      'refs/heads/ahead-only', 'ahead-only', '5e6ce59', ' ', '', '',
+      'origin/ahead-only', 'refs/remotes/origin/ahead-only', 'origin', 'refs/heads/ahead-only',
+      'ahead 2', 'origin', 'refs/remotes/origin/ahead-only',
+    ],
+    [
+      'refs/heads/diverged', 'diverged', 'a08f803', ' ', '', '',
+      'origin/diverged', 'refs/remotes/origin/diverged', 'origin', 'refs/heads/diverged',
+      'ahead 1, behind 1', 'origin', 'refs/remotes/origin/diverged',
+    ],
+    [
+      // upstream:remotename が '.' (同一リポジトリー内のローカルブランチを追跡)。
+      'refs/heads/dot-track', 'dot-track', '00b822f', ' ', '', '',
+      'main', 'refs/heads/main', '.', 'refs/heads/main', '', '.', '',
+    ],
+    [
+      // 名前不一致・非三角: push:remotename は upstream:remotename と一致するが push は空。
+      'refs/heads/feat/TICKET-001-ブランチ機能の拡張', 'feat/TICKET-001-ブランチ機能の拡張', '736cbe0', ' ', '', '',
+      'origin/feat/TICKET-001', 'refs/remotes/origin/feat/TICKET-001', 'origin', 'refs/heads/feat/TICKET-001',
+      '', 'origin', '',
+    ],
+    [
+      // upstream が削除された (gone)。push:remotename/push はブランチ名一致のため非空のまま。
+      'refs/heads/gone-up', 'gone-up', '00b822f', ' ', '', '',
+      'origin/gone-up', 'refs/remotes/origin/gone-up', 'origin', 'refs/heads/gone-up',
+      'gone', 'origin', 'refs/remotes/origin/gone-up',
+    ],
+    [
+      'refs/heads/main', 'main', '00b822f', ' ', '', '',
+      'origin/main', 'refs/remotes/origin/main', 'origin', 'refs/heads/main',
+      '', 'origin', 'refs/remotes/origin/main',
+    ],
+    ['refs/heads/no-upstream', 'no-upstream', '0f80b81', ' ', '', '', '', '', '', '', '', '', ''],
+    ['refs/heads/pct%name', 'pct%name', '00b822f', ' ', '', '', '', '', '', '', '', '', ''],
+    [
+      // 三角ワークフロー: push:remotename ('upstream') が upstream:remotename ('origin') と異なる。
+      // このフィクスチャ採取時点で w1 の HEAD (%(HEAD)='*') もこのブランチだった。
+      'refs/heads/tri', 'tri', '00b822f', '*', 'C:/repo/w1', '',
+      'origin/tri', 'refs/remotes/origin/tri', 'origin', 'refs/heads/tri',
+      '', 'upstream', '',
+    ],
+    [
+      // リンク worktree (w2) にチェックアウト中 — worktreePath が非空・upstream 系は全て空。
+      'refs/heads/wt-feature', 'wt-feature', '00b822f', ' ', 'C:/repo/w2', '', '', '', '', '', '', '', '',
+    ],
+    [
+      // symref が非空。%(refname:short) は 'origin/HEAD' ではなく 'origin' に短縮される
+      // (name.endsWith('/HEAD') では判定できないことの実測)。
+      'refs/remotes/origin/HEAD', 'origin', '00b822f', ' ', '', 'refs/remotes/origin/main', '', '', '', '', '', '', '',
+    ],
+    ['refs/remotes/origin/main', 'origin/main', '00b822f', ' ', '', '', '', '', '', '', '', '', ''],
+  ];
+  const out = realRows.map((f) => f.join(US)).join('\n');
+  const result = parseBranchLines(out);
+
+  it('symref 非空の行 (refs/remotes/origin/HEAD) を落とし、残り 12 件を返す', () => {
+    expect(result).toHaveLength(12);
+    expect(result.some((b) => b.name === 'origin')).toBe(false);
+  });
+
+  it('detached HEAD の擬似行 (refname が refs/heads/ / refs/remotes/ どちらでも始まらない) を構造的フィルターで落とす', () => {
+    // for-each-ref はパターンに一致する実在の ref しか列挙しないため実際には現れないはずだが、
+    // 旧 `git branch --format` 由来の擬似行 (`(HEAD detached at 1a2b3c)`) に対するパーサー自体の
+    // 堅牢性として、合成した行で検証する。
+    const line = [
+      '(HEAD detached at 1a2b3c4)', '(HEAD detached at 1a2b3c4)', '1a2b3c4', '*', '', '', '', '', '', '', '', '', '',
+    ].join(US);
+    expect(parseBranchLines(line)).toEqual([]);
+  });
+
+  it('先頭が - のブランチ名も upstream 無しのときは全フィールド null で保持する', () => {
+    expect(result.find((b) => b.name === '-dash')).toEqual({
+      name: '-dash',
+      hash: '00b822f',
+      current: false,
+      remote: false,
+      worktreePath: null,
+      upstream: null,
+      upstreamFullRef: null,
+      upstreamRemote: null,
+      upstreamRemoteRef: null,
+      ahead: 0,
+      behind: 0,
+      upstreamGone: false,
+      pushRemote: null,
+      pushRef: null,
+    });
+  });
+
+  it('ahead のみの track を ahead/behind に正しく反映する', () => {
+    expect(result.find((b) => b.name === 'ahead-only')).toMatchObject({ ahead: 2, behind: 0, upstreamGone: false });
+  });
+
+  it('ahead と behind 両方の track を正しく反映する', () => {
+    expect(result.find((b) => b.name === 'diverged')).toMatchObject({ ahead: 1, behind: 1, upstreamGone: false });
+  });
+
+  it('upstream:remotename が "." (ローカル追跡) のときもそのまま保持する (qualifyRef 等の解釈はここでは行わない)', () => {
+    expect(result.find((b) => b.name === 'dot-track')).toMatchObject({
+      upstream: 'main',
+      upstreamFullRef: 'refs/heads/main',
+      upstreamRemote: '.',
+      upstreamRemoteRef: 'refs/heads/main',
+      pushRemote: '.',
+      pushRef: null,
+      ahead: 0,
+      behind: 0,
+    });
+  });
+
+  it('日本語ブランチ名・push:remotename 一致 / push 空 (名前不一致・非三角) を正しく読み取る', () => {
+    expect(result.find((b) => b.name === 'feat/TICKET-001-ブランチ機能の拡張')).toMatchObject({
+      upstream: 'origin/feat/TICKET-001',
+      upstreamFullRef: 'refs/remotes/origin/feat/TICKET-001',
+      upstreamRemote: 'origin',
+      upstreamRemoteRef: 'refs/heads/feat/TICKET-001',
+      pushRemote: 'origin',
+      pushRef: null,
+    });
+  });
+
+  it('gone なブランチは ahead/behind が null, upstreamGone が true', () => {
+    expect(result.find((b) => b.name === 'gone-up')).toMatchObject({
+      ahead: null,
+      behind: null,
+      upstreamGone: true,
+      pushRef: 'refs/remotes/origin/gone-up',
+    });
+  });
+
+  it('% を含むブランチ名も name としてそのまま保持する (US 区切りのため % は特別扱いされない)', () => {
+    expect(result.find((b) => b.name === 'pct%name')).toBeTruthy();
+  });
+
+  it('三角ワークフロー (push:remotename が upstream:remotename と異なる) の生値もそのまま保持する', () => {
+    expect(result.find((b) => b.name === 'tri')).toMatchObject({
+      current: true,
+      worktreePath: 'C:/repo/w1',
+      upstreamRemote: 'origin',
+      upstreamRemoteRef: 'refs/heads/tri',
+      pushRemote: 'upstream',
+      pushRef: null,
+    });
+  });
+
+  it('リンク worktree にチェックアウト中のブランチは worktreePath を持つ', () => {
+    expect(result.find((b) => b.name === 'wt-feature')).toMatchObject({
+      current: false,
+      worktreePath: 'C:/repo/w2',
+    });
+  });
+
+  it('refs/remotes 配下は remote:true になる', () => {
+    expect(result.find((b) => b.name === 'origin/main')).toMatchObject({ remote: true, current: false });
+  });
+});
+
+describe('resolveExplicitPushRefspec', () => {
+  // vt/ff-01/w1 (実 git) で実測した 5 パターン (名前不一致・非三角 / 三角 / ローカル追跡 /
+  // 名前一致 / upstream 無し) を土台にする。base は「名前不一致・非三角」— 明示 refspec に
+  // 解決されるべき唯一のケース。
+  const base: PushResolveInput = {
+    branch: 'feat/TICKET-001-desc',
+    upstreamRemote: 'origin',
+    upstreamRemoteRef: 'refs/heads/feat/TICKET-001',
+    pushRemote: 'origin',
+    pushRef: null,
+    pushDefault: 'simple',
+  };
+
+  it('名前不一致・非三角 (pushRemote === upstreamRemote・pushRef 未解決) は明示 refspec を返す', () => {
+    expect(resolveExplicitPushRefspec(base)).toEqual({
+      remote: 'origin',
+      refspec: 'HEAD:refs/heads/feat/TICKET-001',
+    });
+  });
+
+  it('upstreamRemoteRef が短縮名 ("main") でも qualifyRef で refs/heads/ を前置する', () => {
+    expect(resolveExplicitPushRefspec({ ...base, upstreamRemoteRef: 'main' })).toEqual({
+      remote: 'origin',
+      refspec: 'HEAD:refs/heads/main',
+    });
+  });
+
+  it('pushDefault が既定 ("") のときも解決する', () => {
+    expect(resolveExplicitPushRefspec({ ...base, pushDefault: '' })).toEqual({
+      remote: 'origin',
+      refspec: 'HEAD:refs/heads/feat/TICKET-001',
+    });
+  });
+
+  it('三角ワークフロー (pushRemote が upstreamRemote と異なる) は誤送信を避けて null を返す', () => {
+    expect(resolveExplicitPushRefspec({ ...base, pushRemote: 'upstream' })).toBeNull();
+  });
+
+  it('ローカル追跡 (upstreamRemote が ".") は除外して null を返す', () => {
+    expect(resolveExplicitPushRefspec({ ...base, upstreamRemote: '.', pushRemote: '.' })).toBeNull();
+  });
+
+  it('名前一致 (pushRef が既に非 null に解決済み) は既存コードパスに任せて null を返す', () => {
+    expect(resolveExplicitPushRefspec({ ...base, pushRef: 'refs/remotes/origin/feat/TICKET-001' })).toBeNull();
+  });
+
+  it('upstream 無し (upstreamRemoteRef が空文字) は null を返す', () => {
+    expect(resolveExplicitPushRefspec({ ...base, upstreamRemoteRef: '' })).toBeNull();
+  });
+
+  it('detached HEAD (branch が null) は null を返す', () => {
+    expect(resolveExplicitPushRefspec({ ...base, branch: null })).toBeNull();
+  });
+
+  it('pushDefault が upstream のときは三角の可能性を保守的に見て null を返す', () => {
+    expect(resolveExplicitPushRefspec({ ...base, pushDefault: 'upstream' })).toBeNull();
+  });
+
+  it('pushDefault が nothing のときは明示的な禁止設定を尊重して null を返す', () => {
+    expect(resolveExplicitPushRefspec({ ...base, pushDefault: 'nothing' })).toBeNull();
+  });
+
+  it('pushDefault が current のときも null を返す (simple 以外は既存コードパスに委ねる)', () => {
+    expect(resolveExplicitPushRefspec({ ...base, pushDefault: 'current' })).toBeNull();
   });
 });

@@ -42,7 +42,7 @@ export default function TileWorkspace({
       )}
       {visited.has('git') && (
         <div className="tile-view" style={{ display: leaf.view === 'git' ? undefined : 'none' }}>
-          <GitTab repo={repo} worktree={worktree} />
+          <GitTab repo={repo} worktree={worktree} visible={leaf.view === 'git'} leafId={leaf.id} />
         </div>
       )}
       {visited.has('term') && (

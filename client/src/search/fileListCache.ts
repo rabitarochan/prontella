@@ -17,7 +17,11 @@ export interface FileListEntry {
   targets: QuickOpenTarget[];
 }
 
-const cache = new Map<string, FileListEntry>(); // key = worktree root
+// key = worktree root, Map insertion order doubles as LRU order (oldest first) — every
+// get/set below re-inserts its key to move it to the end, so cache.keys().next() is
+// always the least-recently-used entry.
+const cache = new Map<string, FileListEntry>();
+const MAX_CACHED_ROOTS = 3; // unbounded growth otherwise: one entry per worktree ever opened
 
 function basename(path: string): string {
   const i = path.lastIndexOf('/');
@@ -25,7 +29,11 @@ function basename(path: string): string {
 }
 
 export function getCachedFileList(root: string): FileListEntry | null {
-  return cache.get(root) ?? null;
+  const entry = cache.get(root);
+  if (!entry) return null;
+  cache.delete(root); // touch: move to most-recently-used position
+  cache.set(root, entry);
+  return entry;
 }
 
 export async function refreshFileList(root: string): Promise<FileListEntry> {
@@ -37,6 +45,11 @@ export async function refreshFileList(root: string): Promise<FileListEntry> {
       path: fuzzysort.prepare(rel),
     })),
   };
+  cache.delete(root); // re-insert below so a refresh of an existing root also counts as a touch
   cache.set(root, entry);
+  if (cache.size > MAX_CACHED_ROOTS) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
   return entry;
 }

@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
@@ -235,6 +236,25 @@ export default function HistoryTab({
     return { flex: `0 0 ${w}px`, width: w };
   };
 
+  // In-progress drag's listeners, so an unmount mid-drag can clean them up (below).
+  // reloadKey (GitTab.tsx) bumps on ANY pane's git operation, not just this one, and
+  // HistoryTab is keyed on it (`key={`h${reloadKey}`}`), so a remount mid-drag is a real
+  // scenario — without this, onUp (the only place that used to remove the listeners)
+  // never fires, and the window listeners + body userSelect/cursor style leak forever.
+  const dragRef = useRef<{ onMove: (ev: MouseEvent) => void; onUp: () => void } | null>(null);
+
+  useEffect(() => {
+    return () => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      window.removeEventListener('mousemove', drag.onMove);
+      window.removeEventListener('mouseup', drag.onUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      dragRef.current = null;
+    };
+  }, []);
+
   const startResize = (key: ColKey) => (e: ReactMouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -251,7 +271,9 @@ export default function HistoryTab({
       window.removeEventListener('mouseup', onUp);
       document.body.style.userSelect = '';
       document.body.style.cursor = '';
+      dragRef.current = null;
     };
+    dragRef.current = { onMove, onUp };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
   };

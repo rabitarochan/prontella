@@ -1308,6 +1308,26 @@ button.statusbar-menu-item:hover:not(:disabled) {
   color: var(--fg-dim);
   font-size: 11px;
 }
+/* upstream との差分バッジ。.branch-name が flex:1 で伸びる隣に置くため、
+   .sync-count(flex-shrink 無し)は使わず .ref-chip 同様に flex-shrink:0 を持つ */
+.branch-sync-badge {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  font-size: 10px;
+}
+.branch-sync-ahead {
+  color: var(--blue);
+}
+.branch-sync-behind {
+  color: var(--orange);
+}
+.branch-upstream-gone {
+  flex-shrink: 0;
+  color: var(--red);
+  font-size: 11px;
+}
 .branch-actions {
   display: flex;
   visibility: hidden;
@@ -1605,6 +1625,12 @@ button.context-menu-item:hover:not(:disabled) {
 }
 .sdiff-context {
   color: var(--fg);
+}
+.sdiff-truncated {
+  margin-top: 8px;
+  padding: 6px 0;
+  color: var(--fg-dim);
+  border-top: 1px solid var(--border);
 }
 
 /* ---- hunk strip (DiffHunkStrip: ハンク単位 stage/unstage/discard) ---- */

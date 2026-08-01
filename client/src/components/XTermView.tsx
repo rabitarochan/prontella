@@ -8,6 +8,15 @@ import { WebglAddon } from '@xterm/addon-webgl';
  * One xterm.js instance bound to a PTY session (/ws/term). Mounted once per
  * session and kept alive across tab switches — hide with `visible` instead of
  * unmounting, so scrollback and the WebSocket connection survive.
+ *
+ * WebGL is loaded only while `visible` is true. Each terminal's WebGL addon
+ * owns its own GPU context, and a browser tab has a hard cap on how many
+ * live WebGL contexts it can hold at once (~16 in Chrome, measured in
+ * isolation); go over it and the oldest context is silently evicted, forever
+ * demoting that terminal to the slow DOM renderer. Loading WebGL only for
+ * the visible terminal(s) keeps the live-context count bounded by "one per
+ * visible tile", which removes the ceiling problem structurally instead of
+ * reacting to eviction after the fact.
  */
 export default function XTermView({
   id,
@@ -21,6 +30,83 @@ export default function XTermView({
   const containerRef = useRef<HTMLDivElement>(null);
   const claudeModeRef = useRef(claudeMode);
   claudeModeRef.current = claudeMode;
+  const termRef = useRef<Terminal | null>(null);
+  const webglRef = useRef<WebglAddon | null>(null);
+  // Set once construction/activation fails (no WebGL2 support) so later
+  // visibility toggles don't keep retrying a load that can't succeed.
+  const webglBrokenRef = useRef(false);
+
+  // WebGL rendering is much faster than the default DOM renderer, but its
+  // context is a scarce, capped resource (see the file-level comment) and it
+  // can also be lost outright (GPU driver reset, tab discard). `syncWebgl`
+  // brings the addon to whatever state `want` calls for; `disposeWebgl` does
+  // the actual teardown and is the only place that clears `webglRef`.
+  function syncWebgl(want: boolean) {
+    const term = termRef.current;
+    if (!term) return;
+    if (want && !webglRef.current && !webglBrokenRef.current) {
+      let webgl: WebglAddon | undefined;
+      try {
+        webgl = new WebglAddon();
+        webgl.onContextLoss(() => disposeWebgl());
+        term.loadAddon(webgl);
+        webglRef.current = webgl;
+      } catch {
+        // WebGL unavailable, or activation failed partway through — release
+        // whatever got partially set up (xterm's AddonManager guards against
+        // a redundant dispose call, so this is safe even if nothing ran) and
+        // keep the DOM renderer for the rest of this terminal's lifetime.
+        try {
+          webgl?.dispose();
+        } catch {
+          // already in a bad state — nothing more we can do
+        }
+        webglBrokenRef.current = true;
+      }
+    } else if (!want && webglRef.current) {
+      disposeWebgl();
+    }
+  }
+
+  // `el` lets the caller supply the container explicitly. On unmount, React
+  // 18 detaches `containerRef.current` (sets it to null) during the mutation
+  // phase, which runs *before* passive-effect cleanups — so by the time this
+  // runs from the mount effect's cleanup, `containerRef.current` is already
+  // null and would find no canvases (verified against React 18.3.1; the
+  // StrictMode dev double-invoke masks this because its pseudo-unmount
+  // doesn't actually detach the ref). The visibility-toggle and
+  // onContextLoss callers still have a live ref, so they can omit it.
+  function disposeWebgl(el?: HTMLElement) {
+    const webgl = webglRef.current;
+    if (!webgl) return;
+    webglRef.current = null;
+    // WebglAddon.dispose() switches xterm back to the DOM renderer and
+    // removes its own <canvas> from the DOM, but it does NOT lose the WebGL
+    // context — left alone, the context is only reclaimed by GC, which is
+    // exactly the leak this whole change exists to close. So: grab the
+    // canvas elements *before* dispose() (afterwards they're gone from the
+    // DOM and querySelectorAll can no longer find them), then explicitly
+    // lose the context once dispose() has run.
+    const container = el ?? containerRef.current;
+    const canvases = container ? Array.from(container.querySelectorAll('canvas')) : [];
+    try {
+      webgl.dispose();
+    } catch {
+      // e.g. already disposed via a context-loss callback — ignore
+    }
+    for (const canvas of canvases) {
+      // `.xterm-screen` holds two canvases: xterm core's 2D link-layer
+      // canvas and the addon's WebGL one. getContext('webgl2') on the 2D
+      // canvas returns null (it already owns a 2d context), so only the
+      // WebGL canvas is affected here. This scan assumes both canvases
+      // already have a context bound (true today) — if a canvas with no
+      // context yet ever reached this point, calling getContext('webgl2')
+      // on it would *create* a new WebGL context rather than detect an
+      // existing one, and this approach would need to be revisited.
+      const gl = canvas.getContext('webgl2') as WebGL2RenderingContext | null;
+      gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    }
+  }
 
   useEffect(() => {
     const container = containerRef.current;
@@ -38,23 +124,14 @@ export default function XTermView({
         selectionBackground: '#264f78',
       },
     });
+    termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
     // OSC 52 support — Claude Code's select-to-copy emits OSC 52; xterm core drops it without this addon.
     term.loadAddon(new ClipboardAddon());
     term.open(container);
 
-    // WebGL rendering is much faster than the default DOM renderer, but the
-    // context can be lost (GPU driver reset, tab discard) or unavailable
-    // altogether (no WebGL2 support) — fall back to the DOM renderer rather
-    // than crash or freeze the terminal.
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
-      term.loadAddon(webgl);
-    } catch {
-      // WebGL unavailable — keep the default DOM renderer.
-    }
+    syncWebgl(visible);
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/ws/term?id=${id}`);
@@ -120,11 +197,17 @@ export default function XTermView({
       observer.disconnect();
       dataDisposable.dispose();
       ws.close();
+      // Pass the effect-local `container` explicitly — on unmount,
+      // containerRef.current is already null by the time this cleanup runs
+      // (see the comment on disposeWebgl).
+      disposeWebgl(container);
       term.dispose();
+      termRef.current = null;
     };
   }, [id]);
 
   useEffect(() => {
+    syncWebgl(visible);
     if (visible) containerRef.current?.querySelector('textarea')?.focus();
   }, [visible]);
 

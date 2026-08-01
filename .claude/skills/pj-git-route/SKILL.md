@@ -38,7 +38,21 @@ reviewer が実証済み)。URL・パスなど git 以外の信頼できない�
 - **ブランチ名・ref など `/`・`.` を含む自由入力**: 先頭 `-` を拒否(`!v || v.startsWith('-') → 400`)。
   危険オプション(`--exec`/`-x`/`--onto`/`-f` 等)は全て先頭 `-` なので、これが主防壁
 - **`--` セパレーター**: git が受理する箇所のみ。**実測してから足す**(例: `git reset <commit> --` は
-  パス形式=別解釈に化ける。`git rebase -- <onto>` は受理される)。先頭 `-` 拒否があれば必須ではない
+  パス形式=別解釈に化ける。`git rebase -- <onto>` は受理される)
+- **ただし remote 位置の引数では `--` は必須**(先頭 `-` 拒否があっても省略しない)。
+  `fetch`/`push`/`pull` の remote 引数は**任意コマンド実行の経路**で、実測:
+  ```
+  git fetch "--upload-pack=echo pwned" <remote> <refspec>
+    → fatal: protocol error: bad line length character: pwne   ← echo が実行されている
+  git fetch -- "--upload-pack=echo pwned" <refspec>
+    → fatal: strange pathname '--upload-pack=echo pwned' blocked
+  ```
+  `fetch`/`push`/`pull --ff-only` の 3 つとも remote 手前の `--` を受理する(実測済み)。
+  さらに **`git check-ref-format refs/heads/-x` は exit 0**(先頭 `-` の refname は正当)なので、
+  既存コメントにある「値は git 由来だから安全」という論法は**成立しない**。git 由来の値にも
+  先頭 `-` ガードと `--` を両方かける。
+  **最も確実なのは remote をリクエストボディで受け取らないこと** — ルート側で
+  `listBranches(dir)` / `listRemotes(dir)` を引き直し、git 由来の値だけを流す
 - **エラー種別の判定に `String(e).includes('...')` を使うときは先頭アンカー付きで**: 引用された
   パス名の中の文字列にも当たってしまう(例:「no such path.txt」というファイル名で意図しない一致が
   起きた実測あり)。`/^fatal: no such path /` のように発生位置を固定した正規表現で照合する
@@ -67,6 +81,11 @@ reviewer が実証済み)。URL・パスなど git 以外の信頼できない�
 代替は**検証ロジック(型・範囲チェック、409/400 判定)の純関数抽出**(新規依存ゼロ)。
 先例: `server/diffPatch.ts` の `checkApplyHunksRequest`(POST /api/git/apply-hunks のリクエスト
 検証 + 409 判定を純関数化し vitest で固定した恒久回帰テスト)。
+
+**切り出し先は `server/index.ts` の export ではなく別モジュール**(`server/diffPatch.ts` のように)。
+index.ts に置くとテスト側が index.ts の import を強いられ、上記の実バインドを避けるために
+`vi.mock('node:http')` が必要になる(実測: 副作用は出ないが、後日 index.ts のモジュールスコープに
+I/O が足されると気付かず踏む)。新規の検証純関数は最初から別モジュールへ置く。
 
 逆に、**async + 実 git 依存の関数の中に判定ロジックを埋め込むと、純関数テストの網に載らず無テスト
 のまま残る**(例: `getBlame` の `notFound` 判定。`server/git.ts` の async 関数内にあり専用テストが
@@ -103,6 +122,15 @@ reviewer が実証済み)。URL・パスなど git 以外の信頼できない�
   必ず併用し、値は**`=` 埋め込みの単一 argv トークン**(`--author=${v}` であって `--author`,
   `${v}` の 2 トークンにしない)にする。前者は regex メタ文字によるクラッシュ、後者は
   `--upload-pack=` 系の任意コマンド実行インジェクションの両方を封じる(6.4 実測)
+- **出力のロケール依存を env(`LC_ALL=C` 等)で潰す案が出たら、先に同等の plumbing コマンドを探す**。
+  `%(upstream:track)` の `ahead N`/`gone` を翻訳する `setup_ref_filter_porcelain_msg()` は
+  `builtin/branch.c` からしか呼ばれないため、`git branch --format` は翻訳され得るが
+  **`git for-each-ref --format` は構造的に非翻訳**。コマンドを変えるほうが正しく、副作用
+  (擬似行が消える・他の UI 文言を英語化しない)まで一緒に解決する
+- **ref 一覧のパースは「名前の形」でなく構造で判定する**: `refs/heads/`・`refs/remotes/` の前置と
+  `%(symref)` の有無で絞る。`%(refname:short)` は `refs/remotes/origin/HEAD` を `origin/HEAD` では
+  なく **`origin`** に短縮するので `endsWith('/HEAD')` はすり抜ける。また `git branch -a --format`
+  は detached HEAD に `(HEAD detached at 1a2b3c)` という **ref ではない行**を出す(いずれも実測)
 
 ## 6. 検証(隔離スモーク + 敵対的入力)
 

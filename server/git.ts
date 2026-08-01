@@ -560,31 +560,187 @@ export async function getDiffBuffer(dir: string, filePath: string, staged: boole
   return runGitInput(dir, args, Buffer.alloc(0));
 }
 
+/**
+ * `%(upstream:track,nobracket)` の生値を ahead/behind な整数と gone フラグに変換する純関数
+ * (vitest 対象)。**未知の文字列は 0 に倒さない** — バッジ (↑N ↓M) が「差分無し」と嘘をつく
+ * ことを避けるため、パースできない入力は ahead/behind とも null にする。
+ */
+export function parseUpstreamTrack(track: string): { ahead: number | null; behind: number | null; gone: boolean } {
+  if (track === '') return { ahead: 0, behind: 0, gone: false };
+  if (track === 'gone') return { ahead: null, behind: null, gone: true };
+  const aheadOnly = /^ahead (\d+)$/.exec(track);
+  if (aheadOnly) return { ahead: Number(aheadOnly[1]), behind: 0, gone: false };
+  const behindOnly = /^behind (\d+)$/.exec(track);
+  if (behindOnly) return { ahead: 0, behind: Number(behindOnly[1]), gone: false };
+  const both = /^ahead (\d+), behind (\d+)$/.exec(track);
+  if (both) return { ahead: Number(both[1]), behind: Number(both[2]), gone: false };
+  return { ahead: null, behind: null, gone: false };
+}
+
+/** `refs/` で始まればそのまま、そうでなければ `refs/heads/` を前置する。空文字列は空文字列のまま。 */
+export function qualifyRef(v: string): string {
+  if (v === '') return '';
+  return v.startsWith('refs/') ? v : `refs/heads/${v}`;
+}
+
 export interface BranchInfo {
   name: string;
   hash: string;
   current: boolean;
   remote: boolean;
   worktreePath: string | null;
+  upstream: string | null; // %(upstream:short) 例 'origin/main' (表示用)
+  upstreamFullRef: string | null; // %(upstream) 例 'refs/remotes/origin/main'
+  upstreamRemote: string | null; // %(upstream:remotename) 例 'origin'
+  upstreamRemoteRef: string | null; // %(upstream:remoteref) 例 'refs/heads/main' — 短縮名のこともある
+  ahead: number | null; // 不明は null (0 に倒さない)
+  behind: number | null;
+  upstreamGone: boolean;
+  pushRemote: string | null; // %(push:remotename) — 空なら null
+  pushRef: string | null; // %(push) — 空なら null
 }
 
+/**
+ * `git for-each-ref --format=<US 区切り 13 アトム>` の生出力を BranchInfo[] に変換する純関数
+ * (listBranches から切り出し・vitest 対象)。フィールド順は listBranches の format と一致させる
+ * こと: refname, name, hash, head, worktreePath, symref, upstream:short, upstream,
+ * upstream:remotename, upstream:remoteref, upstream:track(nobracket), push:remotename, push。
+ *
+ * 名前の形ではなく構造で判定する 2 段フィルター:
+ * - refname が refs/heads/ / refs/remotes/ どちらでも始まらない行は捨てる (旧 `git branch
+ *   --format` が出す detached HEAD の擬似行 `(HEAD detached at 1a2b3c)` 等を想定した防御。
+ *   for-each-ref はパターンに一致する実在の ref しか列挙しないため実際には現れないはずだが、
+ *   このパーサー自体の堅牢性として維持する)。
+ * - symref が空でない行は捨てる (`refs/remotes/origin/HEAD` を落とす)。`%(refname:short)` は
+ *   これを `origin/HEAD` ではなく `origin` に短縮するため (実測済み)、name.endsWith('/HEAD')
+ *   という名前ベースの判定では落とせない。
+ */
+export function parseBranchLines(out: string): BranchInfo[] {
+  const result: BranchInfo[] = [];
+  for (const line of out.split('\n')) {
+    if (!line) continue;
+    const [
+      refname,
+      name,
+      hash,
+      head,
+      worktreePath,
+      symref,
+      upstreamShort,
+      upstreamFull,
+      upstreamRemote,
+      upstreamRemoteRef,
+      track,
+      pushRemote,
+      push,
+    ] = line.split(US);
+    if (!refname.startsWith('refs/heads/') && !refname.startsWith('refs/remotes/')) continue;
+    if (symref) continue;
+    const { ahead, behind, gone } = parseUpstreamTrack(track ?? '');
+    result.push({
+      name,
+      hash,
+      current: head === '*',
+      remote: refname.startsWith('refs/remotes/'),
+      worktreePath: worktreePath || null,
+      upstream: upstreamShort || null,
+      upstreamFullRef: upstreamFull || null,
+      upstreamRemote: upstreamRemote || null,
+      upstreamRemoteRef: upstreamRemoteRef || null,
+      ahead,
+      behind,
+      upstreamGone: gone,
+      pushRemote: pushRemote || null,
+      pushRef: push || null,
+    });
+  }
+  return result;
+}
+
+/**
+ * `git branch --format` から `git for-each-ref` へ書き換え済み (F1〜F3 対応)。`%(upstream:track)`
+ * の `ahead N` 等を翻訳する `setup_ref_filter_porcelain_msg()` は `builtin/branch.c` からしか
+ * 呼ばれず、`for-each-ref` は構造的に非翻訳 (LC_ALL=C を足すより正しい)。detached HEAD の
+ * 擬似行も同時に消える。`%(HEAD)` / `%(worktreepath)` は for-each-ref でも同じに効くことは
+ * 実測済み。
+ */
 export async function listBranches(repoPath: string): Promise<BranchInfo[]> {
-  const format = ['%(refname)', '%(refname:short)', '%(objectname:short)', '%(HEAD)', '%(worktreepath)'].join(US);
-  const out = await runGit(repoPath, ['branch', '-a', `--format=${format}`]);
-  return out
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => {
-      const [refname, name, hash, head, worktreePath] = line.split(US);
-      return {
-        name,
-        hash,
-        current: head === '*',
-        remote: refname.startsWith('refs/remotes/'),
-        worktreePath: worktreePath || null,
-      };
-    })
-    .filter((b) => !b.name.endsWith('/HEAD'));
+  const format = [
+    '%(refname)',
+    '%(refname:short)',
+    '%(objectname:short)',
+    '%(HEAD)',
+    '%(worktreepath)',
+    '%(symref)',
+    '%(upstream:short)',
+    '%(upstream)',
+    '%(upstream:remotename)',
+    '%(upstream:remoteref)',
+    '%(upstream:track,nobracket)',
+    '%(push:remotename)',
+    '%(push)',
+  ].join(US);
+  const out = await runGit(repoPath, ['for-each-ref', `--format=${format}`, 'refs/heads', 'refs/remotes']);
+  return parseBranchLines(out);
+}
+
+/**
+ * カレントブランチ名 (`symbolic-ref --quiet --short HEAD`)。detached HEAD は throw させず
+ * null を返す (--quiet は非対話失敗時にエラーメッセージを出さないだけで終了コードは非 0 の
+ * まま — runGit の reject を素直に catch すればよい)。
+ */
+export async function currentBranchOf(dir: string): Promise<string | null> {
+  try {
+    const out = await runGit(dir, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+    return out.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export interface PushResolveInput {
+  branch: string | null; // null = detached HEAD
+  upstreamRemote: string | null; // %(upstream:remotename)
+  upstreamRemoteRef: string | null; // %(upstream:remoteref)
+  pushRemote: string | null; // %(push:remotename)
+  pushRef: string | null; // %(push)。null = git がプッシュ先を一意に解決できない
+  pushDefault: string; // git config --get push.default の値。未設定は ''
+}
+
+/**
+ * `push.default=simple` でローカル名と upstream のブランチ名が食い違う (三角ワークフローでも
+ * ローカル追跡でもない) ケース限定で、明示的な push refspec (`HEAD:<qualified upstream
+ * remoteref>`) を解決する純関数 (vitest 対象)。**非 null を返すのは次を全部満たすときだけ**:
+ *
+ * 1. `branch !== null` (detached でない)
+ * 2. `upstreamRemoteRef` が非空
+ * 3. `upstreamRemote` が非空 **かつ `'.'` ではない** (ローカル追跡を除外)
+ * 4. **`pushRemote === upstreamRemote`** (三角ワークフローを除外— これが最重要の検出器)
+ * 5. `pushRef === null` (git がプッシュ先を一意に解決できない = 簡易プッシュが fatal になるケース)
+ * 6. `pushDefault` が `''` または `'simple'`
+ *
+ * それ以外は既存コードパスを一切変えないため null。戻り値の remote は (3)(4) を通過済みの
+ * `upstreamRemote` をそのまま使う — `|| 'origin'` のフォールバックは付けない (付けると (3) の
+ * ローカル追跡除外が意味を失う)。
+ *
+ * **なぜ pushRemote の一致を要求するか (訂正: 当初案は pushRef===null だけを検出器にしていたが、
+ * 実 git のフィクスチャ (vt/ff-01) で誤りと判明した)**: `%(push)` は「名前不一致」だけでなく
+ * 「三角ワークフロー (`branch.X.pushRemote` が upstream と異なる remote を指す)」でも空になる
+ * (実測: 名前一致 simple → 非空 / 名前不一致 simple → 空 / 三角 → 空だが素の `git push` は
+ * 現に成功し pushRemote へ届いている)。`pushRef===null` だけを条件にすると、三角ワークフローの
+ * ブランチまで書き換えてしまい、**フェッチ用の upstream リモートへ誤送信**する。`pushRemote
+ * === upstreamRemote` を追加で要求することで、三角(`pushRemote` が別リモート)とローカル追跡
+ * (`upstreamRemote === '.'`)の両方を安全に除外する。
+ */
+export function resolveExplicitPushRefspec(input: PushResolveInput): { remote: string; refspec: string } | null {
+  const { branch, upstreamRemote, upstreamRemoteRef, pushRemote, pushRef, pushDefault } = input;
+  if (branch === null) return null;
+  if (!upstreamRemoteRef) return null;
+  if (!upstreamRemote || upstreamRemote === '.') return null;
+  if (pushRemote !== upstreamRemote) return null;
+  if (pushRef !== null) return null;
+  if (pushDefault !== '' && pushDefault !== 'simple') return null;
+  return { remote: upstreamRemote, refspec: `HEAD:${qualifyRef(upstreamRemoteRef)}` };
 }
 
 export async function addWorktree(
@@ -664,10 +820,100 @@ export async function pull(dir: string, opts: { rebase?: boolean } = {}): Promis
   return runGit(dir, args, NETWORK_TIMEOUT);
 }
 
+/**
+ * upstream から早送りする (F2)。isCurrent (現在チェックアウト中のブランチ) かどうかで戦略を
+ * 変える。
+ * - true: `git pull --ff-only -- <remote> <qualifiedUpstreamRemoteRef>` の 1 コマンド。
+ *   `fetch` → `merge --ff-only FETCH_HEAD` の 2 段にしない理由: 同じ worktree で PTY の
+ *   Claude Code やツールバーの `git fetch --all` が割り込むと FETCH_HEAD が書き換わる
+ *   TOCTOU があるため。
+ * - false: `git fetch -- <remote> <qualifiedUpstreamRemoteRef>:refs/heads/<b.name>`。早送り
+ *   できない場合に `+` を付けていないため git 自身が拒否する (安全側)。
+ * どちらも remote 引数の手前に `--` を置く (実測: `git fetch "--upload-pack=echo pwned" <remote>`
+ * は echo を実際に実行してしまうが、`--` を挟むと `strange pathname ... blocked` で止まる。
+ * git 由来の値でも `git check-ref-format refs/heads/-x` が exit 0 なので安全と決めつけない)。
+ */
+export async function ffFromUpstream(dir: string, b: BranchInfo, isCurrent: boolean): Promise<string> {
+  if (!b.upstreamRemote || !b.upstreamRemoteRef) {
+    throw new Error(`upstream が設定されていないため取得できません: ${b.name}`);
+  }
+  const remote = b.upstreamRemote;
+  const remoteRef = qualifyRef(b.upstreamRemoteRef);
+  if (isCurrent) {
+    return runGit(dir, ['pull', '--ff-only', '--', remote, remoteRef], NETWORK_TIMEOUT);
+  }
+  return runGit(dir, ['fetch', '--', remote, `${remoteRef}:refs/heads/${b.name}`], NETWORK_TIMEOUT);
+}
+
+/**
+ * ローカルブランチをローカル名と異なる名前で upstream へ push する (F3。例:
+ * `feat/TICKET-001-説明` → `feat/TICKET-001`)。remoteBranch は qualifyRef で `refs/heads/`
+ * を前置してから refspec に組む (`%(upstream:remoteref)` が短縮名のことがあるため)。remote
+ * 引数の手前に `--` を置く (ffFromUpstream と同じ理由)。
+ */
+export async function pushBranchToName(
+  dir: string,
+  localBranch: string,
+  remote: string,
+  remoteBranch: string,
+  opts: { setUpstream?: boolean } = {},
+): Promise<string> {
+  const args = ['push'];
+  if (opts.setUpstream) args.push('-u');
+  args.push('--', remote, `refs/heads/${localBranch}:${qualifyRef(remoteBranch)}`);
+  return runGit(dir, args, NETWORK_TIMEOUT);
+}
+
+/**
+ * push() 用に resolveExplicitPushRefspec の入力を実際の git 状態 (カレントブランチの
+ * upstream:remotename/remoteref/push:remotename/push と push.default) から集める。集める過程
+ * (symbolic-ref/for-each-ref/config --get) のどれか 1 つでも失敗したら、既存コードパスへ
+ * フォールバックするため null を返す (「解決処理が throw して既存の try/catch に届かなくなる
+ * ことが無いようにする」— この関数自体が意図せず throw すると push() 呼び出し元の 500 応答の
+ * 文言が変わってしまうため)。
+ */
+async function resolvePushRefspecSafely(dir: string): Promise<{ remote: string; refspec: string } | null> {
+  try {
+    const branch = await currentBranchOf(dir);
+    if (branch === null) return null;
+    const format = [
+      '%(upstream:remotename)',
+      '%(upstream:remoteref)',
+      '%(push:remotename)',
+      '%(push)',
+    ].join(US);
+    const out = await runGit(dir, ['for-each-ref', `--format=${format}`, `refs/heads/${branch}`]);
+    const [upstreamRemote, upstreamRemoteRef, pushRemote, pushRef] = (out.split('\n')[0] ?? '').split(US);
+    let pushDefault = '';
+    try {
+      pushDefault = (await runGit(dir, ['config', '--get', 'push.default'])).trim();
+    } catch {
+      pushDefault = ''; // 未設定
+    }
+    return resolveExplicitPushRefspec({
+      branch,
+      upstreamRemote: upstreamRemote || null,
+      upstreamRemoteRef: upstreamRemoteRef || null,
+      pushRemote: pushRemote || null,
+      pushRef: pushRef || null,
+      pushDefault,
+    });
+  } catch {
+    return null;
+  }
+}
+
 export async function push(
   dir: string,
   opts: { forceWithLease?: boolean } = {},
 ): Promise<string> {
+  const resolved = await resolvePushRefspecSafely(dir);
+  if (resolved) {
+    const args = ['push'];
+    if (opts.forceWithLease) args.push('--force-with-lease');
+    args.push('--', resolved.remote, resolved.refspec);
+    return runGit(dir, args, NETWORK_TIMEOUT);
+  }
   if (opts.forceWithLease) {
     // bare --force はミッション制約で不使用。--force-with-lease は fetch 済みの
     // remote-tracking ref (stale info) と実際のリモートを比較し、他者の push で

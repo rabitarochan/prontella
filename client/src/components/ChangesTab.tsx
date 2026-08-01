@@ -146,7 +146,7 @@ export default function ChangesTab({
       >
         {file.conflicted ? 'U' : staged ? file.staged : file.untracked ? '?' : file.unstaged}
       </span>
-      <span className="change-path">{file.path}</span>
+      <span className="change-path">&lrm;{file.path}&lrm;</span>
       <span className="change-actions">
         {!staged && (
           <button

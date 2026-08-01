@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 export interface ConfirmRequest {
   title: string;
@@ -35,7 +36,12 @@ export default function ConfirmDialog({
     return () => document.removeEventListener('keydown', onKey);
   }, [onCancel]);
 
-  return (
+  // .modal-backdrop は position:fixed だが、.tile-pane に container: tile / inline-size
+  // (styles.css:1418) が付いており container-type は fixed 要素の包含ブロックを作る。
+  // そのためタイル内 (ポータルホスト .tile-host { position:absolute; inset:0; overflow:hidden })
+  // から描画するとダイアログがタイルに閉じ込められ、width:460px 固定の .modal は狭いタイルで
+  // クリップされてボタンが押せなくなる。body へポータルしてビューポート全面に戻す。
+  return createPortal(
     <div className="modal-backdrop" onClick={onCancel}>
       <div className="modal confirm-dialog" onClick={(e) => e.stopPropagation()}>
         <h3>{title}</h3>
@@ -51,7 +57,8 @@ export default function ConfirmDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

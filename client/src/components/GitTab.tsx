@@ -115,7 +115,20 @@ export default function GitTab({
   }, []);
 
   const closeDiff = useCallback(
-    (key: string) => {
+    async (key: string) => {
+      // 競合タブは編集中の解決作業を保持する唯一のステートフルなタブ
+      // (DiffTabsPane 冒頭コメント参照)。タブ全体がミドルクリックの標的に
+      // なったので、誤爆で解決作業を失わないよう確認を挟む。
+      const target = diffTabs.find((t) => t.key === key);
+      if (target?.kind === 'conflict') {
+        const ok = await confirmDialog({
+          title: '競合の解決を閉じる',
+          message: `${target.path} の解決作業を破棄して閉じますか?`,
+          confirmLabel: '破棄して閉じる',
+          severity: 'danger',
+        });
+        if (!ok) return;
+      }
       setDiffTabs((prev) => prev.filter((t) => t.key !== key));
       setActiveDiff((current) => {
         if (current !== key) return current;
@@ -124,7 +137,7 @@ export default function GitTab({
         return next[idx]?.key ?? next[idx - 1]?.key ?? null;
       });
     },
-    [diffTabs],
+    [diffTabs, confirmDialog],
   );
 
   const reloadDiff = useCallback((key: string) => {
@@ -818,7 +831,7 @@ export default function GitTab({
                 activeKey={activeDiff}
                 reloadKey={reloadKey}
                 onActivate={setActiveDiff}
-                onClose={closeDiff}
+                onClose={(key) => void closeDiff(key)}
                 onReload={reloadDiff}
                 onStatusChanged={onConflictResolved}
               />

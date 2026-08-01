@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import type { TerminalSession } from '../types';
+import { useConfirm } from './ConfirmDialog';
+import { middleClickAutoscrollGuard, middleClickClose } from './editorTabs';
 import StatusBadge from './StatusBadge';
 import XTermView from './XTermView';
 
@@ -29,6 +31,7 @@ export default function TermPanel({
   create: (run?: string) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const { confirm, dialog } = useConfirm();
   const liveMap = new Map((sessions ?? []).map((s) => [s.id, s]));
   // ツリー側の activeSession が欠けていても描画は破綻させない
   const active = activeId && ownedIds.includes(activeId) ? activeId : (ownedIds[ownedIds.length - 1] ?? null);
@@ -38,14 +41,22 @@ export default function TermPanel({
     void fn().finally(() => setBusy(false));
   };
 
-  const closeTab = (id: string) => {
-    if (liveMap.has(id) && !confirm('このターミナルを終了しますか?')) return;
+  const closeTab = async (id: string) => {
+    if (liveMap.has(id)) {
+      const ok = await confirm({
+        title: 'ターミナルを終了',
+        message: 'このターミナルを終了しますか?',
+        confirmLabel: '終了する',
+        severity: 'danger',
+      });
+      if (!ok) return;
+    }
     run(() => onCloseTab(id));
   };
 
   return (
     <div className="term-panel">
-      <div className="editor-tabs">
+      <div className="editor-tabs" {...middleClickAutoscrollGuard}>
         {ownedIds.map((id) => {
           const session = liveMap.get(id) ?? null;
           return (
@@ -54,6 +65,7 @@ export default function TermPanel({
               className={`editor-tab ${active === id ? 'active' : ''}`}
               title={session ? `${session.title} — ${session.cwd}` : 'セッションは終了しました'}
               onClick={() => onActivate(id)}
+              {...middleClickClose(() => void closeTab(id))}
             >
               <span className="codicon codicon-terminal" />
               <span className="editor-tab-name">{session?.title ?? '(終了)'}</span>
@@ -64,7 +76,7 @@ export default function TermPanel({
                   title={session ? 'ターミナルを終了' : 'タブを閉じる'}
                   onClick={(e) => {
                     e.stopPropagation();
-                    closeTab(id);
+                    void closeTab(id);
                   }}
                 >
                   <span className="codicon codicon-close" />
@@ -125,6 +137,7 @@ export default function TermPanel({
           />
         ))}
       </div>
+      {dialog}
     </div>
   );
 }

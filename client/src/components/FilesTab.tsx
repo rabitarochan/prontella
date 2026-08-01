@@ -15,8 +15,10 @@ import {
 import { isMarkdownPath } from '../markdown/paths';
 import { registerFilesTab, touchFilesTab, unregisterFilesTab } from '../search/registry';
 import BlameModal from './BlameModal';
+import { useConfirm } from './ConfirmDialog';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import EditorStatusBar from './EditorStatusBar';
+import { middleClickAutoscrollGuard, middleClickClose } from './editorTabs';
 import FileHistoryModal from './FileHistoryModal';
 import FileTree from './FileTree';
 import MarkdownPreview from './MarkdownPreview';
@@ -168,6 +170,10 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
   );
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  // reloadWithEncoding (下) はスコープ外のネイティブ confirm() を使い続けるため、
+  // useConfirm 側は confirmDialog という別名にして window.confirm を隠さない
+  // (GitTab.tsx の confirmDialog と同じ回避パターン)。
+  const { confirm: confirmDialog, dialog } = useConfirm();
   const saveRef = useRef<() => void>(() => {});
   const loadedRef = useRef(new Set<string>()); // tab keys whose load is in flight or done
   // Monaco models are global and keyed by path; two FilesTab instances (one per tile)
@@ -740,10 +746,18 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
     if (target?.kind === 'preview') refreshPreviewTab(key, target.path);
   };
 
-  const closeTab = (key: string) => {
+  const closeTab = async (key: string) => {
     const target = tabs.find((t) => t.key === key);
     if (!target) return;
-    if (isDirty(target) && !confirm(`${basename(target.path)} の変更を破棄して閉じますか?`)) return;
+    if (isDirty(target)) {
+      const ok = await confirmDialog({
+        title: '変更を破棄',
+        message: `${basename(target.path)} の変更を破棄して閉じますか?`,
+        confirmLabel: '破棄して閉じる',
+        severity: 'danger',
+      });
+      if (!ok) return;
+    }
     const idx = tabs.findIndex((t) => t.key === key);
     const next = tabs.filter((t) => t.key !== key);
     setTabs(next);
@@ -969,13 +983,14 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
           <div className="placeholder">ファイルを選択してください</div>
         ) : (
           <>
-            <div className="editor-tabs">
+            <div className="editor-tabs" {...middleClickAutoscrollGuard}>
               {tabs.map((t) => (
                 <div
                   key={t.key}
                   className={`editor-tab ${activeKey === t.key ? 'active' : ''}`}
                   title={t.kind === 'preview' ? `プレビュー: ${t.path}` : t.path}
                   onClick={() => switchTo(t.key)}
+                  {...middleClickClose(() => void closeTab(t.key))}
                 >
                   {t.kind === 'preview' && <span className="codicon codicon-preview" />}
                   <span className="editor-tab-name">{basename(t.path)}</span>
@@ -986,7 +1001,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
                       title="閉じる"
                       onClick={(e) => {
                         e.stopPropagation();
-                        closeTab(t.key);
+                        void closeTab(t.key);
                       }}
                     >
                       <span className="codicon codicon-close" />
@@ -1097,6 +1112,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
         <FileHistoryModal dir={root} path={historyPath} onClose={() => setHistoryPath(null)} />
       )}
       {blamePath && <BlameModal dir={root} path={blamePath} onClose={() => setBlamePath(null)} />}
+      {dialog}
     </div>
   );
 }

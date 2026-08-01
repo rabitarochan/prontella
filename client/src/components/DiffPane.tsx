@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { DiffEditor, type DiffOnMount, type MonacoDiffEditor } from '@monaco-editor/react';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
+import { DiffEditor, type MonacoDiffEditor } from '@monaco-editor/react';
 import { api } from '../api';
 import { languageFor } from '../monaco-setup';
 import { parseHunkHeader } from '../diffHunk';
@@ -54,10 +54,6 @@ export default function DiffPane({
     loadPair();
   }, [loadPair]);
 
-  const onMount: DiffOnMount = (editor) => {
-    diffEditorRef.current = editor;
-  };
-
   const revealHunk = useCallback((hunk: DiffHunk) => {
     const editor = diffEditorRef.current;
     const pos = parseHunkHeader(hunk.header);
@@ -93,24 +89,81 @@ export default function DiffPane({
         />
       )}
       <div className="diff-editor-host">
-        <DiffEditor
+        <DisposableDiffEditor
           original={pair.original}
           modified={pair.modified}
           language={languageFor(path)}
-          theme="vs-dark"
-          onMount={onMount}
-          options={{
-            readOnly: true,
-            renderSideBySide: true,
-            automaticLayout: true,
-            minimap: { enabled: false },
-            scrollBeyondLastLine: false,
-            fontSize: 13,
-            renderOverviewRuler: true,
-            diffWordWrap: 'off',
-          }}
+          editorRef={diffEditorRef}
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * @monaco-editor/react の DiffEditor は、アンマウント時の後始末を
+ * 「original/modified の TextModel を dispose → DiffEditorWidget を dispose」の逆順で行う
+ * (v4.7.0 時点)。Monaco 0.55 の DiffEditorWidget はモデルを保持したままモデルが dispose されると
+ * BugIndicatingError('TextModel got disposed before DiffEditorWidget model got reset') を
+ * onUnexpectedError に流し、既定ハンドラーが setTimeout で再 throw するのでコンソールに
+ * Uncaught Error が出る (diffEditorWidget.js:238-243 / errors.js:9-19)。
+ * そこで keepCurrent* でモデルの所有権をこちらに移し、setModel(null) → dispose の正しい順で
+ * 自前に片付ける。
+ *
+ * DiffPane 本体ではなくこの粒度で分けているのは、DiffPane が生き残ったまま pair が null に戻る
+ * 経路 (HistoryTab / FileHistoryModal は DiffPane に key を付けず props だけ差し替えるため、
+ * setPair(null) で <DiffEditor> だけがアンマウントされる) でも cleanup を確実に走らせるため。
+ * cleanup を DiffPane の useEffect(..., []) に置くとこの経路を取り逃し、keepCurrent* だけが
+ * 効いてモデルがリークする (実測: 10 回切替でモデル 2 → 22)。
+ */
+function DisposableDiffEditor({
+  original,
+  modified,
+  language,
+  editorRef,
+}: {
+  original: string;
+  modified: string;
+  language: string | undefined;
+  /** DiffPane の revealHunk が使う ref。useRef 由来なので識別子は永続的に安定 */
+  editorRef: MutableRefObject<MonacoDiffEditor | null>;
+}) {
+  useEffect(
+    () => () => {
+      const editor = editorRef.current;
+      editorRef.current = null; // 親に stale 参照を残さない
+      if (!editor) return; // フェッチ完了前のアンマウントでは未生成
+      const models = editor.getModel();
+      editor.setModel(null); // 先に widget からモデルを外す (onWillDispose の購読も解ける)
+      models?.original?.dispose();
+      models?.modified?.dispose();
+    },
+    [editorRef],
+  );
+
+  return (
+    <DiffEditor
+      original={original}
+      modified={modified}
+      language={language}
+      theme="vs-dark"
+      // モデルの破棄は上の cleanup が担う。このフラグ「だけ」を足すと誰も dispose せず
+      // リークするので、必ず cleanup とセットで扱うこと。
+      keepCurrentOriginalModel
+      keepCurrentModifiedModel
+      onMount={(editor) => {
+        editorRef.current = editor;
+      }}
+      options={{
+        readOnly: true,
+        renderSideBySide: true,
+        automaticLayout: true,
+        minimap: { enabled: false },
+        scrollBeyondLastLine: false,
+        fontSize: 13,
+        renderOverviewRuler: true,
+        diffWordWrap: 'off',
+      }}
+    />
   );
 }

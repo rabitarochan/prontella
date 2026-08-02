@@ -1,6 +1,7 @@
 import type { StatusFile } from '../types';
 import ConflictResolvePane from './ConflictResolvePane';
 import DiffPane from './DiffPane';
+import { middleClickAutoscrollGuard, middleClickClose } from './editorTabs';
 import StashDiffPane from './StashDiffPane';
 
 /**
@@ -113,7 +114,7 @@ export default function DiffTabsPane({
         <div className="placeholder">ファイルを選択すると差分をタブで表示します</div>
       ) : (
         <>
-          <div className="editor-tabs">
+          <div className="editor-tabs" {...middleClickAutoscrollGuard}>
             {tabs.map((t) => (
               <div
                 key={t.key}
@@ -126,6 +127,7 @@ export default function DiffTabsPane({
                       : `${t.ref}: ${t.message}`
                 }
                 onClick={() => onActivate(t.key)}
+                {...middleClickClose(() => onClose(t.key))}
               >
                 <span
                   className={`codicon codicon-${t.kind === 'diff' ? 'diff' : t.kind === 'conflict' ? 'warning' : 'archive'}`}

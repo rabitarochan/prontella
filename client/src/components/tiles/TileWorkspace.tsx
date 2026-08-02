@@ -34,7 +34,13 @@ export default function TileWorkspace({
   const visited = visitedRef.current;
 
   return (
-    <div className="tile-workspace">
+    // TileWorkspace is rendered through TileGrid's createPortal (a React sibling of
+    // TilePane, not a descendant — React's synthetic events walk the fiber return path,
+    // not the DOM tree), so TilePane's own onMouseDownCapture (:74) never sees clicks
+    // inside this portal. Duplicate the same capture-phase focus handler here so clicking
+    // tile content (FilesTab / GitTab / TermPanel) focuses the leaf too; TilePane's
+    // handler stays for header clicks (tabs/split/close), which are outside the portal.
+    <div className="tile-workspace" onMouseDownCapture={() => actions.focusLeaf(leaf.id)}>
       {visited.has('files') && (
         <div className="tile-view" style={{ display: leaf.view === 'files' ? undefined : 'none' }}>
           <FilesTab root={worktree.path} leafId={leaf.id} />

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api } from './api';
+import { applyRepoMeta, isActive } from './repoSections';
 import type { Repo } from './types';
 
 export interface Selection {
@@ -15,6 +16,12 @@ interface DeckState {
   refresh: () => Promise<void>;
   select: (selection: Selection | null) => void;
   setError: (error: string | null) => void;
+  /** 楽観更新する。失敗したら退避しておいた直前の配列に戻し setError する。 */
+  reorderRepos: (order: string[]) => Promise<void>;
+  /** 楽観更新しない。成否を呼び出し側に返す(選択中 repo の扱いをサイドバー側で分岐させるため)。 */
+  setRepoPinned: (id: string, pinned: boolean) => Promise<boolean>;
+  /** 楽観更新しない。成否を呼び出し側に返す(理由は setRepoPinned と同じ)。 */
+  setRepoArchived: (id: string, archived: boolean) => Promise<boolean>;
 }
 
 const SELECTED_STORAGE_KEY = 'claude-deck.selected';
@@ -80,14 +87,69 @@ let restoreAttempted = false;
 // 再レンダーの引き金を作らないようにする。
 let lastReposJson: string | null = null;
 
+// repos 配列を変更する操作(並び替え/ピン留め/アーカイブ/追加/削除)の mutation epoch。
+// ポーリング refresh() が変異結果を踏み消すのを防ぐ (詳細は各関数のコメント参照)。
+let reposEpoch = 0;
+
+/**
+ * repos を変更する操作の開始時に呼ぶ。epoch を進めて、進行中の refresh() が
+ * このタイミングより後に古いレスポンスを適用しようとするのを無効化する。
+ * lastReposJson を null にする理由: 変異後のローカル状態は素の GET /api/repos の
+ * JSON を再現できないため、次に受理したレスポンスを必ず set() に通してサーバー
+ * 真理へ再同期させる。
+ */
+export function beginRepoMutation(): number {
+  reposEpoch += 1;
+  lastReposJson = null;
+  return reposEpoch;
+}
+
+/**
+ * 変異のレスポンス適用直前に呼ぶ。開始時の epoch と一致していれば(=自分より後に
+ * 別の変異が始まっていなければ)epoch をさらに進めて true を返す。一致しなければ
+ * 自分は割り込まれた古いレスポンスなので何もせず false を返す(呼び出し側は set() しない)。
+ *
+ * 完了時にも epoch を進めるのは、「変異開始→ポーリング開始→変異完了→ポーリング完了」の
+ * 順で両者の捕捉 epoch が一致してしまい、ポーリングの古いレスポンスが変異結果を
+ * 踏み消す事故を防ぐため(開始時の 1 回だけでは防げない)。
+ */
+function commitRepoMutation(epoch: number): boolean {
+  if (epoch !== reposEpoch) return false;
+  reposEpoch += 1;
+  return true;
+}
+
+/**
+ * 楽観更新用: order (id の完全な平坦列) に沿って repos を並べ替える。フラグ
+ * (pinned/archived) は変更しない。order に無い id は防御的に元の相対順で末尾に残す
+ * (通常は起こらない — moveWithinSection/moveByOffset は repos と同じ id 集合の順列を返す)。
+ */
+function reorderLocally(repos: Repo[], order: string[]): Repo[] {
+  const byId = new Map(repos.map((r) => [r.id, r] as const));
+  const seen = new Set<string>();
+  const result: Repo[] = [];
+  for (const id of order) {
+    const repo = byId.get(id);
+    if (!repo || seen.has(id)) continue;
+    seen.add(id);
+    result.push(repo);
+  }
+  for (const repo of repos) {
+    if (!seen.has(repo.id)) result.push(repo);
+  }
+  return result;
+}
+
 export const useDeck = create<DeckState>((set, get) => ({
   repos: [],
   loaded: false,
   selected: null,
   error: null,
   refresh: async () => {
+    const epoch = reposEpoch;
     try {
       const repos = await api.repos();
+      if (epoch !== reposEpoch) return; // 別の変異に割り込まれた古いレスポンス
       const reposJson = JSON.stringify(repos);
       const current = get();
       // 内容が前回と同一で、かつ既に loaded/エラー解消済み/復元試行済みなら
@@ -107,6 +169,7 @@ export const useDeck = create<DeckState>((set, get) => ({
         return { repos, loaded: true, error: null };
       });
     } catch (e) {
+      if (epoch !== reposEpoch) return; // 別の変異に割り込まれた古いレスポンス
       // repos は渡さず直前の一覧を保持し、エラーだけ表示する
       // (サーバー一時エラーで UI が即座に空にならないようにする)
       // ここでは restoreAttempted を立てない — 次回成功時に復元を再挑戦させる。
@@ -123,12 +186,57 @@ export const useDeck = create<DeckState>((set, get) => ({
     set({ selected });
   },
   setError: (error) => set({ error }),
+  reorderRepos: async (order) => {
+    const previous = get().repos;
+    const epoch = beginRepoMutation();
+    set({ repos: reorderLocally(previous, order) });
+    try {
+      const { repos: meta } = await api.reorderRepos(order);
+      if (!commitRepoMutation(epoch)) return;
+      const { repos: applied, needsRefresh } = applyRepoMeta(get().repos, meta);
+      set({ repos: applied });
+      if (needsRefresh) await get().refresh();
+    } catch (e) {
+      if (!commitRepoMutation(epoch)) return;
+      set({ repos: previous, error: e instanceof Error ? e.message : String(e) });
+    }
+  },
+  setRepoPinned: async (id, pinned) => {
+    const epoch = beginRepoMutation();
+    try {
+      const { repos: meta } = await api.setRepoFlags(id, { pinned });
+      if (!commitRepoMutation(epoch)) return false;
+      const { repos: applied, needsRefresh } = applyRepoMeta(get().repos, meta);
+      set({ repos: applied });
+      if (needsRefresh) await get().refresh();
+      return true;
+    } catch (e) {
+      if (!commitRepoMutation(epoch)) return false;
+      set({ error: e instanceof Error ? e.message : String(e) });
+      return false;
+    }
+  },
+  setRepoArchived: async (id, archived) => {
+    const epoch = beginRepoMutation();
+    try {
+      const { repos: meta } = await api.setRepoFlags(id, { archived });
+      if (!commitRepoMutation(epoch)) return false;
+      const { repos: applied, needsRefresh } = applyRepoMeta(get().repos, meta);
+      set({ repos: applied });
+      if (needsRefresh) await get().refresh();
+      return true;
+    } catch (e) {
+      if (!commitRepoMutation(epoch)) return false;
+      set({ error: e instanceof Error ? e.message : String(e) });
+      return false;
+    }
+  },
 }));
 
 export function findSelection(repos: Repo[], selected: Selection | null) {
   if (!selected) return null;
   const repo = repos.find((r) => r.id === selected.repoId);
-  if (!repo) return null;
+  if (!repo || !isActive(repo)) return null;
   const worktree = repo.worktrees.find((w) => w.path === selected.worktreePath);
   if (!worktree) return null;
   return { repo, worktree };

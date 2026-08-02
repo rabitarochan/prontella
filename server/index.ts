@@ -60,12 +60,38 @@ function queryStr(req: express.Request, name: string): string {
 
 // ---- repos -----------------------------------------------------------------
 
+// アクティブな repo の worktree を走査したときのパス配列(= 実際に PTY セッションの cwd になり得る
+// 場所)をここに憶えておく。アーカイブ済み repo は GET /api/repos で git を一切呼ばないため、
+// worktree 一覧を返せない代わりにここから前回値を返す(client の locateSession Tier2 が使う)。
+// 永続化しない・git を呼ばない。寿命は PTY セッションと一致する(サーバー再起動でセッションも
+// 消えるためキャッシュが空でも問題にならない)。
+const worktreeCache = new Map<string /* repoId */, string[] /* worktree paths */>();
+
+function toRepoMeta(repos: config.RepoConfig[]): Array<{ id: string; pinned: boolean; archived: boolean }> {
+  return repos.map((r) => ({ id: r.id, pinned: r.pinned === true, archived: r.archived === true }));
+}
+
 app.get('/api/repos', asyncHandler(async (_req, res) => {
   const { repos } = config.loadConfig();
   const result = await Promise.all(
     repos.map(async (repo) => {
+      // アーカイブ済みは git を一切呼ばない(fs.existsSync も resolveGitRoot も listWorktrees も
+      // getBranchStatus も呼ばない)。返す形は 6 キーちょうど固定。
+      if (repo.archived === true) {
+        return {
+          id: repo.id,
+          path: repo.path,
+          name: repo.name,
+          pinned: false,
+          archived: true,
+          knownWorktreePaths: worktreeCache.get(repo.id) ?? [],
+        };
+      }
       if (!fs.existsSync(repo.path)) {
-        return { ...repo, gitMode: 'none', worktrees: [], error: `ディレクトリーが存在しません: ${repo.path}` };
+        return {
+          ...repo, pinned: repo.pinned === true, archived: false,
+          gitMode: 'none', worktrees: [], error: `ディレクトリーが存在しません: ${repo.path}`,
+        };
       }
       const gitRoot = git.resolveGitRoot(repo.path);
       if (!gitRoot) {
@@ -74,7 +100,8 @@ app.get('/api/repos', asyncHandler(async (_req, res) => {
           path: repo.path, head: '', branch: null, isMain: true, locked: false,
           status: null, agent: ptyManager.statusFor(repo.path),
         };
-        return { ...repo, gitMode: 'none', worktrees: [pseudo], error: null };
+        worktreeCache.set(repo.id, [pseudo.path]);
+        return { ...repo, pinned: repo.pinned === true, archived: false, gitMode: 'none', worktrees: [pseudo], error: null };
       }
       if (gitRoot !== repo.path) {
         // subdir: git リポジトリー下位のディレクトリー。Git タブは repo 全体スコープ
@@ -94,9 +121,13 @@ app.get('/api/repos', asyncHandler(async (_req, res) => {
             isMain: true /* 削除✕を出さない */, locked: container?.locked ?? false,
             status, agent: ptyManager.statusFor(repo.path),
           };
-          return { ...repo, gitMode: 'subdir', worktrees: [entry], error: null };
+          worktreeCache.set(repo.id, [entry.path]);
+          return { ...repo, pinned: repo.pinned === true, archived: false, gitMode: 'subdir', worktrees: [entry], error: null };
         } catch (e) {
-          return { ...repo, gitMode: 'subdir', worktrees: [], error: e instanceof Error ? e.message : String(e) };
+          return {
+            ...repo, pinned: repo.pinned === true, archived: false,
+            gitMode: 'subdir', worktrees: [], error: e instanceof Error ? e.message : String(e),
+          };
         }
       }
       try {
@@ -112,9 +143,13 @@ app.get('/api/repos', asyncHandler(async (_req, res) => {
             return { ...wt, status, agent: ptyManager.statusFor(wt.path) };
           }),
         );
-        return { ...repo, gitMode: 'root', worktrees: detailed, error: null };
+        worktreeCache.set(repo.id, detailed.map((wt) => wt.path));
+        return { ...repo, pinned: repo.pinned === true, archived: false, gitMode: 'root', worktrees: detailed, error: null };
       } catch (e) {
-        return { ...repo, gitMode: 'root', worktrees: [], error: e instanceof Error ? e.message : String(e) };
+        return {
+          ...repo, pinned: repo.pinned === true, archived: false,
+          gitMode: 'root', worktrees: [], error: e instanceof Error ? e.message : String(e),
+        };
       }
     }),
   );
@@ -129,8 +164,39 @@ app.post('/api/repos', asyncHandler(async (req, res) => {
 
 app.delete('/api/repos/:id', asyncHandler(async (req, res) => {
   config.removeRepo(req.params.id);
+  worktreeCache.delete(req.params.id);
   res.json({ ok: true });
 }));
+
+// 並び替え。突合(未知 id 除去・欠落 id 末尾追加・重複排除)は config.reorderRepos(内部で
+// repoOrder.ts の reconcileOrder) に委譲する。400 を返す必要があるため asyncHandler(常に 500)
+// ではなく自前ラップにする(pj-git-route 定石)。
+app.put('/api/repos/order', (req, res) => {
+  const result = config.reorderRepos(req.body?.order);
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json({ repos: toRepoMeta(result.repos) });
+});
+
+// ピン留め/アーカイブの更新。未知 id は 404、検証エラー(非 boolean・両方同時指定)は 400。
+// id の存在は config.getRepo で先に確認する(applyFlags の ok:false は理由を問わず 1 種類の
+// エラー文字列しか返さないため、呼び出し側で 404/400 を切り分けるにはここで先に判定するのが
+// 一番簡潔)。
+app.patch('/api/repos/:id', (req, res) => {
+  if (!config.getRepo(req.params.id)) {
+    res.status(404).json({ error: 'リポジトリーが見つかりません' });
+    return;
+  }
+  const { pinned, archived } = (req.body ?? {}) as { pinned?: unknown; archived?: unknown };
+  const result = config.setRepoFlags(req.params.id, { pinned, archived });
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json({ repos: toRepoMeta(result.repos) });
+});
 
 app.get('/api/repos/:id/branches', asyncHandler(async (req, res) => {
   const repo = requireRepo(req);

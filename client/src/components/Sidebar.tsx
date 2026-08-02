@@ -1,18 +1,108 @@
-import { useState } from 'react';
+import { useEffect, useState, type DragEvent, type MouseEvent } from 'react';
 import { api } from '../api';
-import { useDeck } from '../store';
+import { loadPref, savePref } from '../agentEvents';
+import { beginRepoMutation, useDeck } from '../store';
 import { removeWorktreeLocalState } from '../editorState';
-import type { Repo } from '../types';
+import { isActive, isArchived, moveByOffset, moveWithinSection, sectionize } from '../repoSections';
+import type { ActiveRepo, ArchivedRepo, Repo } from '../types';
 import StatusBadge from './StatusBadge';
 import AddWorktreeModal from './AddWorktreeModal';
+import ContextMenu, { type ContextMenuItem } from './ContextMenu';
+
+const ARCHIVED_OPEN_KEY = 'deck3.sidebar.archivedOpen';
+
+// モジュールスコープ: dragover 中は dataTransfer.getData() が空文字を返す (protected mode) ため、
+// ドラッグ中の repo id はここに持つ (React state だと dragover ハンドラーの外側からは読めるが、
+// 同期性が保証しやすいモジュール変数の方を正とする)。アンマウント時に useEffect でリセットする。
+let draggingRepoId: string | null = null;
+
+type DropTarget = { id: string; position: 'before' | 'after' };
 
 export default function Sidebar() {
-  const { repos, selected, select, refresh, setError } = useDeck();
-  const [worktreeTarget, setWorktreeTarget] = useState<Repo | null>(null);
+  const {
+    repos,
+    selected,
+    select,
+    refresh,
+    setError,
+    reorderRepos,
+    setRepoPinned,
+    setRepoArchived,
+  } = useDeck();
+  const [worktreeTarget, setWorktreeTarget] = useState<ActiveRepo | null>(null);
+  const [archivedOpen, setArchivedOpen] = useState(() => loadPref(ARCHIVED_OPEN_KEY, false));
+  const [menu, setMenu] = useState<{ x: number; y: number; repo: Repo } | null>(null);
+  // .dragging / .drop-before / .drop-after の描画用 (draggingRepoId 自体はモジュール変数が正)
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
+
+  useEffect(() => {
+    return () => {
+      draggingRepoId = null;
+    };
+  }, []);
+
+  const { pinned, normal, archived } = sectionize(repos);
+
+  const dropPositionFor = (e: DragEvent<HTMLDivElement>): 'before' | 'after' => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+  };
+
+  const handleDragStart = (e: DragEvent<HTMLDivElement>, repo: Repo) => {
+    draggingRepoId = repo.id;
+    setDraggingId(repo.id);
+    e.dataTransfer.effectAllowed = 'move';
+    // Firefox はデータが 0 個だとドラッグを開始しない。値自体は dragover 中は読めない
+    // (protected mode) ので使わないが、setData 自体は必須。
+    e.dataTransfer.setData('text/plain', repo.id);
+  };
+
+  // Esc キャンセル時も発火する。状態クリアは drop ではなくここに置く (drop 後も必ず呼ばれる)。
+  const handleDragEnd = () => {
+    draggingRepoId = null;
+    setDraggingId(null);
+    setDropTarget(null);
+  };
+
+  // dragenter/dragover 共通ハンドラー。両方で e.preventDefault() を呼ばないと drop が発火しない。
+  // セクションを跨ぐ等 moveWithinSection が null を返す組み合わせでは preventDefault しない
+  // (= ブラウザーが「ドロップ不可」カーソルを出し、インジケーターも出さない・drop も発火しない)。
+  const handleDragOver = (e: DragEvent<HTMLDivElement>, repo: Repo) => {
+    if (!draggingRepoId || draggingRepoId === repo.id) return;
+    const position = dropPositionFor(e);
+    const order = moveWithinSection(repos, draggingRepoId, repo.id, position);
+    if (!order) {
+      setDropTarget((prev) => (prev === null ? prev : null));
+      return;
+    }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDropTarget((prev) =>
+      prev && prev.id === repo.id && prev.position === position ? prev : { id: repo.id, position },
+    );
+  };
+
+  const handleDrop = (e: DragEvent<HTMLDivElement>, repo: Repo) => {
+    e.preventDefault();
+    const draggedId = draggingRepoId;
+    if (!draggedId) return;
+    const order = moveWithinSection(repos, draggedId, repo.id, dropPositionFor(e));
+    if (order) void reorderRepos(order);
+  };
+
+  const toggleArchivedOpen = () => {
+    setArchivedOpen((prev) => {
+      const next = !prev;
+      savePref(ARCHIVED_OPEN_KEY, next);
+      return next;
+    });
+  };
 
   const addRepo = async () => {
     const path = prompt('追加するディレクトリーのパスを入力してください:');
     if (!path) return;
+    beginRepoMutation();
     try {
       await api.addRepo(path.trim());
       await refresh();
@@ -23,12 +113,13 @@ export default function Sidebar() {
 
   const removeRepo = async (repo: Repo) => {
     if (!confirm(`${repo.name} を Deck から削除しますか?\n(リポジトリー自体は削除されません)`)) return;
+    beginRepoMutation();
     await api.removeRepo(repo.id);
     if (selected?.repoId === repo.id) select(null);
     await refresh();
   };
 
-  const removeWorktree = async (repo: Repo, path: string) => {
+  const removeWorktree = async (repo: ActiveRepo, path: string) => {
     if (!confirm(`Worktree を削除しますか?\n${path}\n\n※ ディレクトリーごと削除されます`)) return;
     try {
       await api.removeWorktree(repo.id, path, false);
@@ -58,6 +149,198 @@ export default function Sidebar() {
     }
   };
 
+  // 選択中 repo のアーカイブは既存 removeRepo と同じ順序にする: API → select(null) → refresh()
+  // (setRepoArchived 自体は成功しても needsRefresh を返さない — アーカイブへの変換はローカルの
+  // applyRepoMeta だけで完結する — ので、選択解除後の再描画のために refresh() をここで呼ぶ)。
+  const archiveRepo = async (repo: ActiveRepo) => {
+    const hasBusyAgent = repo.worktrees.some(
+      (wt) => wt.agent.status === 'busy' || wt.agent.status === 'waiting',
+    );
+    if (hasBusyAgent) {
+      const ok = confirm(
+        'エージェントが動作中です。アーカイブすると状態表示が止まります(セッションは動き続けます)。続けますか?',
+      );
+      if (!ok) return;
+    }
+    const wasSelected = selected?.repoId === repo.id;
+    const ok = await setRepoArchived(repo.id, true);
+    if (ok && wasSelected) {
+      select(null);
+      await refresh();
+    }
+  };
+
+  // setRepoArchived(id, false) は needsRefresh を内部で処理する (archived→active は
+  // git データが要るため store 側が refresh() まで済ませる)。ここで追加の refresh() は不要。
+  const unarchiveRepo = async (repo: ArchivedRepo) => {
+    await setRepoArchived(repo.id, false);
+  };
+
+  const openMenu = (e: MouseEvent, repo: Repo) => {
+    e.preventDefault();
+    setMenu({ x: e.clientX, y: e.clientY, repo });
+  };
+
+  const menuItems = (repo: Repo): ContextMenuItem[] => {
+    const items: ContextMenuItem[] = [];
+    // アーカイブ済み行では「ピン留め」を出さない。ArchivedRepo.pinned は常に false なので
+    // ラベルは常に「ピン留め」になり、押すと applyFlags の相互排他で archived が落ちて
+    // アクティブ+ピン留めとして無言で復活してしまう。disabled ではなく非表示にする:
+    // これは「今は実行できない操作」(上へ/下へ移動の端のような)ではなく「この行の文脈に
+    // 存在しない操作」なので、グレーアウトだと理由が伝わらずかえって紛らわしい。
+    if (isActive(repo)) {
+      items.push({
+        label: repo.pinned ? 'ピン留めを解除' : 'ピン留め',
+        icon: 'pin',
+        onClick: () => void setRepoPinned(repo.id, !repo.pinned),
+      });
+    }
+    items.push(
+      {
+        label: isArchived(repo) ? 'アーカイブを解除' : 'アーカイブ',
+        icon: 'archive',
+        onClick: () => void (isArchived(repo) ? unarchiveRepo(repo) : archiveRepo(repo)),
+      },
+      {
+        label: '上へ移動',
+        icon: 'arrow-up',
+        disabled: moveByOffset(repos, repo.id, -1) === null,
+        onClick: () => {
+          const order = moveByOffset(repos, repo.id, -1);
+          if (order) void reorderRepos(order);
+        },
+      },
+      {
+        label: '下へ移動',
+        icon: 'arrow-down',
+        disabled: moveByOffset(repos, repo.id, 1) === null,
+        onClick: () => {
+          const order = moveByOffset(repos, repo.id, 1);
+          if (order) void reorderRepos(order);
+        },
+      },
+      {
+        label: 'Deck から削除',
+        icon: 'trash',
+        danger: true,
+        onClick: () => void removeRepo(repo),
+      },
+    );
+    return items;
+  };
+
+  const groupClassName = (repo: Repo, base: string): string => {
+    let cls = base;
+    if (draggingId === repo.id) cls += ' dragging';
+    if (dropTarget && dropTarget.id === repo.id) cls += ` drop-${dropTarget.position}`;
+    return cls;
+  };
+
+  const renderActiveRow = (repo: ActiveRepo) => (
+    <div key={repo.id} className={groupClassName(repo, 'repo-group')}>
+      <div
+        className="repo-row"
+        draggable
+        onDragStart={(e) => handleDragStart(e, repo)}
+        onDragEnd={handleDragEnd}
+        onDragEnter={(e) => handleDragOver(e, repo)}
+        onDragOver={(e) => handleDragOver(e, repo)}
+        onDrop={(e) => handleDrop(e, repo)}
+        onContextMenu={(e) => openMenu(e, repo)}
+      >
+        <span className="repo-name" title={repo.path}>
+          {repo.name}
+        </span>
+        <span className="repo-actions">
+          {repo.gitMode === 'root' && (
+            <button
+              className="icon-btn"
+              title="Worktree を追加"
+              draggable={false}
+              onClick={() => setWorktreeTarget(repo)}
+            >
+              ＋
+            </button>
+          )}
+          <button
+            className="icon-btn"
+            title="Deck から削除"
+            draggable={false}
+            onClick={() => void removeRepo(repo)}
+          >
+            ✕
+          </button>
+        </span>
+      </div>
+      {repo.error && <div className="repo-error">⚠ {repo.error}</div>}
+      {repo.worktrees.map((wt) => {
+        const active = selected?.worktreePath === wt.path;
+        const dirty =
+          (wt.status?.staged ?? 0) + (wt.status?.unstaged ?? 0) + (wt.status?.untracked ?? 0);
+        return (
+          <div
+            key={wt.path}
+            className={`wt-row ${active ? 'active' : ''}`}
+            onClick={() => select({ repoId: repo.id, worktreePath: wt.path })}
+            title={wt.path}
+          >
+            <StatusBadge status={wt.agent.status} compact />
+            <span className="wt-branch">
+              {repo.gitMode === 'none' ? '(Git なし)' : (wt.branch ?? `(detached ${wt.head})`)}
+              {repo.gitMode === 'root' && wt.isMain && <span className="wt-main-mark"> ●main</span>}
+            </span>
+            {dirty > 0 && <span className="wt-dirty">{dirty}</span>}
+            {!wt.isMain && (
+              <button
+                className="icon-btn wt-remove"
+                title="Worktree を削除"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void removeWorktree(repo, wt.path);
+                }}
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  // アーカイブ済み行: 名前のみ。StatusBadge/ブランチ名/変更数/＋/worktree 行は描画しない。
+  // 行クリックは no-op (onClick を持たせない)。DnD ハンドルは通常行と同じ .repo-row 上に持つ
+  // (右クリックメニューの「上へ移動/下へ移動」が既にこのセクションで動くため、DnD だけ無効に
+  // すると一貫性がない — moveWithinSection がセクション跨ぎを構造的に弾くので安全)。
+  const renderArchivedRow = (repo: ArchivedRepo) => (
+    <div key={repo.id} className={groupClassName(repo, 'repo-group')}>
+      <div
+        className="repo-row repo-row-archived"
+        draggable
+        onDragStart={(e) => handleDragStart(e, repo)}
+        onDragEnd={handleDragEnd}
+        onDragEnter={(e) => handleDragOver(e, repo)}
+        onDragOver={(e) => handleDragOver(e, repo)}
+        onDrop={(e) => handleDrop(e, repo)}
+        onContextMenu={(e) => openMenu(e, repo)}
+      >
+        <span className="repo-name" title={repo.path}>
+          {repo.name}
+        </span>
+        <span className="repo-actions">
+          <button
+            className="icon-btn"
+            title="アーカイブを解除"
+            draggable={false}
+            onClick={() => void unarchiveRepo(repo)}
+          >
+            ↺
+          </button>
+        </span>
+      </div>
+    </div>
+  );
+
   return (
     <aside className="sidebar">
       <div className="sidebar-head">
@@ -74,65 +357,32 @@ export default function Sidebar() {
             リポジトリーを追加してください
           </div>
         )}
-        {repos.map((repo) => (
-          <div key={repo.id} className="repo-group">
-            <div className="repo-row">
-              <span className="repo-name" title={repo.path}>
-                {repo.name}
-              </span>
-              <span className="repo-actions">
-                {repo.gitMode === 'root' && (
-                  <button
-                    className="icon-btn"
-                    title="Worktree を追加"
-                    onClick={() => setWorktreeTarget(repo)}
-                  >
-                    ＋
-                  </button>
-                )}
-                <button className="icon-btn" title="Deck から削除" onClick={() => void removeRepo(repo)}>
-                  ✕
-                </button>
-              </span>
-            </div>
-            {repo.error && <div className="repo-error">⚠ {repo.error}</div>}
-            {repo.worktrees.map((wt) => {
-              const active = selected?.worktreePath === wt.path;
-              const dirty =
-                (wt.status?.staged ?? 0) + (wt.status?.unstaged ?? 0) + (wt.status?.untracked ?? 0);
-              return (
-                <div
-                  key={wt.path}
-                  className={`wt-row ${active ? 'active' : ''}`}
-                  onClick={() => select({ repoId: repo.id, worktreePath: wt.path })}
-                  title={wt.path}
-                >
-                  <StatusBadge status={wt.agent.status} compact />
-                  <span className="wt-branch">
-                    {repo.gitMode === 'none' ? '(Git なし)' : (wt.branch ?? `(detached ${wt.head})`)}
-                    {repo.gitMode === 'root' && wt.isMain && <span className="wt-main-mark"> ●main</span>}
-                  </span>
-                  {dirty > 0 && <span className="wt-dirty">{dirty}</span>}
-                  {!wt.isMain && (
-                    <button
-                      className="icon-btn wt-remove"
-                      title="Worktree を削除"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void removeWorktree(repo, wt.path);
-                      }}
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+        {pinned.length > 0 && (
+          <>
+            <div className="sidebar-section-head">ピン留め</div>
+            {pinned.map(renderActiveRow)}
+          </>
+        )}
+        {normal.length > 0 && (
+          <div className={`sidebar-section-normal${pinned.length > 0 ? ' divider' : ''}`}>
+            {normal.map(renderActiveRow)}
           </div>
-        ))}
+        )}
+        {archived.length > 0 && (
+          <div className="sidebar-section-archived">
+            <button className="sidebar-section-head sidebar-section-toggle" onClick={toggleArchivedOpen}>
+              <span className={`codicon codicon-chevron-${archivedOpen ? 'down' : 'right'}`} />
+              アーカイブ済み ({archived.length})
+            </button>
+            {archivedOpen && archived.map(renderArchivedRow)}
+          </div>
+        )}
       </div>
       {worktreeTarget && (
         <AddWorktreeModal repo={worktreeTarget} onClose={() => setWorktreeTarget(null)} />
+      )}
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.repo)} onClose={() => setMenu(null)} />
       )}
     </aside>
   );

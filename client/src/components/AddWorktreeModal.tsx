@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useDeck } from '../store';
-import type { BranchInfo, Repo } from '../types';
+import type { ActiveRepo, BranchInfo } from '../types';
 
-export default function AddWorktreeModal({ repo, onClose }: { repo: Repo; onClose: () => void }) {
+export default function AddWorktreeModal({ repo, onClose }: { repo: ActiveRepo; onClose: () => void }) {
   const refresh = useDeck((s) => s.refresh);
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [mode, setMode] = useState<'existing' | 'new'>('new');

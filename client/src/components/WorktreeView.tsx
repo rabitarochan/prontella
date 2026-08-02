@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api } from '../api';
 import { useDeck } from '../store';
-import type { Repo, Worktree } from '../types';
+import type { ActiveRepo, Worktree } from '../types';
 import { useTerminalSessions } from '../layout/useTerminalSessions';
 import { useTileLayout } from '../layout/useTileLayout';
 import { useConfirm } from './ConfirmDialog';
@@ -15,7 +15,7 @@ import TileGrid from './tiles/TileGrid';
  * 各タイルが自分のタブ (ファイル / Git / ターミナル) を持ち、タイル内で
  * 切り替える。ターミナルはタイルごとのタブとして複数持てる。
  */
-export default function WorktreeView({ repo, worktree }: { repo: Repo; worktree: Worktree }) {
+export default function WorktreeView({ repo, worktree }: { repo: ActiveRepo; worktree: Worktree }) {
   const { refresh, setError } = useDeck();
   const [syncing, setSyncing] = useState<string | null>(null);
   const [syncMenu, setSyncMenu] = useState<{ x: number; y: number; kind: 'pull' | 'push' } | null>(

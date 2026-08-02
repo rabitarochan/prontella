@@ -1,17 +1,23 @@
+import { isActive, isArchived } from '../repoSections';
 import { useDeck } from '../store';
 import StatusBadge from './StatusBadge';
 
 export default function DeckView() {
   const { repos, select } = useDeck();
-  const cards = repos.flatMap((repo) =>
+  const cards = repos.filter(isActive).flatMap((repo) =>
     repo.worktrees.map((wt) => ({ repo, wt })),
   );
 
   if (cards.length === 0) {
+    const archivedCount = repos.filter(isArchived).length;
     return (
       <div className="placeholder">
         <h2>Claude Deck</h2>
-        <p>左のサイドバーからリポジトリーを追加すると、Worktree とエージェントの状態が一覧表示されます。</p>
+        {archivedCount > 0 ? (
+          <p>表示できる worktree がありません(アーカイブ済み {archivedCount} 件)</p>
+        ) : (
+          <p>左のサイドバーからリポジトリーを追加すると、Worktree とエージェントの状態が一覧表示されます。</p>
+        )}
       </div>
     );
   }

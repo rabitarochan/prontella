@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { connectAgentEvents, useAgentEvents, waitingSessions } from './agentEvents';
+import { isActive } from './repoSections';
 import { useDeck, findSelection } from './store';
 import { useSearchHotkeys } from './search/useSearchHotkeys';
 import type { FilesTabHandle } from './search/registry';
@@ -62,7 +63,7 @@ export default function App() {
         <span className="topbar-logo" onClick={() => useDeck.getState().select(null)}>
           ◆ Claude Deck
         </span>
-        <span className="topbar-sub">repos: {repos.length}</span>
+        <span className="topbar-sub">repos: {repos.filter(isActive).length}</span>
         <span className="topbar-right">
           {error && (
             <span className="topbar-error" onClick={() => setError(null)} title="クリックで閉じる">

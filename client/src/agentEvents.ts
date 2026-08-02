@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { chime, desktopNotify } from './notify';
+import { locateSession, normPath } from './sessionLocate';
 import { useDeck } from './store';
-import type { Repo, TerminalSession, Worktree } from './types';
+import type { ActiveRepo, TerminalSession, Worktree } from './types';
 
 // /ws/events を購読して全セッションのステータスを保持し、
 // 「要対応」への遷移 (→waiting, busy→idle) で通知を出すストア。
@@ -20,7 +21,9 @@ interface AgentEventsState {
   setSoundEnabled: (v: boolean) => void;
 }
 
-function loadPref(key: string, fallback: boolean): boolean {
+// Sidebar のアーカイブ折りたたみ永続化 (deck3.sidebar.archivedOpen) でも再利用する
+// 汎用の boolean pref ヘルパー。notify 専用ではないためここから export する。
+export function loadPref(key: string, fallback: boolean): boolean {
   try {
     const raw = localStorage.getItem(key);
     return raw === null ? fallback : raw === '1';
@@ -29,7 +32,7 @@ function loadPref(key: string, fallback: boolean): boolean {
   }
 }
 
-function savePref(key: string, value: boolean): void {
+export function savePref(key: string, value: boolean): void {
   try {
     localStorage.setItem(key, value ? '1' : '0');
   } catch {
@@ -51,22 +54,17 @@ export const useAgentEvents = create<AgentEventsState>((set) => ({
   },
 }));
 
-const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-
-/** セッションの cwd から登録済み worktree を引く (パス表記の揺れは正規化)。 */
-export function findWorktree(cwd: string): { repo: Repo; worktree: Worktree } | null {
-  const key = normPath(cwd);
-  for (const repo of useDeck.getState().repos) {
-    for (const worktree of repo.worktrees) {
-      if (normPath(worktree.path) === key) return { repo, worktree };
-    }
-  }
-  return null;
+/** セッションの cwd から登録済み worktree を引く (パス表記の揺れは正規化)。アーカイブ済み
+ *  repo に属するセッションは null (locateSession 経由。詳細は sessionLocate.ts)。 */
+export function findWorktree(cwd: string): { repo: ActiveRepo; worktree: Worktree } | null {
+  const location = locateSession(useDeck.getState().repos, cwd);
+  return location?.kind === 'worktree' ? { repo: location.repo, worktree: location.worktree } : null;
 }
 
 export function sessionLabel(session: TerminalSession): string {
-  const hit = findWorktree(session.cwd);
-  if (hit) return `${hit.repo.name} / ${hit.worktree.branch ?? '(detached)'}`;
+  const location = locateSession(useDeck.getState().repos, session.cwd);
+  if (location?.kind === 'worktree') return `${location.repo.name} / ${location.worktree.branch ?? '(detached)'}`;
+  if (location?.kind === 'archived') return `${location.repo.name} (アーカイブ済み)`;
   return session.cwd.split(/[\\/]/).pop() || session.cwd;
 }
 
@@ -76,9 +74,35 @@ export function waitingSessions(sessions: Record<string, TerminalSession>): Term
     .sort((a, b) => a.statusSince - b.statusSince);
 }
 
+/**
+ * cwd から選択先を解決して select() する。'archived' ならアーカイブ解除して再解決する
+ * (setRepoArchived は needsRefresh を内部で処理するため、ここで別途 refresh() は呼ばない)。
+ * 解決できたら true、できなければ false を返す。呼び出し側 (AttentionBell の pick() /
+ * デスクトップ通知クリック) で解決不能時の見せ方が異なる (D5: setError は使わずベルパネル内に
+ * 表示する) ため、失敗の表示自体はここでは行わない。
+ */
+export async function resolveAndSelect(cwd: string): Promise<boolean> {
+  const location = locateSession(useDeck.getState().repos, cwd);
+  if (location?.kind === 'worktree') {
+    useDeck.getState().select({ repoId: location.repo.id, worktreePath: location.worktree.path });
+    return true;
+  }
+  if (location?.kind === 'archived') {
+    const ok = await useDeck.getState().setRepoArchived(location.repo.id, false);
+    if (!ok) return false;
+    const relocated = locateSession(useDeck.getState().repos, cwd);
+    if (relocated?.kind !== 'worktree') return false;
+    useDeck.getState().select({ repoId: relocated.repo.id, worktreePath: relocated.worktree.path });
+    return true;
+  }
+  return false;
+}
+
+// デスクトップ通知クリック由来。エラーを表示する UI 面が無いため、解決不能時は
+// サイレントに諦める(既存の「何も起きない」挙動を維持。ベル経由のクリック
+// (AttentionBell の pick()) は別途エラーをパネル内に表示する)。
 function focusSession(session: TerminalSession): void {
-  const hit = findWorktree(session.cwd);
-  if (hit) useDeck.getState().select({ repoId: hit.repo.id, worktreePath: hit.worktree.path });
+  void resolveAndSelect(session.cwd);
 }
 
 function notify(kind: 'waiting' | 'done', session: TerminalSession): void {

@@ -34,13 +34,39 @@ export interface Worktree {
   agent: { status: AgentStatus; terminalId: string | null };
 }
 
-export interface Repo {
+// GET /api/repos のレスポンス形状。server/index.ts と手動同期(共有型機構がないため)。
+// archived を判別子とする discriminated union — アーカイブ済みは git を一切実行しないため
+// worktrees/gitMode/error を持たない(存在しないことを型で保証し、既存コードの
+// `repo.worktrees` 走査が無言で空配列を返す事故を防ぐ)。
+export interface ActiveRepo {
   id: string;
   path: string;
   name: string;
+  pinned: boolean;
+  archived: false;
+  gitMode: 'root' | 'subdir' | 'none'; // GET /api/repos が実行時判定で付与
   worktrees: Worktree[];
   error: string | null;
-  gitMode: 'root' | 'subdir' | 'none'; // GET /api/repos が実行時判定で付与 — server/index.ts と手動同期(共有型機構がないため)
+}
+
+export interface ArchivedRepo {
+  id: string;
+  path: string;
+  name: string;
+  pinned: false;
+  archived: true;
+  /** サーバーのメモリーキャッシュ由来。git は実行されない。無ければ [] */
+  knownWorktreePaths: string[];
+}
+
+export type Repo = ActiveRepo | ArchivedRepo;
+
+// PUT /api/repos/order・PATCH /api/repos/:id のレスポンス要素。server/index.ts と手動同期
+// (共有型機構がないため)。
+export interface RepoMeta {
+  id: string;
+  pinned: boolean;
+  archived: boolean;
 }
 
 export interface StatusFile {

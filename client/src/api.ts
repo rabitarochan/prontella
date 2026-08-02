@@ -13,6 +13,7 @@ import type {
   LogEntry,
   RemoteInfo,
   Repo,
+  RepoMeta,
   ResetMode,
   SearchTextResponse,
   StashEntry,
@@ -38,13 +39,33 @@ function post<T>(url: string, body: object): Promise<T> {
   });
 }
 
+function put<T>(url: string, body: object): Promise<T> {
+  return request<T>(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+function patch<T>(url: string, body: object): Promise<T> {
+  return request<T>(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 const q = encodeURIComponent;
 
 export const api = {
   repos: () => request<Repo[]>('/api/repos'),
-  addRepo: (path: string) => post<Repo>('/api/repos', { path }),
+  // サーバーは RepoConfig ({ id, path, name }) を返す。戻り値は未使用のため実害は無い。
+  addRepo: (path: string) => post<{ id: string; path: string; name: string }>('/api/repos', { path }),
   removeRepo: (id: string) => request<void>(`/api/repos/${id}`, { method: 'DELETE' }),
   branches: (repoId: string) => request<BranchInfo[]>(`/api/repos/${repoId}/branches`),
+  reorderRepos: (order: string[]) => put<{ repos: RepoMeta[] }>('/api/repos/order', { order }),
+  setRepoFlags: (id: string, flags: { pinned?: boolean } | { archived?: boolean }) =>
+    patch<{ repos: RepoMeta[] }>(`/api/repos/${id}`, flags),
 
   addWorktree: (repoId: string, body: { branch?: string; newBranch?: string; base?: string; path?: string }) =>
     post<{ ok: boolean; path: string }>(`/api/repos/${repoId}/worktrees`, body),

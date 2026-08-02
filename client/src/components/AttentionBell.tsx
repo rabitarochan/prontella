@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { findWorktree, useAgentEvents, waitingSessions } from '../agentEvents';
+import { findWorktree, resolveAndSelect, useAgentEvents, waitingSessions } from '../agentEvents';
 import { notificationPermission, requestNotificationPermission } from '../notify';
-import { useDeck } from '../store';
 import type { TerminalSession } from '../types';
 
 function elapsed(since: number, now: number): string {
@@ -25,10 +24,12 @@ export default function AttentionBell() {
   const soundEnabled = useAgentEvents((s) => s.soundEnabled);
   const setDesktopEnabled = useAgentEvents((s) => s.setDesktopEnabled);
   const setSoundEnabled = useAgentEvents((s) => s.setSoundEnabled);
-  const select = useDeck((s) => s.select);
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [permission, setPermission] = useState(notificationPermission());
+  // D5: 解決不能は setError (グローバルエラーバー) を使わずここに持つ。パネルを
+  // 閉じるまで消えない (成功したポーリングが 4 秒でエラーを消してしまうため)。
+  const [locateError, setLocateError] = useState<string | null>(null);
 
   const waiting = useMemo(() => waitingSessions(sessions), [sessions]);
   const idleAgents = useMemo(
@@ -46,10 +47,19 @@ export default function AttentionBell() {
     return () => clearInterval(timer);
   }, [open]);
 
-  const pick = (session: TerminalSession) => {
-    const hit = findWorktree(session.cwd);
-    if (hit) select({ repoId: hit.repo.id, worktreePath: hit.worktree.path });
-    setOpen(false);
+  // パネルを閉じたら次回開いたときは白紙から (D5 の「閉じるまで消えない」は開いている間の話)
+  useEffect(() => {
+    if (!open) setLocateError(null);
+  }, [open]);
+
+  const pick = async (session: TerminalSession) => {
+    const ok = await resolveAndSelect(session.cwd);
+    if (ok) {
+      setLocateError(null);
+      setOpen(false);
+    } else {
+      setLocateError(`このセッションの worktree を特定できません: ${session.cwd}`);
+    }
   };
 
   const toggleDesktop = async (checked: boolean) => {
@@ -63,7 +73,7 @@ export default function AttentionBell() {
   };
 
   const renderItem = (session: TerminalSession, dotCls: string) => (
-    <button key={session.id} className="bell-item" onClick={() => pick(session)}>
+    <button key={session.id} className="bell-item" onClick={() => void pick(session)}>
       <span className={`bell-dot ${dotCls}`} />
       <span className="bell-item-label" title={session.cwd}>
         {itemLabel(session)}
@@ -86,6 +96,7 @@ export default function AttentionBell() {
         <>
           <div className="bell-overlay" onClick={() => setOpen(false)} />
           <div className="bell-panel">
+            {locateError && <div className="bell-error">⚠ {locateError}</div>}
             <div className="bell-section-title">確認待ち{waiting.length > 0 && ` (${waiting.length})`}</div>
             {waiting.length === 0 ? (
               <div className="bell-empty">対応が必要なエージェントはありません</div>

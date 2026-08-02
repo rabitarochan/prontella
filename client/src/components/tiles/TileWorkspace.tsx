@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import type { Repo, TerminalSession, Worktree } from '../../types';
+import type { ActiveRepo, TerminalSession, Worktree } from '../../types';
 import type { LeafNode, TileView } from '../../layout/tileTree';
 import type { TileActions } from '../../layout/useTileLayout';
 import FilesTab from '../FilesTab';
@@ -24,7 +24,7 @@ export default function TileWorkspace({
   actions,
 }: {
   leaf: LeafNode;
-  repo: Repo;
+  repo: ActiveRepo;
   worktree: Worktree;
   sessions: TerminalSession[] | null;
   actions: TileActions;

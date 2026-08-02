@@ -187,8 +187,57 @@ textarea:focus {
   text-align: center;
   line-height: 1.8;
 }
+.sidebar-section-head {
+  padding: 6px 12px 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+}
+.sidebar-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.sidebar-section-toggle:hover {
+  background: var(--bg-hover);
+}
+.sidebar-section-toggle .codicon {
+  font-size: 12px !important;
+  flex-shrink: 0;
+}
+/* ピン留めセクションがある場合のみ、通常セクションとの境界に 1px 引く */
+.sidebar-section-normal.divider {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+.sidebar-section-archived {
+  margin-top: 4px;
+}
 .repo-group {
   margin-bottom: 6px;
+}
+/* T5 (DnD): ドラッグ単位は .repo-group(worktree 行も含めて一緒に動く見た目)、
+   ハンドルは .repo-row のみ。worktree 行 (.wt-row) は draggable にしない
+   (セクション跨ぎドロップは無効 — moveWithinSection が構造的に弾く)。 */
+.repo-group.dragging {
+  opacity: 0.5;
+}
+/* DOM に隙間を挿入する方式は取らない(レイアウトが動きポインターが行外に出てちらつく)。
+   box-shadow の inset 線だけで位置を示す。 */
+.repo-group.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.repo-group.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 .repo-row {
   display: flex;
@@ -196,12 +245,20 @@ textarea:focus {
   justify-content: space-between;
   padding: 4px 12px;
   font-weight: 600;
+  cursor: grab;
+}
+.repo-group.dragging .repo-row {
+  cursor: grabbing;
 }
 .repo-row .repo-actions {
   visibility: hidden;
 }
 .repo-row:hover .repo-actions {
   visibility: visible;
+}
+.repo-row-archived .repo-name {
+  color: var(--fg-dim);
+  font-weight: 400;
 }
 .repo-error {
   color: var(--red);
@@ -2164,6 +2221,11 @@ button.context-menu-item:hover:not(:disabled) {
   font-size: 11px;
   color: var(--fg-dim);
   padding: 4px 6px 2px;
+}
+.bell-error {
+  color: var(--red);
+  font-size: 12px;
+  padding: 4px 6px;
 }
 .bell-empty {
   color: var(--fg-dim);

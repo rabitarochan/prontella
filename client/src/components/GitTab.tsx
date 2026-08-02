@@ -2,11 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { useDeck } from '../store';
 import type {
+  ActiveRepo,
   BranchInfo,
   GitOperation,
   GitOperationAction,
   RemoteInfo,
-  Repo,
   StashEntry,
   StatusFile,
   TagInfo,
@@ -40,7 +40,7 @@ export default function GitTab({
   visible,
   leafId,
 }: {
-  repo: Repo;
+  repo: ActiveRepo;
   worktree: Worktree;
   /** このタイルが現在表示中(タイルのタブが 'git')かどうか。非表示中はポーリングを止める。 */
   visible: boolean;

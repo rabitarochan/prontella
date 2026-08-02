@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Group, Panel, Separator } from 'react-resizable-panels';
-import type { Repo, TerminalSession, Worktree } from '../../types';
+import type { ActiveRepo, TerminalSession, Worktree } from '../../types';
 import { leaves, type TileNode } from '../../layout/tileTree';
 import type { TileActions } from '../../layout/useTileLayout';
 import TilePane from './TilePane';
@@ -23,7 +23,7 @@ export default function TileGrid({
   sessions,
   actions,
 }: {
-  repo: Repo;
+  repo: ActiveRepo;
   worktree: Worktree;
   sessions: TerminalSession[] | null;
   actions: TileActions;

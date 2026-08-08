@@ -181,7 +181,7 @@ export default function ChangesTab({
   return (
     <div className="changes-pane">
       <div className="changes-list">
-        {error && <div className="modal-error">⚠ {error}</div>}
+        {error && <div className="my-2 text-xs whitespace-pre-wrap text-[var(--status-red)]">⚠ {error}</div>}
         <div className="changes-section">
           <div className="changes-section-head">
             <span>ステージ済み ({stagedFiles.length})</span>

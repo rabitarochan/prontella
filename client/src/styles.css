@@ -1520,7 +1520,7 @@ button.context-menu-item:hover:not(:disabled) {
   border-bottom-color: var(--accent);
 }
 .tile-tab .codicon {
-  font-size: 13px;
+  font-size: 13px !important;
 }
 .tile-tab-count {
   font-size: 10px;

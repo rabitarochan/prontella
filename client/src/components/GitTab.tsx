@@ -207,26 +207,50 @@ export default function GitTab({
     }
   };
 
-  const createBranch = () => {
-    const name = prompt('新しいブランチ名 (現在の HEAD から作成して切り替え):');
+  const createBranch = async () => {
+    const name = await promptDialog({
+      title: 'ブランチを作成',
+      message: '新しいブランチ名 (現在の HEAD から作成して切り替え):',
+      confirmLabel: '作成',
+    });
     if (!name?.trim()) return;
     void act(() => api.switchBranch(dir, name.trim(), true), `${name.trim()} を作成しました`);
   };
 
-  const stashCurrent = () => {
-    const msg = prompt('スタッシュのメッセージ (省略可):');
+  const stashCurrent = async () => {
+    const msg = await promptDialog({
+      title: 'スタッシュ',
+      message: 'スタッシュのメッセージ (省略可):',
+      confirmLabel: 'スタッシュ',
+      allowEmpty: true,
+    });
     if (msg === null) return;
     void act(() => api.stashPush(dir, msg || undefined), 'スタッシュしました');
   };
 
-  const deleteBranch = (branch: string) => {
-    if (!confirm(`ブランチ ${branch} を削除しますか?`)) return;
+  const deleteBranch = async (branch: string) => {
+    if (
+      !(await confirmDialog({
+        title: 'ブランチを削除',
+        message: `ブランチ ${branch} を削除しますか?`,
+        confirmLabel: '削除',
+        severity: 'danger',
+      }))
+    )
+      return;
     void act(async () => {
       try {
         await api.deleteBranch(dir, branch);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        if (confirm(`削除に失敗しました:\n${msg}\n\nマージされていないコミットごと強制削除しますか?`)) {
+        if (
+          await confirmDialog({
+            title: 'ブランチを強制削除',
+            message: `削除に失敗しました:\n${msg}\n\nマージされていないコミットごと強制削除しますか?`,
+            confirmLabel: '強制削除',
+            severity: 'danger',
+          })
+        ) {
           await api.deleteBranch(dir, branch, true);
         } else {
           throw e;
@@ -390,7 +414,7 @@ export default function GitTab({
         icon: 'trash',
         disabled: busy || usedElsewhere || isCurrent,
         danger: true,
-        onClick: () => deleteBranch(b.name),
+        onClick: () => void deleteBranch(b.name),
       },
       {
         label: 'upstream からフェッチして早送り',
@@ -510,7 +534,7 @@ export default function GitTab({
     void act(() => api.removeRemote(dir, r.name), `${r.name} を削除しました`);
   };
 
-  // タグ名は PromptDialog (必須入力) で、メッセージは stashCurrent と同じ native prompt() で
+  // タグ名もメッセージも PromptDialog で受ける (メッセージは allowEmpty で省略可)。
   // 取る (空入力を許す必要があるため — PromptDialog は空文字での確定を許さない設計)。
   // メッセージ入力をキャンセル (null) した場合は addRemote の name→url 2 段プロンプトと同様、
   // タグ作成自体を中止する。
@@ -522,7 +546,12 @@ export default function GitTab({
       confirmLabel: '次へ',
     });
     if (!name) return;
-    const msg = prompt('タグのメッセージ (省略可。入力すると注釈付きタグになります):');
+    const msg = await promptDialog({
+      title: '新しいタグを作成',
+      message: 'タグのメッセージ (省略可。入力すると注釈付きタグになります):',
+      confirmLabel: '作成',
+      allowEmpty: true,
+    });
     if (msg === null) return;
     void act(() => api.createTag(dir, name, msg || undefined), `${name} を作成しました`);
   };
@@ -632,7 +661,7 @@ export default function GitTab({
         {sectionHead('ブランチ', openLocal, () => setOpenLocal((v) => !v), {
           icon: 'add',
           title: '新しいブランチを作成',
-          onClick: createBranch,
+          onClick: () => void createBranch(),
         })}
         {openLocal && (
           <BranchTree
@@ -693,7 +722,7 @@ export default function GitTab({
         {sectionHead('スタッシュ', openStash, () => setOpenStash((v) => !v), {
           icon: 'archive',
           title: '現在の変更をスタッシュ (未追跡ファイル含む)',
-          onClick: stashCurrent,
+          onClick: () => void stashCurrent(),
         })}
         {openStash &&
           (stashes.length === 0 ? (
@@ -737,9 +766,18 @@ export default function GitTab({
                     disabled={busy}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (confirm(`${s.ref} を削除しますか?\n${s.message}`)) {
-                        void act(() => api.stashDrop(dir, s.ref), '削除しました');
-                      }
+                      void (async () => {
+                        if (
+                          await confirmDialog({
+                            title: 'スタッシュを削除',
+                            message: `${s.ref} を削除しますか?\n${s.message}`,
+                            confirmLabel: '削除',
+                            severity: 'danger',
+                          })
+                        ) {
+                          void act(() => api.stashDrop(dir, s.ref), '削除しました');
+                        }
+                      })();
                     }}
                   >
                     <span className="codicon codicon-trash" />

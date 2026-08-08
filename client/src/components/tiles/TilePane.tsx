@@ -2,6 +2,7 @@ import { useCallback, useEffect } from 'react';
 import type { AgentStatus, TerminalSession } from '../../types';
 import type { LeafNode, TileView } from '../../layout/tileTree';
 import type { TileActions } from '../../layout/useTileLayout';
+import { useConfirm } from '../ConfirmDialog';
 import StatusBadge from '../StatusBadge';
 
 const VIEWS: { view: TileView; label: string; icon: string }[] = [
@@ -40,6 +41,7 @@ export default function TilePane({
   actions: TileActions;
   host: HTMLDivElement;
 }) {
+  const { confirm: confirmDialog, dialog } = useConfirm();
   // A DOM move (host re-append after a split/close elsewhere) drops focus;
   // give it back to the focused terminal. Mount-only: focus changes from
   // clicks are handled by the browser itself.
@@ -57,11 +59,17 @@ export default function TilePane({
     [host],
   );
 
-  const close = () => {
+  const close = async () => {
     // FilesTab marks unsaved tabs with .editor-tab-dirty — closing the tile
     // would silently discard those drafts.
     if (host.querySelector('.editor-tab-dirty')) {
-      if (!confirm('未保存の変更があります。タイルを閉じますか?')) return;
+      const ok = await confirmDialog({
+        title: 'タイルを閉じる',
+        message: '未保存の変更があります。タイルを閉じますか?',
+        confirmLabel: '閉じる',
+        severity: 'danger',
+      });
+      if (!ok) return;
     }
     void actions.close(leaf.id);
   };
@@ -106,12 +114,13 @@ export default function TilePane({
           >
             <span className="codicon codicon-split-vertical" />
           </button>
-          <button className="icon-btn" title="タイルを閉じる" onClick={close}>
+          <button className="icon-btn" title="タイルを閉じる" onClick={() => void close()}>
             <span className="codicon codicon-close" />
           </button>
         </span>
       </header>
       <div className="tile-body" ref={adoptHost} />
+      {dialog}
     </section>
   );
 }

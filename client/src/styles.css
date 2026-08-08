@@ -2,6 +2,9 @@
 
 * {
   box-sizing: border-box;
+  /* テーマ追従の細スクロールバー(Chromium 121+ / Firefox)。色はトークン連動 */
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-active) transparent;
 }
 
 body {
@@ -12,33 +15,41 @@ body {
   overflow: hidden;
 }
 
+/* 未移行のレガシーボタンにも shadcn の見た目(secondary 相当)を適用する。
+   border は transparent 1px で寸法を旧ルールと揃える(レイアウトを動かさない) */
 button {
   font: inherit;
   color: inherit;
-  background: var(--bg-active);
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  background: var(--secondary);
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) - 2px);
   padding: 3px 10px;
   cursor: pointer;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
 }
 button:hover:not(:disabled) {
-  background: var(--bg-hover);
-  border-color: var(--fg-dim);
+  background: var(--surface-active);
+}
+button:focus-visible {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
 }
 button:disabled {
-  opacity: 0.45;
+  opacity: 0.5;
   cursor: default;
 }
 button.primary {
-  background: var(--primary-dim);
-  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 button.primary:hover:not(:disabled) {
-  background: var(--primary);
+  background: color-mix(in srgb, var(--primary) 88%, var(--background));
 }
 button.danger {
   background: var(--destructive);
-  border-color: var(--red);
   color: var(--destructive-foreground);
 }
 button.danger:hover:not(:disabled) {
@@ -50,15 +61,20 @@ select,
 textarea {
   font: inherit;
   color: var(--fg);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  background: transparent;
+  border: 1px solid var(--input);
+  border-radius: calc(var(--radius) - 2px);
   padding: 4px 8px;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
 }
 input:focus,
 select:focus,
 textarea:focus {
-  outline: 1px solid var(--primary);
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
 }
 
 .icon-btn {
@@ -440,22 +456,38 @@ textarea:focus {
 }
 /* ---- resizable panes (react-resizable-panels) ---- */
 
+/* shadcn Resizable 風: 通常時は 4px のヒット領域の中央に 1px のヘアライン、
+   ホバー / ドラッグ中はリング色の面にする(コンポーネント置換はしない —
+   Portal 不変条件を持つ TileGrid に触れないための CSS のみの restyle) */
 .pane-separator {
-  background: var(--border);
   transition: background 0.15s;
 }
 .pane-separator:hover,
 .pane-separator[data-separator='active'],
 .pane-separator[data-separator='focus'] {
-  background: var(--primary);
+  background: var(--ring);
 }
 /* between vertically stacked panels */
 .pane-separator-v {
   height: 4px;
+  background: linear-gradient(
+    to bottom,
+    transparent calc(50% - 0.5px),
+    var(--border) calc(50% - 0.5px),
+    var(--border) calc(50% + 0.5px),
+    transparent calc(50% + 0.5px)
+  );
 }
 /* between side-by-side panels */
 .pane-separator-h {
   width: 4px;
+  background: linear-gradient(
+    to right,
+    transparent calc(50% - 0.5px),
+    var(--border) calc(50% - 0.5px),
+    var(--border) calc(50% + 0.5px),
+    transparent calc(50% + 0.5px)
+  );
 }
 
 /* ---- files tab ---- */

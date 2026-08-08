@@ -10,6 +10,8 @@
  * 混入しても DOM への注入経路にはならない。
  */
 import * as monaco from 'monaco-editor';
+import { monacoThemeName } from '../theme/monacoTheme';
+import { useTheme } from '../theme/themeStore';
 import DOMPurify from 'dompurify';
 
 // フェンスの情報文字列 (```ts / ```bash など) → monaco の言語 ID への逆引き索引。
@@ -59,7 +61,7 @@ export function ensureColorizeTheme(): void {
     themeEnsured = true;
     return;
   }
-  monaco.editor.setTheme('vs-dark');
+  monaco.editor.setTheme(monacoThemeName(useTheme.getState().resolved));
   const host = document.createElement('div');
   host.style.position = 'fixed';
   host.style.top = '-10000px';
@@ -68,7 +70,11 @@ export function ensureColorizeTheme(): void {
   host.style.height = '10px';
   host.style.overflow = 'hidden';
   document.body.appendChild(host);
-  const editor = monaco.editor.create(host, { value: '', theme: 'vs-dark', automaticLayout: false });
+  const editor = monaco.editor.create(host, {
+    value: '',
+    theme: monacoThemeName(useTheme.getState().resolved),
+    automaticLayout: false,
+  });
   editor.dispose();
   host.remove();
   themeEnsured = true;

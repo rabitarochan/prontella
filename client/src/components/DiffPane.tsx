@@ -3,6 +3,8 @@ import { DiffEditor, type MonacoDiffEditor } from '@monaco-editor/react';
 import { api } from '../api';
 import { languageFor } from '../monaco-setup';
 import { parseHunkHeader } from '../diffHunk';
+import { monacoThemeName } from '../theme/monacoTheme';
+import { useTheme } from '../theme/themeStore';
 import type { DiffHunk, DiffPair } from '../types';
 import DiffHunkStrip from './DiffHunkStrip';
 
@@ -128,6 +130,7 @@ function DisposableDiffEditor({
   /** DiffPane の revealHunk が使う ref。useRef 由来なので識別子は永続的に安定 */
   editorRef: MutableRefObject<MonacoDiffEditor | null>;
 }) {
+  const resolvedTheme = useTheme((s) => s.resolved);
   useEffect(
     () => () => {
       const editor = editorRef.current;
@@ -146,7 +149,7 @@ function DisposableDiffEditor({
       original={original}
       modified={modified}
       language={language}
-      theme="vs-dark"
+      theme={monacoThemeName(resolvedTheme)}
       // モデルの破棄は上の cleanup が担う。このフラグ「だけ」を足すと誰も dispose せず
       // リークするので、必ず cleanup とセットで扱うこと。
       keepCurrentOriginalModel

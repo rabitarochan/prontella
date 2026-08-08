@@ -3,6 +3,8 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { WebglAddon } from '@xterm/addon-webgl';
+import { useTheme } from '../theme/themeStore';
+import { terminalTheme } from '../theme/terminalTheme';
 
 /**
  * One xterm.js instance bound to a PTY session (/ws/term). Mounted once per
@@ -117,12 +119,10 @@ export default function XTermView({
       fontSize: 13,
       cursorBlink: true,
       scrollback: 5000,
-      theme: {
-        background: '#1b1b20',
-        foreground: '#d4d4d4',
-        cursor: '#d4d4d4',
-        selectionBackground: '#264f78',
-      },
+      // テーマ変更はマウント後に options.theme の代入で追従する(下の effect)。
+      // この生成 effect の依存に resolved を入れるとターミナルごと remount して
+      // スクロールバックと WebSocket が失われるため、初期値は getState で読む。
+      theme: terminalTheme(useTheme.getState().resolved),
     });
     termRef.current = term;
     const fit = new FitAddon();
@@ -210,6 +210,14 @@ export default function XTermView({
     syncWebgl(visible);
     if (visible) containerRef.current?.querySelector('textarea')?.focus();
   }, [visible]);
+
+  // テーマ切り替えは options.theme の実行時代入で即再描画される。
+  // インスタンスは保持されるためスクロールバックも WebSocket も無傷。
+  const resolvedTheme = useTheme((s) => s.resolved);
+  useEffect(() => {
+    const term = termRef.current;
+    if (term) term.options.theme = terminalTheme(resolvedTheme);
+  }, [resolvedTheme]);
 
   return (
     <div

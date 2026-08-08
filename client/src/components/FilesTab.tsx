@@ -14,6 +14,8 @@ import {
 } from '../editorState';
 import { isMarkdownPath } from '../markdown/paths';
 import { registerFilesTab, touchFilesTab, unregisterFilesTab } from '../search/registry';
+import { monacoThemeName } from '../theme/monacoTheme';
+import { useTheme } from '../theme/themeStore';
 import BlameModal from './BlameModal';
 import { useConfirm } from './ConfirmDialog';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
@@ -149,6 +151,9 @@ function disposeModelsSoon(paths: string[]) {
 }
 
 export default function FilesTab({ root, leafId }: { root: string; leafId: string }) {
+  // theme prop が古い値のまま Editor が再マウントされるとグローバルテーマを
+  // 巻き戻してしまうため、常に現在の解決済みテーマを渡す
+  const resolvedTheme = useTheme((s) => s.resolved);
   // Restored exactly once at mount (lazy initializer — NOT re-evaluated on
   // re-render). Root changes after mount are handled explicitly by the root
   // effect below, which re-reads storage itself, so this value is never
@@ -1079,7 +1084,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
                     onChange={onChange}
                     onMount={onMount}
                     keepCurrentModel
-                    theme="vs-dark"
+                    theme={monacoThemeName(resolvedTheme)}
                     options={EDITOR_OPTIONS}
                   />
                 </div>

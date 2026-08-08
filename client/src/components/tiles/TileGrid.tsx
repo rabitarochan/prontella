@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef } from 'react';
+import { Fragment, useEffect, useRef, type JSX } from 'react';
 import { createPortal } from 'react-dom';
 import { Group, Panel, Separator } from 'react-resizable-panels';
 import type { ActiveRepo, TerminalSession, Worktree } from '../../types';

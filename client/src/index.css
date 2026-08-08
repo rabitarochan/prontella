@@ -110,7 +110,6 @@
 /*
  * 旧変数エイリアス。既存 styles.css(2,600 行超)を書き換えずに両テーマ対応
  * させるための写像。--border は新旧同名のためエイリアス不要(自己参照は無効)。
- * --accent / --accent-dim は --primary への置換完了までの暫定エイリアス。
  */
 :root {
   --bg: var(--background);
@@ -124,8 +123,6 @@
   --orange: var(--status-orange);
   --red: var(--status-red);
   --blue: var(--status-blue);
-  --accent: var(--primary);
-  --accent-dim: var(--primary-dim);
   font-size: 13px;
 }
 

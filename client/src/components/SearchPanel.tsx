@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { cn } from '@/lib/utils';
 import { api } from '../api';
 import type { SearchTextResponse } from '../types';
 import { fileIcon } from './FileTree';
@@ -136,28 +139,39 @@ export default function SearchPanel({
   return (
     <div className="search-panel">
       <div className="search-input-row">
-        <input
+        <Input
           ref={inputRef}
+          className="h-7"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onInputKeyDown}
           placeholder="検索"
           spellCheck={false}
         />
-        <button
-          className={`search-toggle ${caseSensitive ? 'active' : ''}`}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className={cn(
+            'text-muted-foreground shrink-0 font-mono text-xs',
+            caseSensitive && 'bg-accent text-accent-foreground',
+          )}
           title="大文字と小文字を区別"
           onClick={() => setCaseSensitive((v) => !v)}
         >
           Aa
-        </button>
-        <button
-          className={`search-toggle ${useRegex ? 'active' : ''}`}
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className={cn(
+            'text-muted-foreground shrink-0 font-mono text-xs',
+            useRegex && 'bg-accent text-accent-foreground',
+          )}
           title="正規表現を使用"
           onClick={() => setUseRegex((v) => !v)}
         >
           .*
-        </button>
+        </Button>
       </div>
       {error && <div className="search-error">⚠ {error}</div>}
       {data && (

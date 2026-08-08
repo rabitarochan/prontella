@@ -1,5 +1,15 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { useCallback, useRef, useState, type ReactNode } from 'react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { buttonVariants } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 export interface ConfirmRequest {
   title: string;
@@ -10,7 +20,8 @@ export interface ConfirmRequest {
   severity?: 'normal' | 'danger';
 }
 
-/** AddWorktreeModal と同じ modal-backdrop / modal パターンの汎用確認ダイアログ。 */
+/** shadcn AlertDialog ベースの汎用確認ダイアログ。Radix が body へポータルするため、
+ *  タイルの container-type に閉じ込められる問題 (旧実装のコメント参照) は構造的に起きない。 */
 export default function ConfirmDialog({
   title,
   message,
@@ -28,37 +39,34 @@ export default function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onCancel]);
-
-  // .modal-backdrop は position:fixed だが、.tile-pane に container: tile / inline-size
-  // (styles.css:1418) が付いており container-type は fixed 要素の包含ブロックを作る。
-  // そのためタイル内 (ポータルホスト .tile-host { position:absolute; inset:0; overflow:hidden })
-  // から描画するとダイアログがタイルに閉じ込められ、width:460px 固定の .modal は狭いタイルで
-  // クリップされてボタンが押せなくなる。body へポータルしてビューポート全面に戻す。
-  return createPortal(
-    <div className="modal-backdrop" onClick={onCancel}>
-      <div className="modal confirm-dialog" onClick={(e) => e.stopPropagation()}>
-        <h3>{title}</h3>
-        <div className="confirm-message">{message}</div>
-        <div className="modal-actions">
-          <button onClick={onCancel}>{cancelLabel}</button>
-          <button
-            className={severity === 'danger' ? 'danger' : 'primary'}
-            autoFocus
+  const actionRef = useRef<HTMLButtonElement>(null);
+  return (
+    <AlertDialog open onOpenChange={(open) => !open && onCancel()}>
+      <AlertDialogContent
+        // Radix の既定はキャンセル側フォーカスだが、既存 UX は「Enter で実行」なので
+        // 実行ボタンへフォーカスを移す
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          actionRef.current?.focus();
+        }}
+      >
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+        </AlertDialogHeader>
+        {/* message は ReactNode (ブロック要素を含み得る) のため Description(<p>) は使わない */}
+        <div className="text-muted-foreground text-sm">{message}</div>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={onCancel}>{cancelLabel}</AlertDialogCancel>
+          <AlertDialogAction
+            ref={actionRef}
+            className={cn(severity === 'danger' && buttonVariants({ variant: 'destructive' }))}
             onClick={onConfirm}
           >
             {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body,
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

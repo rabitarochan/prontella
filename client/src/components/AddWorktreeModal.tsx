@@ -1,4 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { api } from '../api';
 import { useDeck } from '../store';
 import type { ActiveRepo, BranchInfo } from '../types';
@@ -13,6 +23,7 @@ export default function AddWorktreeModal({ repo, onClose }: { repo: ActiveRepo; 
   const [path, setPath] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const branchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     api
@@ -49,74 +60,86 @@ export default function AddWorktreeModal({ repo, onClose }: { repo: ActiveRepo; 
   const locals = branches.filter((b) => !b.remote);
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Worktree を追加 — {repo.name}</h3>
-        <div className="modal-row">
-          <label>
-            <input type="radio" checked={mode === 'new'} onChange={() => setMode('new')} />
-            新しいブランチを作成
-          </label>
-          <label>
-            <input type="radio" checked={mode === 'existing'} onChange={() => setMode('existing')} />
-            既存のブランチ
-          </label>
-        </div>
-        {mode === 'new' ? (
-          <>
-            <div className="modal-row">
-              <label className="modal-label">ブランチ名</label>
-              <input
-                value={newBranch}
-                onChange={(e) => setNewBranch(e.target.value)}
-                placeholder="feature/awesome"
-                autoFocus
-              />
-            </div>
-            <div className="modal-row">
-              <label className="modal-label">作成元 (base)</label>
-              <select value={base} onChange={(e) => setBase(e.target.value)}>
-                {branches.map((b) => (
-                  <option key={b.name} value={b.name}>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          branchInputRef.current?.focus();
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle>Worktree を追加 — {repo.name}</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <div className="flex items-center gap-5 text-sm">
+            <label className="flex items-center gap-1.5">
+              <input type="radio" checked={mode === 'new'} onChange={() => setMode('new')} />
+              新しいブランチを作成
+            </label>
+            <label className="flex items-center gap-1.5">
+              <input type="radio" checked={mode === 'existing'} onChange={() => setMode('existing')} />
+              既存のブランチ
+            </label>
+          </div>
+          {mode === 'new' ? (
+            <>
+              <div className="grid grid-cols-[110px_1fr] items-center gap-3">
+                <Label htmlFor="wt-new-branch">ブランチ名</Label>
+                <Input
+                  id="wt-new-branch"
+                  ref={branchInputRef}
+                  value={newBranch}
+                  onChange={(e) => setNewBranch(e.target.value)}
+                  placeholder="feature/awesome"
+                />
+              </div>
+              <div className="grid grid-cols-[110px_1fr] items-center gap-3">
+                <Label htmlFor="wt-base">作成元 (base)</Label>
+                <select id="wt-base" value={base} onChange={(e) => setBase(e.target.value)}>
+                  {branches.map((b) => (
+                    <option key={b.name} value={b.name}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
+          ) : (
+            <div className="grid grid-cols-[110px_1fr] items-center gap-3">
+              <Label htmlFor="wt-branch">ブランチ</Label>
+              <select id="wt-branch" value={branch} onChange={(e) => setBranch(e.target.value)}>
+                {locals.map((b) => (
+                  <option key={b.name} value={b.name} disabled={!!b.worktreePath}>
                     {b.name}
+                    {b.worktreePath ? ' (使用中)' : ''}
                   </option>
                 ))}
               </select>
             </div>
-          </>
-        ) : (
-          <div className="modal-row">
-            <label className="modal-label">ブランチ</label>
-            <select value={branch} onChange={(e) => setBranch(e.target.value)}>
-              {locals.map((b) => (
-                <option key={b.name} value={b.name} disabled={!!b.worktreePath}>
-                  {b.name}
-                  {b.worktreePath ? ' (使用中)' : ''}
-                </option>
-              ))}
-            </select>
+          )}
+          <div className="grid grid-cols-[110px_1fr] items-center gap-3">
+            <Label htmlFor="wt-path">パス (省略可)</Label>
+            <Input
+              id="wt-path"
+              value={path}
+              onChange={(e) => setPath(e.target.value)}
+              placeholder={`既定: ../${repo.name}.worktrees/<ブランチ名>`}
+            />
           </div>
-        )}
-        <div className="modal-row">
-          <label className="modal-label">パス (省略可)</label>
-          <input
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            placeholder={`既定: ../${repo.name}.worktrees/<ブランチ名>`}
-          />
+          {error && <div className="text-sm text-[var(--status-red)]">⚠ {error}</div>}
         </div>
-        {error && <div className="modal-error">⚠ {error}</div>}
-        <div className="modal-actions">
-          <button onClick={onClose}>キャンセル</button>
-          <button
-            className="primary"
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            キャンセル
+          </Button>
+          <Button
             disabled={busy || (mode === 'new' ? !newBranch.trim() : !branch)}
             onClick={() => void submit()}
           >
             {busy ? '作成中...' : '作成'}
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

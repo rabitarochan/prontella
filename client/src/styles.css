@@ -288,49 +288,7 @@ textarea:focus {
   visibility: visible;
 }
 
-/* ---- badges ---- */
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  padding: 1px 8px;
-  border-radius: 9px;
-  border: 1px solid var(--border);
-  white-space: nowrap;
-}
-.badge-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: currentColor;
-}
-.badge-busy {
-  color: var(--green);
-  border-color: var(--green);
-}
-.badge-busy .badge-dot {
-  animation: pulse 1.2s ease-in-out infinite;
-}
-.badge-waiting {
-  color: var(--yellow);
-  border-color: var(--yellow);
-}
-.badge-waiting .badge-dot {
-  animation: pulse 0.6s ease-in-out infinite;
-}
-.badge-idle {
-  color: var(--blue);
-}
-.badge-shell {
-  color: var(--fg-dim);
-}
-.badge-none {
-  color: var(--fg-dim);
-  opacity: 0.6;
-}
-
+/* badge 系は shadcn Badge (StatusBadge.tsx) へ移行済み。pulse は AttentionBell 等が使用中 */
 @keyframes pulse {
   50% {
     opacity: 0.25;
@@ -667,43 +625,7 @@ button.statusbar-item:hover:not(:disabled) {
 .statusbar-item.static {
   cursor: default;
 }
-.statusbar-anchor {
-  position: relative;
-}
-.statusbar-menu {
-  position: absolute;
-  bottom: calc(100% + 4px);
-  right: 0;
-  min-width: 180px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
-  padding: 3px;
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-}
-.statusbar-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: none;
-  border: none;
-  border-radius: 3px;
-  padding: 4px 8px;
-  font-size: 12px;
-  color: var(--fg);
-  text-align: left;
-  white-space: nowrap;
-}
-button.statusbar-menu-item:hover:not(:disabled) {
-  background: var(--bg-hover);
-  border: none;
-}
-.statusbar-menu-item .codicon {
-  font-size: 13px !important;
-}
+/* statusbar-menu 系は shadcn DropdownMenu (EditorStatusBar.tsx) へ移行済み */
 
 .editor-tabs {
   display: flex;
@@ -1390,43 +1312,7 @@ button.statusbar-menu-item:hover:not(:disabled) {
   word-break: break-all;
 }
 
-/* ---- context menu (右クリックメニュー、汎用) ---- */
-
-.context-menu {
-  position: fixed;
-  min-width: 160px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
-  padding: 3px;
-  z-index: 100;
-  display: flex;
-  flex-direction: column;
-}
-.context-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: none;
-  border: none;
-  border-radius: 3px;
-  padding: 4px 8px;
-  font-size: 12px;
-  color: var(--fg);
-  text-align: left;
-  white-space: nowrap;
-}
-button.context-menu-item:hover:not(:disabled) {
-  background: var(--bg-hover);
-  border: none;
-}
-.context-menu-item.danger {
-  color: var(--red);
-}
-.context-menu-item .codicon {
-  font-size: 13px !important;
-}
+/* context-menu 系は shadcn DropdownMenu (ContextMenu.tsx) へ移行済み */
 
 /* ---- tile layout (各タイル = タブ付きワークスペース) ---- */
 
@@ -1924,80 +1810,11 @@ button.context-menu-item:hover:not(:disabled) {
   padding: 0 0 0 8px;
 }
 
-/* ---- modal ---- */
-
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-}
-.modal {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 18px 20px;
-  width: 460px;
-  max-width: 92vw;
-}
-.modal h3 {
-  margin: 0 0 14px;
-  font-size: 14px;
-}
-.modal-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-.modal-row input[type='text'],
-.modal-row input:not([type]),
-.modal-row select {
-  flex: 1;
-}
-.modal-label {
-  width: 110px;
-  flex-shrink: 0;
-  color: var(--fg-dim);
-}
-.modal-error {
-  color: var(--red);
-  font-size: 12px;
-  margin: 8px 0;
-  white-space: pre-wrap;
-}
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 14px;
-}
-.confirm-message {
-  color: var(--fg);
-  font-size: 12px;
-  white-space: pre-wrap;
-  line-height: 1.5;
-}
+/* modal 系は shadcn Dialog / AlertDialog へ移行済み
+   (Prompt/Confirm/AddWorktree/Blame/FileHistory の各コンポーネント) */
 
 /* ---- file history modal (6.3: ファイルツリーの「ファイルの履歴...」) ---- */
 
-.file-history-modal {
-  width: 900px;
-  max-width: 92vw;
-  height: 640px;
-  max-height: 88vh;
-  display: flex;
-  flex-direction: column;
-}
-.file-history-modal h3 {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
 .file-history-body {
   flex: 1;
   min-height: 0;
@@ -2056,20 +1873,6 @@ button.context-menu-item:hover:not(:disabled) {
 
 /* ---- blame modal (6.5: ファイルツリーの「blame...」— git blame --porcelain のプレーン表示) ---- */
 
-.blame-modal {
-  width: 900px;
-  max-width: 92vw;
-  height: 640px;
-  max-height: 88vh;
-  display: flex;
-  flex-direction: column;
-}
-.blame-modal h3 {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
 .blame-body {
   flex: 1;
   min-height: 0;

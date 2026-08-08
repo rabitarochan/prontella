@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useRef, useState, type ReactNode } from 'react';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 
 export interface PromptRequest {
   title: string;
@@ -9,7 +18,7 @@ export interface PromptRequest {
   cancelLabel?: string;
 }
 
-/** ConfirmDialog と同じ modal-backdrop / modal パターンの汎用 1 行テキスト入力ダイアログ。 */
+/** shadcn Dialog ベースの汎用 1 行テキスト入力ダイアログ。 */
 export default function PromptDialog({
   title,
   message,
@@ -32,19 +41,6 @@ export default function PromptDialog({
   const [value, setValue] = useState(defaultValue);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onCancel]);
-
-  // 初期値をハイライト選択した状態でフォーカス (rename 等、上書き入力しやすいように)
-  useEffect(() => {
-    inputRef.current?.select();
-  }, []);
-
   const submit = () => {
     const trimmed = value.trim();
     if (!trimmed) return;
@@ -52,30 +48,38 @@ export default function PromptDialog({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onCancel}>
-      <div className="modal confirm-dialog" onClick={(e) => e.stopPropagation()}>
-        <h3>{title}</h3>
-        {message && <div className="confirm-message">{message}</div>}
-        <div className="modal-row">
-          <input
-            ref={inputRef}
-            value={value}
-            placeholder={placeholder}
-            autoFocus
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') submit();
-            }}
-          />
-        </div>
-        <div className="modal-actions">
-          <button onClick={onCancel}>{cancelLabel}</button>
-          <button className="primary" disabled={!value.trim()} onClick={submit}>
+    <Dialog open onOpenChange={(open) => !open && onCancel()}>
+      <DialogContent
+        // 初期値をハイライト選択した状態でフォーカス (rename 等、上書き入力しやすいように)
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          inputRef.current?.focus();
+          inputRef.current?.select();
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+        {message && <div className="text-muted-foreground text-sm">{message}</div>}
+        <Input
+          ref={inputRef}
+          value={value}
+          placeholder={placeholder}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submit();
+          }}
+        />
+        <DialogFooter>
+          <Button variant="outline" onClick={onCancel}>
+            {cancelLabel}
+          </Button>
+          <Button disabled={!value.trim()} onClick={submit}>
             {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -89,7 +93,7 @@ export function usePrompt() {
   const resolver = useRef<((result: string | null) => void) | null>(null);
   // 連続 prompt() (例: リモート追加の name→URL 2 段プロンプト) 用の連番。
   // settle() の setRequest(null) と、await 復帰後の次の setRequest(req) が
-  // React 18 の自動バッチングで同一コミットにまとまると、`request` は
+  // React の自動バッチングで同一コミットにまとまると、`request` は
   // null を経由せず旧 req から新 req へ直接遷移する。その場合 <PromptDialog> は
   // (型・位置が同じ、key なしのため) unmount されず fiber を再利用してしまい、
   // 内部の useState(defaultValue) が再初期化されず前段の入力値が残留する

@@ -1,4 +1,9 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 export interface ContextMenuItem {
   label: string;
@@ -8,6 +13,12 @@ export interface ContextMenuItem {
   onClick: () => void;
 }
 
+/**
+ * 座標 (x, y) に開く右クリックメニュー。呼び出し側が座標と items を渡して
+ * 条件レンダリングする既存 API のまま、内部を shadcn DropdownMenu に置き換えた。
+ * 見えないトリガーを fixed 配置してアンカーにする(Radix が viewport 衝突回避・
+ * Esc / 外側クリックでの閉じ・キーボードナビを担う)。
+ */
 export default function ContextMenu({
   x,
   y,
@@ -19,55 +30,28 @@ export default function ContextMenu({
   items: ContextMenuItem[];
   onClose: () => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  // 外側クリック・Escape・スクロールで閉じる (EditorStatusBar のメニューと同じパターン)
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    // scroll はバブリングしないため capture フェーズで拾う
-    const onScroll = () => onClose();
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    document.addEventListener('scroll', onScroll, true);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-      document.removeEventListener('scroll', onScroll, true);
-    };
-  }, [onClose]);
-
-  // viewport からはみ出す場合は内側に収まるようクランプする
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const clampedX = Math.max(4, Math.min(x, window.innerWidth - rect.width - 4));
-    const clampedY = Math.max(4, Math.min(y, window.innerHeight - rect.height - 4));
-    el.style.left = `${clampedX}px`;
-    el.style.top = `${clampedY}px`;
-  }, [x, y]);
-
   return (
-    <div className="context-menu" ref={ref} style={{ left: x, top: y }}>
-      {items.map((item, i) => (
-        <button
-          key={i}
-          className={`context-menu-item ${item.danger ? 'danger' : ''}`}
-          disabled={item.disabled}
-          onClick={() => {
-            item.onClick();
-            onClose();
-          }}
-        >
-          {item.icon && <span className={`codicon codicon-${item.icon}`} />}
-          {item.label}
-        </button>
-      ))}
-    </div>
+    <DropdownMenu open onOpenChange={(open) => !open && onClose()}>
+      <DropdownMenuTrigger asChild>
+        <span aria-hidden style={{ position: 'fixed', left: x, top: y, width: 0, height: 0 }} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        // 右クリック元 (ターミナル / ツリー) からフォーカスを奪い返さない
+        onCloseAutoFocus={(e) => e.preventDefault()}
+      >
+        {items.map((item, i) => (
+          <DropdownMenuItem
+            key={i}
+            disabled={item.disabled}
+            variant={item.danger ? 'destructive' : 'default'}
+            onSelect={() => item.onClick()}
+          >
+            {item.icon && <span className={`codicon codicon-${item.icon}`} />}
+            {item.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

@@ -1,6 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { OnMount } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
+import { Check } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { cn } from '@/lib/utils';
 import type { FileContent } from '../types';
 
 type EditorInstance = Parameters<OnMount>[0];
@@ -46,25 +57,25 @@ function encodingLabel(encoding: string | null, hasBom: boolean): string | null 
   return encoding === 'utf-8' && hasBom ? `${base} with BOM` : base;
 }
 
-type MenuKind = 'indent' | 'eol' | 'encoding' | 'encoding-reload' | 'encoding-save';
+// legacy .statusbar-item は base 層の data-slot ミニリセットに負けるため、
+// トリガーは Tailwind ユーティリティで直接スタイルする
+const TRIGGER_CLS =
+  'cursor-pointer rounded-sm px-2 py-0.5 hover:bg-accent hover:text-accent-foreground data-[state=open]:bg-accent data-[state=open]:text-accent-foreground';
 
-function MenuItem({
+function CheckItem({
   label,
   selected,
-  onClick,
+  onSelect,
 }: {
   label: string;
   selected?: boolean;
-  onClick: () => void;
+  onSelect: () => void;
 }) {
   return (
-    <button className="statusbar-menu-item" onClick={onClick}>
-      <span
-        className="codicon codicon-check"
-        style={{ visibility: selected ? 'visible' : 'hidden' }}
-      />
+    <DropdownMenuItem onSelect={onSelect}>
+      <Check className={cn('size-4', !selected && 'invisible')} />
       {label}
-    </button>
+    </DropdownMenuItem>
   );
 }
 
@@ -86,8 +97,6 @@ export default function EditorStatusBar({
   const [position, setPosition] = useState<{ line: number; column: number } | null>(null);
   const [indent, setIndent] = useState<{ insertSpaces: boolean; size: number } | null>(null);
   const [eol, setEol] = useState<'LF' | 'CRLF' | null>(null);
-  const [openMenu, setOpenMenu] = useState<MenuKind | null>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
 
   // Monaco の状態を購読して表示へミラーする。activePath はモデル切替の再読取り用。
   useEffect(() => {
@@ -115,34 +124,13 @@ export default function EditorStatusBar({
     return () => subs.forEach((d) => d.dispose());
   }, [editor, activePath]);
 
-  // メニュー外クリックと Escape で閉じる
-  useEffect(() => {
-    if (!openMenu) return;
-    const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpenMenu(null);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpenMenu(null);
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [openMenu]);
-
-  const toggleMenu = (kind: MenuKind) => setOpenMenu((cur) => (cur === kind ? null : kind));
-
   const chooseIndent = (insertSpaces: boolean, size: number) => {
     // 内容は変更しない(dirty にならない)。既存インデントの変換はスコープ外。
     editor?.getModel()?.updateOptions({ insertSpaces, tabSize: size, indentSize: size });
-    setOpenMenu(null);
   };
 
   const chooseEol = (kind: 'lf' | 'crlf') => {
     const model = editor?.getModel();
-    setOpenMenu(null);
     if (!model) return;
     // 既に同じ EOL でも、ユーザーが明示選択した事実は記録する。理由: ファイルが既に
     // 望みの EOL・.editorconfig が別指定のケースでは pushEOL は不要だが、ここで記録
@@ -159,100 +147,74 @@ export default function EditorStatusBar({
   const currentEncoding = encodingLabel(file.encoding, file.hasBom);
 
   return (
-    <div className="editor-statusbar" ref={rootRef}>
+    <div className="editor-statusbar">
       {position && (
         <span className="statusbar-item static">
           行 {position.line}, 列 {position.column}
         </span>
       )}
       {indent && (
-        <span className="statusbar-anchor">
-          <button
-            className="statusbar-item"
-            title="インデントを変更"
-            onClick={() => toggleMenu('indent')}
-          >
+        <DropdownMenu>
+          <DropdownMenuTrigger className={TRIGGER_CLS} title="インデントを変更">
             {indent.insertSpaces ? `スペース: ${indent.size}` : `タブ: ${indent.size}`}
-          </button>
-          {openMenu === 'indent' && (
-            <div className="statusbar-menu">
-              {INDENT_CHOICES.map((c) => (
-                <MenuItem
-                  key={c.label}
-                  label={c.label}
-                  selected={indent.insertSpaces === c.insertSpaces && indent.size === c.size}
-                  onClick={() => chooseIndent(c.insertSpaces, c.size)}
-                />
-              ))}
-            </div>
-          )}
-        </span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
+            {INDENT_CHOICES.map((c) => (
+              <CheckItem
+                key={c.label}
+                label={c.label}
+                selected={indent.insertSpaces === c.insertSpaces && indent.size === c.size}
+                onSelect={() => chooseIndent(c.insertSpaces, c.size)}
+              />
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
       {currentEncoding && (
-        <span className="statusbar-anchor">
-          <button
-            className="statusbar-item"
-            title="エンコーディングを変更"
-            onClick={() => toggleMenu('encoding')}
-          >
+        <DropdownMenu>
+          <DropdownMenuTrigger className={TRIGGER_CLS} title="エンコーディングを変更">
             {currentEncoding}
-          </button>
-          {openMenu === 'encoding' && (
-            <div className="statusbar-menu">
-              <MenuItem
-                label="エンコーディング指定で再読み込み..."
-                onClick={() => setOpenMenu('encoding-reload')}
-              />
-              <MenuItem
-                label="エンコーディング指定で保存..."
-                onClick={() => setOpenMenu('encoding-save')}
-              />
-            </div>
-          )}
-          {openMenu === 'encoding-reload' && (
-            <div className="statusbar-menu">
-              {RELOAD_ITEMS.map((c) => (
-                <MenuItem
-                  key={c.encoding}
-                  label={c.label}
-                  selected={file.encoding === c.encoding}
-                  onClick={() => {
-                    setOpenMenu(null);
-                    onReloadWithEncoding(c.encoding);
-                  }}
-                />
-              ))}
-            </div>
-          )}
-          {openMenu === 'encoding-save' && (
-            <div className="statusbar-menu">
-              {SAVE_ITEMS.map((c) => (
-                <MenuItem
-                  key={c.label}
-                  label={c.label}
-                  selected={file.encoding === c.encoding && file.hasBom === c.bom}
-                  onClick={() => {
-                    setOpenMenu(null);
-                    onSaveWithEncoding(c.encoding, c.bom);
-                  }}
-                />
-              ))}
-            </div>
-          )}
-        </span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>エンコーディング指定で再読み込み</DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                {RELOAD_ITEMS.map((c) => (
+                  <CheckItem
+                    key={c.encoding}
+                    label={c.label}
+                    selected={file.encoding === c.encoding}
+                    onSelect={() => onReloadWithEncoding(c.encoding)}
+                  />
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>エンコーディング指定で保存</DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                {SAVE_ITEMS.map((c) => (
+                  <CheckItem
+                    key={c.label}
+                    label={c.label}
+                    selected={file.encoding === c.encoding && file.hasBom === c.bom}
+                    onSelect={() => onSaveWithEncoding(c.encoding, c.bom)}
+                  />
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
       {eol && (
-        <span className="statusbar-anchor">
-          <button className="statusbar-item" title="改行コードを変更" onClick={() => toggleMenu('eol')}>
+        <DropdownMenu>
+          <DropdownMenuTrigger className={TRIGGER_CLS} title="改行コードを変更">
             {eol}
-          </button>
-          {openMenu === 'eol' && (
-            <div className="statusbar-menu">
-              <MenuItem label="LF" selected={eol === 'LF'} onClick={() => chooseEol('lf')} />
-              <MenuItem label="CRLF" selected={eol === 'CRLF'} onClick={() => chooseEol('crlf')} />
-            </div>
-          )}
-        </span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
+            <CheckItem label="LF" selected={eol === 'LF'} onSelect={() => chooseEol('lf')} />
+            <CheckItem label="CRLF" selected={eol === 'CRLF'} onSelect={() => chooseEol('crlf')} />
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
     </div>
   );

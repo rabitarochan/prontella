@@ -1,4 +1,12 @@
 import { useEffect, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { api } from '../api';
 import type { LogEntry } from '../types';
 import DiffPane from './DiffPane';
@@ -44,9 +52,13 @@ export default function FileHistoryModal({
   }, [dir, path]);
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal file-history-modal" onClick={(e) => e.stopPropagation()}>
-        <h3 title={path}>ファイルの履歴 — {path}</h3>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="flex h-[640px] max-h-[88vh] w-[92vw] flex-col sm:max-w-[900px]">
+        <DialogHeader>
+          <DialogTitle className="truncate pr-6" title={path}>
+            ファイルの履歴 — {path}
+          </DialogTitle>
+        </DialogHeader>
         {error ? (
           <div className="placeholder">⚠ {error}</div>
         ) : (
@@ -99,10 +111,12 @@ export default function FileHistoryModal({
             </div>
           </div>
         )}
-        <div className="modal-actions">
-          <button onClick={onClose}>閉じる</button>
-        </div>
-      </div>
-    </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            閉じる
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

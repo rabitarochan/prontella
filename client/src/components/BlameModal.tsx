@@ -1,4 +1,12 @@
 import { useEffect, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { api } from '../api';
 import type { BlameLine, BlameResult } from '../types';
 
@@ -49,9 +57,13 @@ export default function BlameModal({
   }, [dir, path]);
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal blame-modal" onClick={(e) => e.stopPropagation()}>
-        <h3 title={path}>blame — {path}</h3>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="flex h-[640px] max-h-[88vh] w-[92vw] flex-col sm:max-w-[900px]">
+        <DialogHeader>
+          <DialogTitle className="truncate pr-6" title={path}>
+            blame — {path}
+          </DialogTitle>
+        </DialogHeader>
         {error ? (
           <div className="placeholder">⚠ {error}</div>
         ) : result === null ? (
@@ -93,10 +105,12 @@ export default function BlameModal({
             })}
           </div>
         )}
-        <div className="modal-actions">
-          <button onClick={onClose}>閉じる</button>
-        </div>
-      </div>
-    </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            閉じる
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

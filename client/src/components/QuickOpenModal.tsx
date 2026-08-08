@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import fuzzysort from 'fuzzysort';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { cn } from '@/lib/utils';
 import { getCachedFileList, refreshFileList, type QuickOpenTarget } from '../search/fileListCache';
 import type { FilesTabHandle } from '../search/registry';
 import { fileIcon } from './FileTree';
@@ -120,11 +122,16 @@ export default function QuickOpenModal({
   };
 
   return (
-    <div className="quickopen-backdrop" onClick={onClose}>
-      <div className="quickopen" onClick={(e) => e.stopPropagation()}>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        showCloseButton={false}
+        // コマンドパレット風: 上部固定・パディングなし・角丸内にリストを収める
+        className="top-[15%] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-[600px]"
+      >
+        <DialogTitle className="sr-only">ファイルを開く</DialogTitle>
         <input
           ref={inputRef}
-          className="quickopen-input"
+          className="placeholder:text-muted-foreground h-11 w-full border-b bg-transparent px-4 text-sm outline-none"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
@@ -132,10 +139,14 @@ export default function QuickOpenModal({
           autoFocus
           spellCheck={false}
         />
-        <div className="quickopen-list" ref={listRef}>
-          {!entry && <div className="quickopen-empty">読み込み中...</div>}
+        <div className="max-h-[420px] overflow-y-auto p-1" ref={listRef}>
+          {!entry && (
+            <div className="text-muted-foreground py-6 text-center text-sm">読み込み中...</div>
+          )}
           {entry && items.length === 0 && (
-            <div className="quickopen-empty">ファイルが見つかりません</div>
+            <div className="text-muted-foreground py-6 text-center text-sm">
+              ファイルが見つかりません
+            </div>
           )}
           {items.map((item, i) => {
             const name = basename(item.rel);
@@ -152,21 +163,27 @@ export default function QuickOpenModal({
             return (
               <Fragment key={item.rel}>
                 {!query && item.open && i === 0 && (
-                  <div className="quickopen-section">開いているファイル</div>
+                  <div className="text-muted-foreground px-2 py-1.5 text-xs">開いているファイル</div>
                 )}
                 {!query && !item.open && items[i - 1]?.open && (
-                  <div className="quickopen-section">ファイル</div>
+                  <div className="text-muted-foreground px-2 py-1.5 text-xs">ファイル</div>
                 )}
                 <div
-                  className={`quickopen-item ${i === selected ? 'selected' : ''}`}
+                  className={cn(
+                    'flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm',
+                    i === selected && 'bg-accent text-accent-foreground',
+                  )}
                   onClick={() => openItem(item)}
                   onMouseEnter={() => setSelected(i)}
                   title={item.rel}
                 >
-                  <span className={`codicon codicon-${icon} quickopen-item-icon`} style={{ color }} />
-                  <span className="quickopen-item-name">{highlightIndexes(name, nameHl)}</span>
+                  <span
+                    className={`codicon codicon-${icon} shrink-0 text-[14px]!`}
+                    style={{ color }}
+                  />
+                  <span className="shrink-0">{highlightIndexes(name, nameHl)}</span>
                   {dirLen > 0 && (
-                    <span className="quickopen-item-dir">
+                    <span className="text-muted-foreground truncate text-xs">
                       {highlightIndexes(item.rel.slice(0, dirLen - 1), dirHl)}
                     </span>
                   )}
@@ -175,7 +192,7 @@ export default function QuickOpenModal({
             );
           })}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

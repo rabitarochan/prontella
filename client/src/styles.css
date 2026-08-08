@@ -453,22 +453,38 @@ textarea:focus {
 }
 /* ---- resizable panes (react-resizable-panels) ---- */
 
+/* shadcn Resizable 風: 通常時は 4px のヒット領域の中央に 1px のヘアライン、
+   ホバー / ドラッグ中はリング色の面にする(コンポーネント置換はしない —
+   Portal 不変条件を持つ TileGrid に触れないための CSS のみの restyle) */
 .pane-separator {
-  background: var(--border);
   transition: background 0.15s;
 }
 .pane-separator:hover,
 .pane-separator[data-separator='active'],
 .pane-separator[data-separator='focus'] {
-  background: var(--primary);
+  background: var(--ring);
 }
 /* between vertically stacked panels */
 .pane-separator-v {
   height: 4px;
+  background: linear-gradient(
+    to bottom,
+    transparent calc(50% - 0.5px),
+    var(--border) calc(50% - 0.5px),
+    var(--border) calc(50% + 0.5px),
+    transparent calc(50% + 0.5px)
+  );
 }
 /* between side-by-side panels */
 .pane-separator-h {
   width: 4px;
+  background: linear-gradient(
+    to right,
+    transparent calc(50% - 0.5px),
+    var(--border) calc(50% - 0.5px),
+    var(--border) calc(50% + 0.5px),
+    transparent calc(50% + 0.5px)
+  );
 }
 
 /* ---- files tab ---- */

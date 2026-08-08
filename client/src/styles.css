@@ -2135,23 +2135,7 @@ button.statusbar-item:hover:not(:disabled) {
   flex: 1;
   min-width: 0;
 }
-.search-toggle {
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--fg-dim);
-  padding: 3px 5px;
-  border-radius: 3px;
-  font-size: 11px;
-  flex-shrink: 0;
-}
-.search-toggle:hover {
-  background: var(--bg-hover);
-}
-.search-toggle.active {
-  color: var(--fg);
-  background: var(--bg-active);
-  border-color: var(--primary);
-}
+/* search-toggle は shadcn Button (SearchPanel.tsx) へ移行済み */
 .search-error {
   color: var(--red);
   font-size: 11px;

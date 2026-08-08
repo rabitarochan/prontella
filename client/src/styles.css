@@ -2,6 +2,9 @@
 
 * {
   box-sizing: border-box;
+  /* テーマ追従の細スクロールバー(Chromium 121+ / Firefox)。色はトークン連動 */
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-active) transparent;
 }
 
 body {

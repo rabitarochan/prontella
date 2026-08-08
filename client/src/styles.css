@@ -1,20 +1,4 @@
-:root {
-  --bg: #1e1e23;
-  --bg-panel: #252529;
-  --bg-hover: #2e2e35;
-  --bg-active: #37373f;
-  --border: #3c3c44;
-  --fg: #d4d4d4;
-  --fg-dim: #9a9aa3;
-  --accent: #d97757;
-  --accent-dim: #a85a40;
-  --green: #4ec9b0;
-  --yellow: #dcdcaa;
-  --orange: #ce9178;
-  --red: #f48771;
-  --blue: #569cd6;
-  font-size: 13px;
-}
+/* カラートークンと旧変数エイリアスは index.css で定義する(ライト/ダーク両対応) */
 
 * {
   box-sizing: border-box;
@@ -46,19 +30,19 @@ button:disabled {
   cursor: default;
 }
 button.primary {
-  background: var(--accent-dim);
-  border-color: var(--accent);
+  background: var(--primary-dim);
+  border-color: var(--primary);
 }
 button.primary:hover:not(:disabled) {
-  background: var(--accent);
+  background: var(--primary);
 }
 button.danger {
-  background: #7a2e26;
+  background: var(--destructive);
   border-color: var(--red);
-  color: #fff;
+  color: var(--destructive-foreground);
 }
 button.danger:hover:not(:disabled) {
-  background: #99392e;
+  background: var(--destructive-hover);
 }
 
 input,
@@ -74,7 +58,7 @@ textarea {
 input:focus,
 select:focus,
 textarea:focus {
-  outline: 1px solid var(--accent);
+  outline: 1px solid var(--primary);
 }
 
 .icon-btn {
@@ -108,7 +92,7 @@ textarea:focus {
 }
 .topbar-logo {
   font-weight: 600;
-  color: var(--accent);
+  color: var(--primary);
   cursor: pointer;
 }
 .topbar-sub {
@@ -234,10 +218,10 @@ textarea:focus {
 /* DOM に隙間を挿入する方式は取らない(レイアウトが動きポインターが行外に出てちらつく)。
    box-shadow の inset 線だけで位置を示す。 */
 .repo-group.drop-before {
-  box-shadow: inset 0 2px 0 var(--accent);
+  box-shadow: inset 0 2px 0 var(--primary);
 }
 .repo-group.drop-after {
-  box-shadow: inset 0 -2px 0 var(--accent);
+  box-shadow: inset 0 -2px 0 var(--primary);
 }
 .repo-row {
   display: flex;
@@ -278,7 +262,7 @@ textarea:focus {
 }
 .wt-row.active {
   background: var(--bg-active);
-  border-left-color: var(--accent);
+  border-left-color: var(--primary);
 }
 .wt-branch {
   flex: 1;
@@ -484,7 +468,7 @@ textarea:focus {
 }
 .wt-tabs button.active {
   color: var(--fg);
-  border-bottom-color: var(--accent);
+  border-bottom-color: var(--primary);
 }
 .wt-tabs .terminal-toggle {
   margin-left: 14px;
@@ -505,7 +489,7 @@ textarea:focus {
 .pane-separator:hover,
 .pane-separator[data-separator='active'],
 .pane-separator[data-separator='focus'] {
-  background: var(--accent);
+  background: var(--primary);
 }
 /* between vertically stacked panels */
 .pane-separator-v {
@@ -608,7 +592,7 @@ textarea:focus {
   min-width: 0;
   background: var(--bg);
   color: var(--fg);
-  border: 1px solid var(--accent);
+  border: 1px solid var(--primary);
   border-radius: 2px;
   font: inherit;
   padding: 0 3px;
@@ -1087,7 +1071,7 @@ button.statusbar-menu-item:hover:not(:disabled) {
   z-index: 2;
 }
 .col-resize-handle:hover {
-  background: var(--accent);
+  background: var(--primary);
 }
 .graph-row {
   display: flex;
@@ -1154,8 +1138,8 @@ button.statusbar-menu-item:hover:not(:disabled) {
   line-height: 15px;
 }
 .ref-head {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--primary);
+  border-color: var(--primary);
   font-weight: 600;
 }
 .ref-local {
@@ -1297,7 +1281,7 @@ button.statusbar-menu-item:hover:not(:disabled) {
 }
 .git-nav-row.active {
   background: var(--bg-active);
-  border-left-color: var(--accent);
+  border-left-color: var(--primary);
 }
 .git-branch-row {
   display: flex;
@@ -1489,7 +1473,7 @@ button.context-menu-item:hover:not(:disabled) {
 }
 .tile-pane.focused .tile-header {
   color: var(--fg);
-  box-shadow: inset 0 2px 0 0 var(--accent-dim);
+  box-shadow: inset 0 2px 0 0 var(--primary-dim);
 }
 .tile-tabs {
   display: flex;
@@ -1517,7 +1501,7 @@ button.context-menu-item:hover:not(:disabled) {
 }
 .tile-tab.active {
   color: var(--fg);
-  border-bottom-color: var(--accent);
+  border-bottom-color: var(--primary);
 }
 .tile-tab .codicon {
   font-size: 13px;
@@ -1597,8 +1581,8 @@ button.context-menu-item:hover:not(:disabled) {
   justify-content: center;
 }
 .tile-picker-buttons .claude {
-  color: var(--accent);
-  border-color: var(--accent-dim);
+  color: var(--primary);
+  border-color: var(--primary-dim);
 }
 .wt-tabs .layout-reset {
   margin-left: 4px;
@@ -1895,7 +1879,7 @@ button.context-menu-item:hover:not(:disabled) {
   margin-left: 4px;
 }
 .editor-tabs .term-claude {
-  color: var(--accent);
+  color: var(--primary);
 }
 .editor-tab .badge {
   padding: 0;
@@ -1906,7 +1890,7 @@ button.context-menu-item:hover:not(:disabled) {
   flex: 1;
   min-height: 0;
   position: relative;
-  background: #1b1b20;
+  background: var(--terminal-bg);
 }
 .term-empty {
   position: absolute;
@@ -1928,11 +1912,11 @@ button.context-menu-item:hover:not(:disabled) {
   gap: 8px;
 }
 .term-empty-buttons .claude {
-  color: var(--accent);
-  border-color: var(--accent-dim);
+  color: var(--primary);
+  border-color: var(--primary-dim);
 }
 .wt-tabs .claude-launch {
-  color: var(--accent);
+  color: var(--primary);
 }
 .xterm-container {
   position: absolute;
@@ -2104,7 +2088,7 @@ button.context-menu-item:hover:not(:disabled) {
   background: var(--bg-hover);
 }
 .blame-row-uncommitted {
-  background: rgba(230, 180, 80, 0.08);
+  background: var(--blame-uncommitted-bg);
 }
 .blame-line-no {
   flex: none;
@@ -2129,7 +2113,7 @@ button.context-menu-item:hover:not(:disabled) {
 .blame-annotation-repeat {
   border-right: 1px solid var(--border);
   position: relative;
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--blame-dup-bg);
   /* .blame-row は align-items: baseline (行番号・注釈・内容のテキストベースラインを揃えるため)。
      この間引き行の <span> はテキストノードを一切持たないため、baseline 整列下では内容ゼロの
      まま高さ 0 に収縮してしまい、背景も ::before の縦罫(top:0/bottom:0 は自分自身の高さが
@@ -2388,7 +2372,7 @@ button.context-menu-item:hover:not(:disabled) {
 }
 .fuzzy-hl {
   background: transparent;
-  color: var(--accent);
+  color: var(--primary);
   font-weight: 600;
 }
 
@@ -2425,7 +2409,7 @@ button.context-menu-item:hover:not(:disabled) {
 .search-toggle.active {
   color: var(--fg);
   background: var(--bg-active);
-  border-color: var(--accent);
+  border-color: var(--primary);
 }
 .search-error {
   color: var(--red);
@@ -2518,7 +2502,8 @@ button.context-menu-item:hover:not(:disabled) {
   text-overflow: ellipsis;
 }
 .search-hl {
-  background: rgba(217, 119, 87, 0.28);
+  /* --primary(#d97757)の 28% = 従来の rgba(217, 119, 87, 0.28) と同値 */
+  background: color-mix(in srgb, var(--primary) 28%, transparent);
   color: inherit;
   border-radius: 2px;
 }
@@ -2605,12 +2590,12 @@ button.context-menu-item:hover:not(:disabled) {
 }
 .md-preview-body .task-list-item-checkbox {
   margin-right: 6px;
-  accent-color: var(--accent);
+  accent-color: var(--primary);
 }
 .md-preview-body blockquote {
   margin: 0.6em 0;
   padding: 0.2em 1em;
-  border-left: 3px solid var(--accent-dim);
+  border-left: 3px solid var(--primary-dim);
   color: var(--fg-dim);
 }
 .md-preview-body blockquote blockquote {

@@ -17,6 +17,128 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * テーマトークン。:root = ライト(zinc ベース)、.dark = ダーク(現行配色の写像)。
+ * shadcn のホバー色トークンは意図的に --accent という名前を使わず --surface-hover
+ * とし、@theme inline で --color-accent に写像する(旧 CSS の --accent =
+ * アクセントオレンジと名前が衝突するため。旧 --accent は --primary へ移行する)。
+ */
+:root {
+  --background: #fafafa;
+  --foreground: #27272a;
+  --card: #ffffff;
+  --card-foreground: #27272a;
+  --popover: #ffffff;
+  --popover-foreground: #27272a;
+  --primary: #d97757;
+  --primary-foreground: #ffffff;
+  --primary-dim: #c4603f;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #27272a;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --surface-hover: #f4f4f5;
+  --surface-active: #e4e4e7;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --destructive-hover: #b91c1c;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #d97757;
+  --radius: 0.5rem;
+  --terminal-bg: #ffffff;
+  --status-green: #059669;
+  --status-yellow: #d97706;
+  --status-orange: #ea580c;
+  --status-red: #dc2626;
+  --status-blue: #2563eb;
+  --blame-uncommitted-bg: rgba(180, 83, 9, 0.08);
+  --blame-dup-bg: rgba(0, 0, 0, 0.03);
+  --file-icon-ts: #0369a1;
+  --file-icon-js: #a16207;
+  --file-icon-css: #9333ea;
+}
+
+/* shadcn 標準の zinc ダーク(旧 VS Code Dark 風配色は廃止)。--primary のみ Claude オレンジ */
+.dark {
+  --background: #09090b;
+  --foreground: #fafafa;
+  --card: #18181b;
+  --card-foreground: #fafafa;
+  --popover: #18181b;
+  --popover-foreground: #fafafa;
+  --primary: #d97757;
+  --primary-foreground: #ffffff;
+  --primary-dim: #a85a40;
+  --secondary: #27272a;
+  --secondary-foreground: #fafafa;
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --surface-hover: #27272a;
+  --surface-active: #3f3f46;
+  --destructive: #991b1b;
+  --destructive-foreground: #ffffff;
+  --destructive-hover: #b91c1c;
+  --border: #27272a;
+  --input: #27272a;
+  --ring: #d97757;
+  --terminal-bg: #09090b;
+  --status-green: #34d399;
+  --status-yellow: #fbbf24;
+  --status-orange: #fb923c;
+  --status-red: #f87171;
+  --status-blue: #60a5fa;
+  --blame-uncommitted-bg: rgba(251, 191, 36, 0.08);
+  --blame-dup-bg: rgba(255, 255, 255, 0.025);
+  --file-icon-ts: #4fc1ff;
+  --file-icon-js: #e8d44d;
+  --file-icon-css: #c586c0;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--surface-hover);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+/*
+ * 旧変数エイリアス。既存 styles.css(2,600 行超)を書き換えずに両テーマ対応
+ * させるための写像。--border は新旧同名のためエイリアス不要(自己参照は無効)。
+ */
+:root {
+  --bg: var(--background);
+  --bg-panel: var(--card);
+  --bg-hover: var(--surface-hover);
+  --bg-active: var(--surface-active);
+  --fg: var(--foreground);
+  --fg-dim: var(--muted-foreground);
+  --green: var(--status-green);
+  --yellow: var(--status-yellow);
+  --orange: var(--status-orange);
+  --red: var(--status-red);
+  --blue: var(--status-blue);
+  font-size: 13px;
+}
+
 @layer base {
   /* shadcn コンポーネント(data-slot 属性を必ず持つ)限定のミニリセット。
      utilities 層は base より強いので、outline バリアント等の border は生き残る */

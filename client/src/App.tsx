@@ -5,6 +5,7 @@ import { useDeck, findSelection } from './store';
 import { useSearchHotkeys } from './search/useSearchHotkeys';
 import type { FilesTabHandle } from './search/registry';
 import AttentionBell from './components/AttentionBell';
+import ThemeToggle from './components/ThemeToggle';
 import Sidebar from './components/Sidebar';
 import DeckView from './components/DeckView';
 import QuickOpenModal from './components/QuickOpenModal';
@@ -70,6 +71,7 @@ export default function App() {
               ⚠ {error}
             </span>
           )}
+          <ThemeToggle />
           <AttentionBell />
         </span>
       </header>

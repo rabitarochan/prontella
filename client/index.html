@@ -4,6 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Claude Deck</title>
+    <script>
+      // FOUC 対策: React マウント前にテーマを適用する。判定ロジックとキー名は
+      // src/theme/themeStore.ts と揃えること。
+      (function () {
+        var mode = null;
+        try {
+          mode = localStorage.getItem('deck3.theme');
+        } catch (e) {}
+        var dark =
+          mode === 'dark' ||
+          (mode !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        if (dark) document.documentElement.classList.add('dark');
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

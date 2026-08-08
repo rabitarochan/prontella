@@ -63,41 +63,42 @@ function parentOf(path: string): string {
 export function fileIcon(name: string): { icon: string; color: string } {
   const lower = name.toLowerCase();
   const ext = lower.includes('.') ? lower.slice(lower.lastIndexOf('.') + 1) : '';
+  // 色はテーマ変数(index.css でライト/ダーク別に定義)。ブランド色(git/html)のみ両テーマ共通の実色。
   if (lower.startsWith('.git')) return { icon: 'source-control', color: '#f05133' };
-  if (lower.includes('license')) return { icon: 'law', color: '#9a9aa3' };
+  if (lower.includes('license')) return { icon: 'law', color: 'var(--fg-dim)' };
   if (lower.endsWith('.lock') || lower === 'package-lock.json' || lower === 'pnpm-lock.yaml')
-    return { icon: 'lock', color: '#9a9aa3' };
+    return { icon: 'lock', color: 'var(--fg-dim)' };
   switch (ext) {
     case 'ts':
     case 'tsx':
     case 'mts':
     case 'cts':
-      return { icon: 'file-code', color: '#4fc1ff' };
+      return { icon: 'file-code', color: 'var(--file-icon-ts)' };
     case 'js':
     case 'jsx':
     case 'mjs':
     case 'cjs':
-      return { icon: 'file-code', color: '#e8d44d' };
+      return { icon: 'file-code', color: 'var(--file-icon-js)' };
     case 'json':
     case 'jsonc':
-      return { icon: 'json', color: '#e8d44d' };
+      return { icon: 'json', color: 'var(--file-icon-js)' };
     case 'md':
     case 'mdx':
-      return { icon: 'markdown', color: '#569cd6' };
+      return { icon: 'markdown', color: 'var(--blue)' };
     case 'html':
     case 'htm':
       return { icon: 'code', color: '#e44d26' };
     case 'css':
     case 'scss':
     case 'less':
-      return { icon: 'symbol-color', color: '#c586c0' };
+      return { icon: 'symbol-color', color: 'var(--file-icon-css)' };
     case 'yml':
     case 'yaml':
     case 'toml':
     case 'ini':
     case 'conf':
     case 'env':
-      return { icon: 'gear', color: '#9a9aa3' };
+      return { icon: 'gear', color: 'var(--fg-dim)' };
     case 'png':
     case 'jpg':
     case 'jpeg':
@@ -105,28 +106,28 @@ export function fileIcon(name: string): { icon: string; color: string } {
     case 'svg':
     case 'ico':
     case 'webp':
-      return { icon: 'file-media', color: '#ce9178' };
+      return { icon: 'file-media', color: 'var(--orange)' };
     case 'zip':
     case 'gz':
     case 'tgz':
     case '7z':
     case 'rar':
-      return { icon: 'file-zip', color: '#ce9178' };
+      return { icon: 'file-zip', color: 'var(--orange)' };
     case 'pdf':
-      return { icon: 'file-pdf', color: '#f48771' };
+      return { icon: 'file-pdf', color: 'var(--red)' };
     case 'csv':
     case 'tsv':
     case 'xlsx':
-      return { icon: 'table', color: '#4ec9b0' };
+      return { icon: 'table', color: 'var(--green)' };
     case 'ps1':
     case 'psm1':
     case 'sh':
     case 'bash':
     case 'bat':
     case 'cmd':
-      return { icon: 'terminal', color: '#4ec9b0' };
+      return { icon: 'terminal', color: 'var(--green)' };
     default:
-      return { icon: 'file', color: '#9a9aa3' };
+      return { icon: 'file', color: 'var(--fg-dim)' };
   }
 }
 

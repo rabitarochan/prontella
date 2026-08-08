@@ -10,6 +10,8 @@ import {
   type ConflictResolveKind,
 } from '../conflictBlocks';
 import { languageFor } from '../monaco-setup';
+import { monacoThemeName } from '../theme/monacoTheme';
+import { useTheme } from '../theme/themeStore';
 import type { ConflictSide, FileContent } from '../types';
 import { useConfirm } from './ConfirmDialog';
 
@@ -56,6 +58,7 @@ export default function ConflictResolvePane({
   leafId: string;
   onResolved?: () => void;
 }) {
+  const resolvedTheme = useTheme((s) => s.resolved);
   const { confirm: confirmDialog, dialog } = useConfirm();
   const [file, setFile] = useState<FileContent | null>(null);
   const [draft, setDraft] = useState('');
@@ -257,7 +260,7 @@ export default function ConflictResolvePane({
             onMount={onMount}
             keepCurrentModel
             language={languageFor(path)}
-            theme="vs-dark"
+            theme={monacoThemeName(resolvedTheme)}
             options={EDITOR_OPTIONS}
           />
         )}

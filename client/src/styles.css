@@ -2109,70 +2109,8 @@ button.statusbar-item:hover:not(:disabled) {
   min-height: 0;
 }
 
-/* Quick Open (Ctrl+P) */
-.quickopen-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.35);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 10vh;
-  z-index: 100;
-}
-.quickopen {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  width: 560px;
-  max-width: 92vw;
-  max-height: 60vh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
-}
-.quickopen-input {
-  margin: 8px;
-  padding: 5px 8px;
-}
-.quickopen-list {
-  overflow-y: auto;
-  padding-bottom: 6px;
-}
-.quickopen-section {
-  color: var(--fg-dim);
-  font-size: 11px;
-  padding: 4px 12px 2px;
-}
-.quickopen-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.quickopen-item.selected {
-  background: var(--bg-active);
-}
-.quickopen-item-icon {
-  flex-shrink: 0;
-  font-size: 15px !important;
-}
-.quickopen-item-name {
-  flex-shrink: 0;
-}
-.quickopen-item-dir {
-  color: var(--fg-dim);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.quickopen-empty {
-  color: var(--fg-dim);
-  padding: 8px 12px;
-}
+/* Quick Open (Ctrl+P) — シェルは shadcn Dialog + Tailwind へ移行済み (QuickOpenModal.tsx)。
+   .fuzzy-hl は QuickOpen / SearchPanel 共用のハイライトとして残す */
 .fuzzy-hl {
   background: transparent;
   color: var(--primary);
@@ -2197,23 +2135,7 @@ button.statusbar-item:hover:not(:disabled) {
   flex: 1;
   min-width: 0;
 }
-.search-toggle {
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--fg-dim);
-  padding: 3px 5px;
-  border-radius: 3px;
-  font-size: 11px;
-  flex-shrink: 0;
-}
-.search-toggle:hover {
-  background: var(--bg-hover);
-}
-.search-toggle.active {
-  color: var(--fg);
-  background: var(--bg-active);
-  border-color: var(--primary);
-}
+/* search-toggle は shadcn Button (SearchPanel.tsx) へ移行済み */
 .search-error {
   color: var(--red);
   font-size: 11px;

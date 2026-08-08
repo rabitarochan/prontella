@@ -41,6 +41,7 @@
   --surface-active: #e4e4e7;
   --destructive: #dc2626;
   --destructive-foreground: #ffffff;
+  --destructive-hover: #b91c1c;
   --border: #e4e4e7;
   --input: #e4e4e7;
   --ring: #d97757;
@@ -51,6 +52,11 @@
   --status-orange: #c2410c;
   --status-red: #dc2626;
   --status-blue: #2563eb;
+  --blame-uncommitted-bg: rgba(180, 83, 9, 0.08);
+  --blame-dup-bg: rgba(0, 0, 0, 0.03);
+  --file-icon-ts: #0369a1;
+  --file-icon-js: #a16207;
+  --file-icon-css: #9333ea;
 }
 
 .dark {
@@ -69,8 +75,10 @@
   --muted-foreground: #9a9aa3;
   --surface-hover: #2e2e35;
   --surface-active: #37373f;
-  --destructive: #b91c1c;
+  /* destructive は既存 danger ボタンの実測値の写像(#7a2e26 / hover #99392e) */
+  --destructive: #7a2e26;
   --destructive-foreground: #ffffff;
+  --destructive-hover: #99392e;
   --border: #3c3c44;
   --input: #3c3c44;
   --ring: #d97757;
@@ -80,6 +88,11 @@
   --status-orange: #ce9178;
   --status-red: #f48771;
   --status-blue: #569cd6;
+  --blame-uncommitted-bg: rgba(230, 180, 80, 0.08);
+  --blame-dup-bg: rgba(255, 255, 255, 0.025);
+  --file-icon-ts: #4fc1ff;
+  --file-icon-js: #e8d44d;
+  --file-icon-css: #c586c0;
 }
 
 @theme inline {

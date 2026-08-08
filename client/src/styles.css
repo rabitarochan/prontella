@@ -37,12 +37,12 @@ button.primary:hover:not(:disabled) {
   background: var(--primary);
 }
 button.danger {
-  background: #7a2e26;
+  background: var(--destructive);
   border-color: var(--red);
-  color: #fff;
+  color: var(--destructive-foreground);
 }
 button.danger:hover:not(:disabled) {
-  background: #99392e;
+  background: var(--destructive-hover);
 }
 
 input,
@@ -1890,7 +1890,7 @@ button.context-menu-item:hover:not(:disabled) {
   flex: 1;
   min-height: 0;
   position: relative;
-  background: #1b1b20;
+  background: var(--terminal-bg);
 }
 .term-empty {
   position: absolute;
@@ -2088,7 +2088,7 @@ button.context-menu-item:hover:not(:disabled) {
   background: var(--bg-hover);
 }
 .blame-row-uncommitted {
-  background: rgba(230, 180, 80, 0.08);
+  background: var(--blame-uncommitted-bg);
 }
 .blame-line-no {
   flex: none;
@@ -2113,7 +2113,7 @@ button.context-menu-item:hover:not(:disabled) {
 .blame-annotation-repeat {
   border-right: 1px solid var(--border);
   position: relative;
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--blame-dup-bg);
   /* .blame-row は align-items: baseline (行番号・注釈・内容のテキストベースラインを揃えるため)。
      この間引き行の <span> はテキストノードを一切持たないため、baseline 整列下では内容ゼロの
      まま高さ 0 に収縮してしまい、背景も ::before の縦罫(top:0/bottom:0 は自分自身の高さが
@@ -2502,7 +2502,8 @@ button.context-menu-item:hover:not(:disabled) {
   text-overflow: ellipsis;
 }
 .search-hl {
-  background: rgba(217, 119, 87, 0.28);
+  /* --primary(#d97757)の 28% = 従来の rgba(217, 119, 87, 0.28) と同値 */
+  background: color-mix(in srgb, var(--primary) 28%, transparent);
   color: inherit;
   border-radius: 2px;
 }

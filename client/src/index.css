@@ -17,6 +17,118 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * テーマトークン。:root = ライト(zinc ベース)、.dark = ダーク(現行配色の写像)。
+ * shadcn のホバー色トークンは意図的に --accent という名前を使わず --surface-hover
+ * とし、@theme inline で --color-accent に写像する(旧 CSS の --accent =
+ * アクセントオレンジと名前が衝突するため。旧 --accent は --primary へ移行する)。
+ */
+:root {
+  --background: #fafafa;
+  --foreground: #27272a;
+  --card: #ffffff;
+  --card-foreground: #27272a;
+  --popover: #ffffff;
+  --popover-foreground: #27272a;
+  --primary: #d97757;
+  --primary-foreground: #ffffff;
+  --primary-dim: #c4603f;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #27272a;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --surface-hover: #f4f4f5;
+  --surface-active: #e4e4e7;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #d97757;
+  --radius: 0.5rem;
+  --terminal-bg: #ffffff;
+  --status-green: #059669;
+  --status-yellow: #a16207;
+  --status-orange: #c2410c;
+  --status-red: #dc2626;
+  --status-blue: #2563eb;
+}
+
+.dark {
+  --background: #1e1e23;
+  --foreground: #d4d4d4;
+  --card: #252529;
+  --card-foreground: #d4d4d4;
+  --popover: #252529;
+  --popover-foreground: #d4d4d4;
+  --primary: #d97757;
+  --primary-foreground: #ffffff;
+  --primary-dim: #a85a40;
+  --secondary: #2e2e35;
+  --secondary-foreground: #d4d4d4;
+  --muted: #2e2e35;
+  --muted-foreground: #9a9aa3;
+  --surface-hover: #2e2e35;
+  --surface-active: #37373f;
+  --destructive: #b91c1c;
+  --destructive-foreground: #ffffff;
+  --border: #3c3c44;
+  --input: #3c3c44;
+  --ring: #d97757;
+  --terminal-bg: #1b1b20;
+  --status-green: #4ec9b0;
+  --status-yellow: #dcdcaa;
+  --status-orange: #ce9178;
+  --status-red: #f48771;
+  --status-blue: #569cd6;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--surface-hover);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+/*
+ * 旧変数エイリアス。既存 styles.css(2,600 行超)を書き換えずに両テーマ対応
+ * させるための写像。--border は新旧同名のためエイリアス不要(自己参照は無効)。
+ * --accent / --accent-dim は --primary への置換完了までの暫定エイリアス。
+ */
+:root {
+  --bg: var(--background);
+  --bg-panel: var(--card);
+  --bg-hover: var(--surface-hover);
+  --bg-active: var(--surface-active);
+  --fg: var(--foreground);
+  --fg-dim: var(--muted-foreground);
+  --green: var(--status-green);
+  --yellow: var(--status-yellow);
+  --orange: var(--status-orange);
+  --red: var(--status-red);
+  --blue: var(--status-blue);
+  --accent: var(--primary);
+  --accent-dim: var(--primary-dim);
+  font-size: 13px;
+}
+
 @layer base {
   /* shadcn コンポーネント(data-slot 属性を必ず持つ)限定のミニリセット。
      utilities 層は base より強いので、outline バリアント等の border は生き残る */

@@ -1,20 +1,4 @@
-:root {
-  --bg: #1e1e23;
-  --bg-panel: #252529;
-  --bg-hover: #2e2e35;
-  --bg-active: #37373f;
-  --border: #3c3c44;
-  --fg: #d4d4d4;
-  --fg-dim: #9a9aa3;
-  --accent: #d97757;
-  --accent-dim: #a85a40;
-  --green: #4ec9b0;
-  --yellow: #dcdcaa;
-  --orange: #ce9178;
-  --red: #f48771;
-  --blue: #569cd6;
-  font-size: 13px;
-}
+/* カラートークンと旧変数エイリアスは index.css で定義する(ライト/ダーク両対応) */
 
 * {
   box-sizing: border-box;

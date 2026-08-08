@@ -175,9 +175,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
   );
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
-  // reloadWithEncoding (下) はスコープ外のネイティブ confirm() を使い続けるため、
-  // useConfirm 側は confirmDialog という別名にして window.confirm を隠さない
-  // (GitTab.tsx の confirmDialog と同じ回避パターン)。
+  // useConfirm 側は confirmDialog という別名にする (GitTab.tsx と同じ命名)。
   const { confirm: confirmDialog, dialog } = useConfirm();
   const saveRef = useRef<() => void>(() => {});
   const loadedRef = useRef(new Set<string>()); // tab keys whose load is in flight or done
@@ -859,7 +857,13 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
     if (!tab || tab.kind !== 'editor') return;
     const path = tab.path;
     if (tab.file && tab.file.content !== null && tab.draft !== tab.file.content) {
-      if (!confirm(`${basename(path)} の未保存の変更を破棄して再読み込みしますか?`)) return;
+      const ok = await confirmDialog({
+        title: '再読み込み',
+        message: `${basename(path)} の未保存の変更を破棄して再読み込みしますか?`,
+        confirmLabel: '破棄して再読み込み',
+        severity: 'danger',
+      });
+      if (!ok) return;
     }
     try {
       const f = await api.file(root, path, encoding);

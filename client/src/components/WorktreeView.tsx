@@ -191,9 +191,15 @@ export default function WorktreeView({ repo, worktree }: { repo: ActiveRepo; wor
             className="icon-btn layout-reset"
             title="レイアウトを初期化"
             onClick={() => {
-              if (confirm('レイアウトを初期化しますか?(未保存の編集内容は失われます)')) {
-                tiles.reset();
-              }
+              void (async () => {
+                const ok = await confirmDialog({
+                  title: 'レイアウトを初期化',
+                  message: 'レイアウトを初期化しますか?(未保存の編集内容は失われます)',
+                  confirmLabel: '初期化',
+                  severity: 'danger',
+                });
+                if (ok) tiles.reset();
+              })();
             }}
           >
             <span className="codicon codicon-layout" />

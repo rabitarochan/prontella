@@ -16,6 +16,8 @@ export interface PromptRequest {
   placeholder?: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** 空入力での確定を許可する(スタッシュ / タグの「メッセージ省略可」用)。確定時は '' を返す */
+  allowEmpty?: boolean;
 }
 
 /** shadcn Dialog ベースの汎用 1 行テキスト入力ダイアログ。 */
@@ -26,6 +28,7 @@ export default function PromptDialog({
   placeholder,
   confirmLabel = '実行',
   cancelLabel = 'キャンセル',
+  allowEmpty = false,
   onConfirm,
   onCancel,
 }: {
@@ -35,6 +38,7 @@ export default function PromptDialog({
   placeholder?: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  allowEmpty?: boolean;
   onConfirm: (value: string) => void;
   onCancel: () => void;
 }) {
@@ -43,7 +47,7 @@ export default function PromptDialog({
 
   const submit = () => {
     const trimmed = value.trim();
-    if (!trimmed) return;
+    if (!trimmed && !allowEmpty) return;
     onConfirm(trimmed);
   };
 
@@ -74,7 +78,7 @@ export default function PromptDialog({
           <Button variant="outline" onClick={onCancel}>
             {cancelLabel}
           </Button>
-          <Button disabled={!value.trim()} onClick={submit}>
+          <Button disabled={!allowEmpty && !value.trim()} onClick={submit}>
             {confirmLabel}
           </Button>
         </DialogFooter>
@@ -125,6 +129,7 @@ export function usePrompt() {
       placeholder={request.placeholder}
       confirmLabel={request.confirmLabel}
       cancelLabel={request.cancelLabel}
+      allowEmpty={request.allowEmpty}
       onConfirm={(v) => settle(v)}
       onCancel={() => settle(null)}
     />

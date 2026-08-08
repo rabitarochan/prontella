@@ -7,7 +7,9 @@ import { isActive, isArchived, moveByOffset, moveWithinSection, sectionize } fro
 import type { ActiveRepo, ArchivedRepo, Repo } from '../types';
 import StatusBadge from './StatusBadge';
 import AddWorktreeModal from './AddWorktreeModal';
+import { useConfirm } from './ConfirmDialog';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
+import { usePrompt } from './PromptDialog';
 
 const ARCHIVED_OPEN_KEY = 'deck3.sidebar.archivedOpen';
 
@@ -29,6 +31,8 @@ export default function Sidebar() {
     setRepoPinned,
     setRepoArchived,
   } = useDeck();
+  const { confirm: confirmDialog, dialog } = useConfirm();
+  const { prompt: promptDialog, dialog: promptDlg } = usePrompt();
   const [worktreeTarget, setWorktreeTarget] = useState<ActiveRepo | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(() => loadPref(ARCHIVED_OPEN_KEY, false));
   const [menu, setMenu] = useState<{ x: number; y: number; repo: Repo } | null>(null);
@@ -100,7 +104,12 @@ export default function Sidebar() {
   };
 
   const addRepo = async () => {
-    const path = prompt('追加するディレクトリーのパスを入力してください:');
+    const path = await promptDialog({
+      title: 'リポジトリーを追加',
+      message: '追加するディレクトリーのパスを入力してください。',
+      placeholder: 'C:\\path\\to\\repo',
+      confirmLabel: '追加',
+    });
     if (!path) return;
     beginRepoMutation();
     try {
@@ -112,7 +121,12 @@ export default function Sidebar() {
   };
 
   const removeRepo = async (repo: Repo) => {
-    if (!confirm(`${repo.name} を Deck から削除しますか?\n(リポジトリー自体は削除されません)`)) return;
+    const ok = await confirmDialog({
+      title: 'Deck から削除',
+      message: `${repo.name} を Deck から削除しますか?\n(リポジトリー自体は削除されません)`,
+      confirmLabel: '削除',
+    });
+    if (!ok) return;
     beginRepoMutation();
     await api.removeRepo(repo.id);
     if (selected?.repoId === repo.id) select(null);
@@ -120,7 +134,13 @@ export default function Sidebar() {
   };
 
   const removeWorktree = async (repo: ActiveRepo, path: string) => {
-    if (!confirm(`Worktree を削除しますか?\n${path}\n\n※ ディレクトリーごと削除されます`)) return;
+    const ok = await confirmDialog({
+      title: 'Worktree を削除',
+      message: `Worktree を削除しますか?\n${path}\n\n※ ディレクトリーごと削除されます`,
+      confirmLabel: '削除',
+      severity: 'danger',
+    });
+    if (!ok) return;
     try {
       await api.removeWorktree(repo.id, path, false);
       // select(null) は WorktreeView を unmount させ、FilesTab の cleanup flush が
@@ -132,7 +152,13 @@ export default function Sidebar() {
       removeWorktreeLocalState(path);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      if (confirm(`削除に失敗しました:\n${message}\n\n未コミットの変更ごと強制削除しますか?`)) {
+      const force = await confirmDialog({
+        title: 'Worktree を強制削除',
+        message: `削除に失敗しました:\n${message}\n\n未コミットの変更ごと強制削除しますか?`,
+        confirmLabel: '強制削除',
+        severity: 'danger',
+      });
+      if (force) {
         let succeeded = false;
         try {
           await api.removeWorktree(repo.id, path, true);
@@ -157,9 +183,12 @@ export default function Sidebar() {
       (wt) => wt.agent.status === 'busy' || wt.agent.status === 'waiting',
     );
     if (hasBusyAgent) {
-      const ok = confirm(
-        'エージェントが動作中です。アーカイブすると状態表示が止まります(セッションは動き続けます)。続けますか?',
-      );
+      const ok = await confirmDialog({
+        title: 'リポジトリーをアーカイブ',
+        message:
+          'エージェントが動作中です。アーカイブすると状態表示が止まります(セッションは動き続けます)。続けますか?',
+        confirmLabel: 'アーカイブ',
+      });
       if (!ok) return;
     }
     const wasSelected = selected?.repoId === repo.id;
@@ -384,6 +413,8 @@ export default function Sidebar() {
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.repo)} onClose={() => setMenu(null)} />
       )}
+      {dialog}
+      {promptDlg}
     </aside>
   );
 }

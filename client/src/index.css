@@ -1,0 +1,34 @@
+/*
+ * CSS エントリーポイント。レイヤー順が共存戦略の要:
+ *   theme < legacy < base < components < utilities
+ * - legacy(既存 styles.css)を base より前に置くことで、base 層の
+ *   data-slot ミニリセットが legacy のグローバル button/input 既定に勝つ。
+ * - Tailwind preflight は読み込まない(Markdown プレビューの見出し margin や
+ *   リストマーカーを破壊するため)。shadcn コンポーネントに必要な最小リセットのみ
+ *   base 層に定義する。
+ */
+@layer theme, legacy, base, components, utilities;
+
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+@import 'tw-animate-css';
+
+@import './styles.css' layer(legacy);
+
+@custom-variant dark (&:is(.dark *));
+
+@layer base {
+  /* shadcn コンポーネント(data-slot 属性を必ず持つ)限定のミニリセット。
+     utilities 層は base より強いので、outline バリアント等の border は生き残る */
+  [data-slot],
+  [data-slot]::before,
+  [data-slot]::after {
+    border: 0 solid;
+  }
+  button[data-slot] {
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+  }
+}

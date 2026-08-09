@@ -54,6 +54,7 @@ export default function TileWorkspace({
       {visited.has('term') && (
         <div className="tile-view" style={{ display: leaf.view === 'term' ? undefined : 'none' }}>
           <TermPanel
+            leafId={leaf.id}
             sessions={sessions}
             ownedIds={leaf.sessions}
             activeId={leaf.activeSession}

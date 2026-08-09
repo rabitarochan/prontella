@@ -1381,6 +1381,12 @@ button.statusbar-item:hover:not(:disabled) {
   gap: 2px;
   padding: 8px 8px 2px;
 }
+/* タイルバー内 (1 段化): 右寄せ・余白はバー側が持つ */
+.git-sync-bar.in-bar {
+  margin-left: auto;
+  padding: 0;
+  flex-shrink: 0;
+}
 .git-sync-btn {
   display: flex;
   align-items: center;

@@ -123,8 +123,12 @@ export default function TilePane({
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
-          {leaf.sessions.length > 0 && <span className="tile-tab-count">{leaf.sessions.length}</span>}
-          {termStatus && <StatusBadge status={termStatus} dot />}
+          {/* term ビューではセッションタブ自体がバーに入る (ドット付き) ため、
+              集約カウント / ステータスドットは他ビュー表示中のみ出す */}
+          {leaf.view !== 'term' && leaf.sessions.length > 0 && (
+            <span className="tile-tab-count">{leaf.sessions.length}</span>
+          )}
+          {leaf.view !== 'term' && termStatus && <StatusBadge status={termStatus} dot />}
           <span
             className="tile-bar-slot tile-bar-slot-lead"
             ref={(el) => {

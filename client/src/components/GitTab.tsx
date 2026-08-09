@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '../api';
 import { useT, type StringKey } from '../i18n';
+import { useTileBarSlots } from '../layout/tileBarSlots';
 import { useDeck } from '../store';
 import type {
   ActiveRepo,
@@ -75,6 +77,10 @@ export default function GitTab({
   const [syncMenu, setSyncMenu] = useState<{ x: number; y: number; kind: 'pull' | 'push' } | null>(
     null,
   );
+  // タイルバーのメインゾーンスロット (1 段化)。hook のため gitMode==='none' の
+  // 早期 return より前で購読する。表示中 (visible) のビューだけがバーを使う
+  const barSlot = useTileBarSlots((s) => s.slots[leafId] ?? null);
+  const inBar = visible && barSlot !== null;
   // 変更リストで選択したファイルの diff/競合解決タブ。ChangesTab は reloadKey で
   // 再マウントされるので、タブはここ (GitTab) が持って生き残らせる。
   const [diffTabs, setDiffTabs] = useState<WorkTab[]>([]);
@@ -752,10 +758,11 @@ export default function GitTab({
     );
   }
 
-  return (
-    <div className="git-tab">
-      <div className="git-side">
-        <div className="git-sync-bar">
+  // リモート同期バー: 表示中はタイルバーのメインゾーン (右端) へポータルして
+  // 1 段化 (モックアップの tpl-git と同配置)。スロット未登録時は従来どおり
+  // git-side 先頭にインライン描画するフォールバック。
+  const syncBar = (
+    <div className={`git-sync-bar${inBar ? ' in-bar' : ''}`}>
           <button
             className="icon-btn git-sync-btn"
             title={t('git.fetchTooltip')}
@@ -797,7 +804,13 @@ export default function GitTab({
               <span className="sync-count">{worktree.status?.ahead}</span>
             )}
           </button>
-        </div>
+    </div>
+  );
+
+  return (
+    <div className="git-tab">
+      <div className="git-side">
+        {inBar && barSlot ? createPortal(syncBar, barSlot) : syncBar}
         <div className="git-section-head git-section-title">{t('git.workspaceSectionTitle')}</div>
         <div
           className={`git-nav-row ${view === 'status' ? 'active' : ''}`}

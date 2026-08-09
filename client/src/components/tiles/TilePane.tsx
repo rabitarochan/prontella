@@ -1,14 +1,21 @@
 import { useCallback, useEffect } from 'react';
+import { Check, ChevronDown, FileText, GitBranch, Terminal } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import type { AgentStatus, TerminalSession } from '../../types';
 import type { LeafNode, TileView } from '../../layout/tileTree';
 import type { TileActions } from '../../layout/useTileLayout';
 import { useConfirm } from '../ConfirmDialog';
 import StatusBadge from '../StatusBadge';
 
-const VIEWS: { view: TileView; label: string; icon: string }[] = [
-  { view: 'files', label: 'ファイル', icon: 'codicon-files' },
-  { view: 'git', label: 'Git', icon: 'codicon-source-control' },
-  { view: 'term', label: 'ターミナル', icon: 'codicon-terminal' },
+const VIEWS: { view: TileView; label: string; Icon: typeof FileText }[] = [
+  { view: 'files', label: 'ファイル', Icon: FileText },
+  { view: 'git', label: 'Git', Icon: GitBranch },
+  { view: 'term', label: 'ターミナル', Icon: Terminal },
 ];
 
 /** タイル内セッションの「最も注意が必要な」ステータス (デッキのカードと同じ優先順)。 */
@@ -75,6 +82,8 @@ export default function TilePane({
   };
 
   const termStatus = aggregateStatus(leaf, sessions);
+  const current = VIEWS.find((v) => v.view === leaf.view) ?? VIEWS[0];
+  const CurrentIcon = current.Icon;
 
   return (
     <section
@@ -82,23 +91,33 @@ export default function TilePane({
       onMouseDownCapture={() => actions.focusLeaf(leaf.id)}
     >
       <header className="tile-header">
-        <span className="tile-tabs">
-          {VIEWS.map(({ view, label, icon }) => (
-            <button
-              key={view}
-              className={`tile-tab ${leaf.view === view ? 'active' : ''}`}
-              title={label}
-              onClick={() => actions.setView(leaf.id, view)}
-            >
-              <span className={`codicon ${icon}`} />
-              <span className="tile-tab-label">{label}</span>
-              {view === 'term' && leaf.sessions.length > 0 && (
+        {/* ビュー切替: アイコン + プルダウン (P8-3)。旧タブ帯では 3 タブが常時見えて
+            いたため、セッション数とステータスはトリガー側に常時出して情報量を保つ */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button className="tile-view-trigger" title="表示を切り替え">
+              <CurrentIcon />
+              <span className="tile-tab-label">{current.label}</span>
+              {leaf.sessions.length > 0 && (
                 <span className="tile-tab-count">{leaf.sessions.length}</span>
               )}
-              {view === 'term' && termStatus && <StatusBadge status={termStatus} compact />}
+              {termStatus && <StatusBadge status={termStatus} compact />}
+              <ChevronDown className="tile-view-chevron" />
             </button>
-          ))}
-        </span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
+            {VIEWS.map(({ view, label, Icon }) => (
+              <DropdownMenuItem key={view} onSelect={() => actions.setView(leaf.id, view)}>
+                <Icon />
+                {label}
+                {view === 'term' && leaf.sessions.length > 0 && (
+                  <span className="tile-tab-count">{leaf.sessions.length}</span>
+                )}
+                {leaf.view === view && <Check className="ml-auto" />}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <span className="tile-actions">
           <button
             className="icon-btn"

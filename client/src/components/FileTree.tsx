@@ -240,11 +240,19 @@ function TreeNode({ node, style }: NodeRendererProps<TNode>) {
   );
 }
 
+/** ツリー操作をヘッダー側 (FilesTab の統合ヘッダー行) から呼ぶためのハンドル。 */
+export interface FileTreeHandle {
+  startCreate: (kind: 'file' | 'dir') => void;
+  reload: () => void;
+}
+
 export default function FileTree({
   root,
   selectedPath,
   onSelectFile,
   onFileContextMenu,
+  controllerRef,
+  hideToolbar,
 }: {
   root: string;
   selectedPath: string | null;
@@ -254,6 +262,10 @@ export default function FileTree({
    * 呼び出し元 (FilesTab) の責務 — BranchTree の onContextMenu と同じ分担パターン。
    */
   onFileContextMenu?: (e: React.MouseEvent, path: string) => void;
+  /** ツリー操作 (新規作成 / 再読み込み) を外部トリガーにするためのハンドル受け口。 */
+  controllerRef?: React.MutableRefObject<FileTreeHandle | null>;
+  /** 内蔵ツールバーを描画しない (操作は controllerRef 経由。notice 行だけは残る)。 */
+  hideToolbar?: boolean;
 }) {
   const t = useT();
   const [nodes, setNodes] = useState<TNode[] | null>(null);
@@ -493,22 +505,38 @@ export default function FileTree({
     [selectedPath, onSelectFile, onFileContextMenu, loadDir, setActiveDir, colorClass, confirmCreate, cancelCreate],
   );
 
+  // 統合ヘッダー行 (FilesTab) から操作できるよう毎レンダーで最新のクロージャーを公開する
+  if (controllerRef) {
+    controllerRef.current = {
+      startCreate: (kind) => void startCreate(kind),
+      reload: loadRoot,
+    };
+  }
+
   if (error) return <div className="tree-error">⚠ {error}</div>;
 
   return (
     <div className="tree-wrap">
-      <div className="tree-toolbar">
-        {notice && <span className="tree-notice" title={notice}>⚠ {notice}</span>}
-        <button className="icon-btn" onClick={() => void startCreate('file')} title={t('files.newFileTooltip')}>
-          <span className="codicon codicon-new-file" />
-        </button>
-        <button className="icon-btn" onClick={() => void startCreate('dir')} title={t('files.newFolderTooltip')}>
-          <span className="codicon codicon-new-folder" />
-        </button>
-        <button className="icon-btn" onClick={loadRoot} title={t('files.reloadTitle')}>
-          <span className="codicon codicon-refresh" />
-        </button>
-      </div>
+      {hideToolbar ? (
+        notice && (
+          <div className="tree-toolbar">
+            <span className="tree-notice" title={notice}>⚠ {notice}</span>
+          </div>
+        )
+      ) : (
+        <div className="tree-toolbar">
+          {notice && <span className="tree-notice" title={notice}>⚠ {notice}</span>}
+          <button className="icon-btn" onClick={() => void startCreate('file')} title={t('files.newFileTooltip')}>
+            <span className="codicon codicon-new-file" />
+          </button>
+          <button className="icon-btn" onClick={() => void startCreate('dir')} title={t('files.newFolderTooltip')}>
+            <span className="codicon codicon-new-folder" />
+          </button>
+          <button className="icon-btn" onClick={loadRoot} title={t('files.reloadTitle')}>
+            <span className="codicon codicon-refresh" />
+          </button>
+        </div>
+      )}
       <div className="tree-host" ref={hostRef}>
         {displayNodes === null ? (
           <div className="tree-loading">{t('common.loading')}</div>

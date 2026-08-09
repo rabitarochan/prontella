@@ -23,7 +23,7 @@ import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import EditorStatusBar from './EditorStatusBar';
 import { middleClickAutoscrollGuard, middleClickClose } from './editorTabs';
 import FileHistoryModal from './FileHistoryModal';
-import FileTree from './FileTree';
+import FileTree, { type FileTreeHandle } from './FileTree';
 import MarkdownPreview from './MarkdownPreview';
 import SearchPanel from './SearchPanel';
 
@@ -953,11 +953,15 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
     setTabs((prev) => prev.map((t) => (t.key === activeKey ? { ...t, draft: value ?? '' } : t)));
   };
 
+  const treeCtl = useRef<FileTreeHandle | null>(null);
+
   const touch = () => touchFilesTab(instanceRef.current);
 
   return (
     <div className="files-tab" ref={containerRef} onPointerDownCapture={touch} onFocusCapture={touch}>
       <div className="files-tree-pane">
+        {/* 統合ヘッダー行: ビュー切替 (左) + ツリー操作 (右)。旧 2 段 (切替行 +
+            ツリーツールバー行) を 1 行に集約してヘッダーの縦幅を節約する */}
         <div className="side-switch">
           <button
             className={`side-switch-btn ${side === 'tree' ? 'active' : ''}`}
@@ -973,6 +977,31 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
           >
             <span className="codicon codicon-search" />
           </button>
+          {side === 'tree' && (
+            <span className="side-switch-actions">
+              <button
+                className="icon-btn"
+                onClick={() => treeCtl.current?.startCreate('file')}
+                title={t('files.newFileTooltip')}
+              >
+                <span className="codicon codicon-new-file" />
+              </button>
+              <button
+                className="icon-btn"
+                onClick={() => treeCtl.current?.startCreate('dir')}
+                title={t('files.newFolderTooltip')}
+              >
+                <span className="codicon codicon-new-folder" />
+              </button>
+              <button
+                className="icon-btn"
+                onClick={() => treeCtl.current?.reload()}
+                title={t('files.reloadTitle')}
+              >
+                <span className="codicon codicon-refresh" />
+              </button>
+            </span>
+          )}
         </div>
         <div className="side-view" style={{ display: side === 'tree' ? undefined : 'none' }}>
           <FileTree
@@ -980,6 +1009,8 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
             selectedPath={active?.path ?? null}
             onSelectFile={openFile}
             onFileContextMenu={(e, path) => setFileMenu({ x: e.clientX, y: e.clientY, path })}
+            controllerRef={treeCtl}
+            hideToolbar
           />
         </div>
         {searchVisitedRef.current && (
@@ -999,36 +1030,68 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
           <div className="placeholder">{t('files.selectFilePlaceholder')}</div>
         ) : (
           <>
-            <div className="editor-tabs" {...middleClickAutoscrollGuard}>
-              {/* map param named `tab` (not `t`) here: this scope also needs the outer
-                  translate function `t`, which an OpenTab-named `t` would shadow. */}
-              {tabs.map((tab) => (
-                <div
-                  key={tab.key}
-                  className={`editor-tab ${activeKey === tab.key ? 'active' : ''}`}
-                  title={
-                    tab.kind === 'preview' ? t('files.previewTabTitle', { path: tab.path }) : tab.path
-                  }
-                  onClick={() => switchTo(tab.key)}
-                  {...middleClickClose(() => void closeTab(tab.key))}
-                >
-                  {tab.kind === 'preview' && <span className="codicon codicon-preview" />}
-                  <span className="editor-tab-name">{basename(tab.path)}</span>
-                  <span className="editor-tab-actions">
-                    {isDirty(tab) && <span className="editor-tab-dirty">●</span>}
+            {/* 統合ヘッダー行: タブ列 (スクロール) + 保存系アクション (右端固定)。
+                旧 2 段 (タブ行 + パス/保存ツールバー行) を 1 行に集約。パスは下部の
+                ステータスバーへ移設した */}
+            <div className="editor-tabs">
+              <div className="editor-tabs-strip" {...middleClickAutoscrollGuard}>
+                {/* map param named `tab` (not `t`) here: this scope also needs the outer
+                    translate function `t`, which an OpenTab-named `t` would shadow. */}
+                {tabs.map((tab) => (
+                  <div
+                    key={tab.key}
+                    className={`editor-tab ${activeKey === tab.key ? 'active' : ''}`}
+                    title={
+                      tab.kind === 'preview' ? t('files.previewTabTitle', { path: tab.path }) : tab.path
+                    }
+                    onClick={() => switchTo(tab.key)}
+                    {...middleClickClose(() => void closeTab(tab.key))}
+                  >
+                    {tab.kind === 'preview' && <span className="codicon codicon-preview" />}
+                    <span className="editor-tab-name">{basename(tab.path)}</span>
+                    <span className="editor-tab-actions">
+                      {isDirty(tab) && <span className="editor-tab-dirty">●</span>}
+                      <button
+                        className="editor-tab-close"
+                        title={t('common.close')}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void closeTab(tab.key);
+                        }}
+                      >
+                        <span className="codicon codicon-close" />
+                      </button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {active &&
+                active.kind !== 'preview' &&
+                !active.error &&
+                active.file &&
+                !active.file.binary &&
+                !active.file.tooLarge && (
+                  <>
+                    {message && <span className="editor-msg">{message}</span>}
+                    {isMarkdownPath(active.path) && (
+                      <button
+                        className="icon-btn"
+                        onClick={() => openPreview(active.path)}
+                        title={t('files.openPreview')}
+                      >
+                        <span className="codicon codicon-open-preview" />
+                      </button>
+                    )}
                     <button
-                      className="editor-tab-close"
-                      title={t('common.close')}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void closeTab(tab.key);
-                      }}
+                      className="primary editor-save"
+                      disabled={!modified || saving}
+                      onClick={() => void save()}
+                      title={t('files.saveHintCtrlS')}
                     >
-                      <span className="codicon codicon-close" />
+                      {saving ? t('files.saving') : t('files.save')}
                     </button>
-                  </span>
-                </div>
-              ))}
+                  </>
+                )}
             </div>
             {/* active.kind === 'preview' branches out entirely to MarkdownPreview before any
                 of the editor-only checks below run, so EditorStatusBar / <Editor> stay
@@ -1064,30 +1127,6 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
               </div>
             ) : (
               <>
-                <div className="editor-toolbar">
-                  <span className="editor-path" title={active.path}>
-                    {active.path}
-                    {modified && <span className="editor-modified"> ●</span>}
-                  </span>
-                  <span className="editor-msg">{message}</span>
-                  {isMarkdownPath(active.path) && (
-                    <button
-                      className="icon-btn"
-                      onClick={() => openPreview(active.path)}
-                      title={t('files.openPreview')}
-                    >
-                      <span className="codicon codicon-open-preview" />
-                    </button>
-                  )}
-                  <button
-                    className="primary"
-                    disabled={!modified || saving}
-                    onClick={() => void save()}
-                    title={t('files.saveHintCtrlS')}
-                  >
-                    {saving ? t('files.saving') : t('files.save')}
-                  </button>
-                </div>
                 {active.warning && <div className="editor-warning">⚠ {t(active.warning)}</div>}
                 <div className="editor-host">
                   {/* Uncontrolled on purpose: passing `value` makes the library rewrite the

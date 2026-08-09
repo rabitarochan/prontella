@@ -136,7 +136,8 @@
   --orange: var(--status-orange);
   --red: var(--status-red);
   --blue: var(--status-blue);
-  font-size: 13px;
+  /* ルートはブラウザー既定の 16px のまま(shadcn 標準)。rem ベースの Tailwind
+     ユーティリティが本来のサイズで効く。アプリ UI の基本文字サイズは body 側で 14px */
 }
 
 @layer base {

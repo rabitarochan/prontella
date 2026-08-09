@@ -6,16 +6,18 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { useT, type StringKey } from '../i18n';
 import { useTheme, type ThemeMode } from '../theme/themeStore';
 
-const MODES: { mode: ThemeMode; label: string; Icon: typeof Sun }[] = [
-  { mode: 'light', label: 'ライト', Icon: Sun },
-  { mode: 'dark', label: 'ダーク', Icon: Moon },
-  { mode: 'system', label: 'システム', Icon: Monitor },
+const MODES: { mode: ThemeMode; labelKey: StringKey; Icon: typeof Sun }[] = [
+  { mode: 'light', labelKey: 'theme.light', Icon: Sun },
+  { mode: 'dark', labelKey: 'theme.dark', Icon: Moon },
+  { mode: 'system', labelKey: 'theme.system', Icon: Monitor },
 ];
 
-/** トップバーのテーマ切り替え(ライト/ダーク/システム追従)。 */
+/** テーマ切り替え(ライト/ダーク/システム追従)。 */
 export default function ThemeToggle() {
+  const t = useT();
   const mode = useTheme((s) => s.mode);
   const resolved = useTheme((s) => s.resolved);
   const setMode = useTheme((s) => s.setMode);
@@ -24,15 +26,15 @@ export default function ThemeToggle() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-sm" title="テーマ切り替え" aria-label="テーマ切り替え">
+        <Button variant="ghost" size="icon-sm" title={t('theme.tooltip')} aria-label={t('theme.tooltip')}>
           <CurrentIcon />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        {MODES.map(({ mode: m, label, Icon }) => (
+        {MODES.map(({ mode: m, labelKey, Icon }) => (
           <DropdownMenuItem key={m} onSelect={() => setMode(m)}>
             <Icon />
-            {label}
+            {t(labelKey)}
             {mode === m && <Check className="ml-auto" />}
           </DropdownMenuItem>
         ))}

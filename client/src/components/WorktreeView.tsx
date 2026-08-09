@@ -1,3 +1,4 @@
+import { useT } from '../i18n';
 import type { ActiveRepo, Worktree } from '../types';
 import { useTerminalSessions } from '../layout/useTerminalSessions';
 import { useTileLayout } from '../layout/useTileLayout';
@@ -11,6 +12,7 @@ import TileGrid from './tiles/TileGrid';
  * GitTab の同期バーへ、Claude 起動はターミナルパネルへ移設済み (P8-2)。
  */
 export default function WorktreeView({ repo, worktree }: { repo: ActiveRepo; worktree: Worktree }) {
+  const t = useT();
   const { confirm: confirmDialog, dialog } = useConfirm();
   const { sessions, create, kill } = useTerminalSessions(worktree.path);
   const tiles = useTileLayout(worktree.path, sessions, create, kill);
@@ -22,20 +24,22 @@ export default function WorktreeView({ repo, worktree }: { repo: ActiveRepo; wor
           <span className="wt-header-repo">{repo.name}</span>
           <span className="wt-crumb-sep">/</span>
           <span className="wt-header-branch">
-            {repo.gitMode === 'none' ? '(Git なし)' : (worktree.branch ?? `(detached ${worktree.head})`)}
+            {repo.gitMode === 'none'
+              ? t('common.noGit')
+              : (worktree.branch ?? t('common.detached', { head: worktree.head }))}
           </span>
           <StatusBadge status={worktree.agent.status} />
         </div>
         <div className="wt-header-actions">
           <button
             className="icon-btn layout-reset"
-            title="レイアウトを初期化"
+            title={t('wt.resetLayout')}
             onClick={() => {
               void (async () => {
                 const ok = await confirmDialog({
-                  title: 'レイアウトを初期化',
-                  message: 'レイアウトを初期化しますか?(未保存の編集内容は失われます)',
-                  confirmLabel: '初期化',
+                  title: t('wt.resetLayout'),
+                  message: t('wt.resetLayoutMessage'),
+                  confirmLabel: t('wt.resetLayoutConfirm'),
                   severity: 'danger',
                 });
                 if (ok) tiles.reset();

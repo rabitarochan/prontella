@@ -1,6 +1,7 @@
 import { useEffect, useState, type DragEvent, type MouseEvent } from 'react';
 import { api } from '../api';
 import { loadPref, savePref } from '../agentEvents';
+import { useT } from '../i18n';
 import { beginRepoMutation, useDeck } from '../store';
 import { removeWorktreeLocalState } from '../editorState';
 import { isActive, isArchived, moveByOffset, moveWithinSection, sectionize } from '../repoSections';
@@ -21,6 +22,7 @@ let draggingRepoId: string | null = null;
 type DropTarget = { id: string; position: 'before' | 'after' };
 
 export default function Sidebar() {
+  const t = useT();
   const {
     repos,
     selected,
@@ -105,10 +107,10 @@ export default function Sidebar() {
 
   const addRepo = async () => {
     const path = await promptDialog({
-      title: 'リポジトリーを追加',
-      message: '追加するディレクトリーのパスを入力してください。',
+      title: t('sidebar.addRepo'),
+      message: t('sidebar.addRepoMessage'),
       placeholder: 'C:\\path\\to\\repo',
-      confirmLabel: '追加',
+      confirmLabel: t('common.add'),
     });
     if (!path) return;
     beginRepoMutation();
@@ -122,9 +124,9 @@ export default function Sidebar() {
 
   const removeRepo = async (repo: Repo) => {
     const ok = await confirmDialog({
-      title: 'Deck から削除',
-      message: `${repo.name} を Deck から削除しますか?\n(リポジトリー自体は削除されません)`,
-      confirmLabel: '削除',
+      title: t('sidebar.removeFromDeck'),
+      message: t('sidebar.removeRepoMessage', { name: repo.name }),
+      confirmLabel: t('common.remove'),
     });
     if (!ok) return;
     beginRepoMutation();
@@ -135,9 +137,9 @@ export default function Sidebar() {
 
   const removeWorktree = async (repo: ActiveRepo, path: string) => {
     const ok = await confirmDialog({
-      title: 'Worktree を削除',
-      message: `Worktree を削除しますか?\n${path}\n\n※ ディレクトリーごと削除されます`,
-      confirmLabel: '削除',
+      title: t('sidebar.removeWorktree'),
+      message: t('sidebar.removeWorktreeMessage', { path }),
+      confirmLabel: t('common.remove'),
       severity: 'danger',
     });
     if (!ok) return;
@@ -153,9 +155,9 @@ export default function Sidebar() {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       const force = await confirmDialog({
-        title: 'Worktree を強制削除',
-        message: `削除に失敗しました:\n${message}\n\n未コミットの変更ごと強制削除しますか?`,
-        confirmLabel: '強制削除',
+        title: t('sidebar.forceRemoveWorktree'),
+        message: t('sidebar.forceRemoveWorktreeMessage', { message }),
+        confirmLabel: t('sidebar.forceRemove'),
         severity: 'danger',
       });
       if (force) {
@@ -184,10 +186,9 @@ export default function Sidebar() {
     );
     if (hasBusyAgent) {
       const ok = await confirmDialog({
-        title: 'リポジトリーをアーカイブ',
-        message:
-          'エージェントが動作中です。アーカイブすると状態表示が止まります(セッションは動き続けます)。続けますか?',
-        confirmLabel: 'アーカイブ',
+        title: t('sidebar.archiveRepoTitle'),
+        message: t('sidebar.archiveBusyMessage'),
+        confirmLabel: t('sidebar.archive'),
       });
       if (!ok) return;
     }
@@ -219,19 +220,19 @@ export default function Sidebar() {
     // 存在しない操作」なので、グレーアウトだと理由が伝わらずかえって紛らわしい。
     if (isActive(repo)) {
       items.push({
-        label: repo.pinned ? 'ピン留めを解除' : 'ピン留め',
+        label: repo.pinned ? t('sidebar.unpin') : t('sidebar.pin'),
         icon: 'pin',
         onClick: () => void setRepoPinned(repo.id, !repo.pinned),
       });
     }
     items.push(
       {
-        label: isArchived(repo) ? 'アーカイブを解除' : 'アーカイブ',
+        label: isArchived(repo) ? t('sidebar.unarchive') : t('sidebar.archive'),
         icon: 'archive',
         onClick: () => void (isArchived(repo) ? unarchiveRepo(repo) : archiveRepo(repo)),
       },
       {
-        label: '上へ移動',
+        label: t('sidebar.moveUp'),
         icon: 'arrow-up',
         disabled: moveByOffset(repos, repo.id, -1) === null,
         onClick: () => {
@@ -240,7 +241,7 @@ export default function Sidebar() {
         },
       },
       {
-        label: '下へ移動',
+        label: t('sidebar.moveDown'),
         icon: 'arrow-down',
         disabled: moveByOffset(repos, repo.id, 1) === null,
         onClick: () => {
@@ -249,7 +250,7 @@ export default function Sidebar() {
         },
       },
       {
-        label: 'Deck から削除',
+        label: t('sidebar.removeFromDeck'),
         icon: 'trash',
         danger: true,
         onClick: () => void removeRepo(repo),
@@ -284,7 +285,7 @@ export default function Sidebar() {
           {repo.gitMode === 'root' && (
             <button
               className="icon-btn"
-              title="Worktree を追加"
+              title={t('sidebar.addWorktree')}
               draggable={false}
               onClick={() => setWorktreeTarget(repo)}
             >
@@ -293,7 +294,7 @@ export default function Sidebar() {
           )}
           <button
             className="icon-btn"
-            title="Deck から削除"
+            title={t('sidebar.removeFromDeck')}
             draggable={false}
             onClick={() => void removeRepo(repo)}
           >
@@ -315,14 +316,16 @@ export default function Sidebar() {
           >
             <StatusBadge status={wt.agent.status} compact />
             <span className="wt-branch">
-              {repo.gitMode === 'none' ? '(Git なし)' : (wt.branch ?? `(detached ${wt.head})`)}
+              {repo.gitMode === 'none'
+                ? t('common.noGit')
+                : (wt.branch ?? t('common.detached', { head: wt.head }))}
               {repo.gitMode === 'root' && wt.isMain && <span className="wt-main-mark"> ●main</span>}
             </span>
             {dirty > 0 && <span className="wt-dirty">{dirty}</span>}
             {!wt.isMain && (
               <button
                 className="icon-btn wt-remove"
-                title="Worktree を削除"
+                title={t('sidebar.removeWorktree')}
                 onClick={(e) => {
                   e.stopPropagation();
                   void removeWorktree(repo, wt.path);
@@ -359,7 +362,7 @@ export default function Sidebar() {
         <span className="repo-actions">
           <button
             className="icon-btn"
-            title="アーカイブを解除"
+            title={t('sidebar.unarchive')}
             draggable={false}
             onClick={() => void unarchiveRepo(repo)}
           >
@@ -375,22 +378,27 @@ export default function Sidebar() {
   return (
     <div className="sidebar">
       <div className="sidebar-head">
-        <span>リポジトリー</span>
-        <button className="icon-btn" onClick={() => void addRepo()} title="リポジトリーを追加">
+        <span>{t('sidebar.repositories')}</span>
+        <button className="icon-btn" onClick={() => void addRepo()} title={t('sidebar.addRepo')}>
           ＋
         </button>
       </div>
       <div className="sidebar-list">
         {repos.length === 0 && (
           <div className="sidebar-empty">
-            ＋ ボタンから
-            <br />
-            リポジトリーを追加してください
+            {t('sidebar.empty')
+              .split('\n')
+              .map((line, i) => (
+                <span key={i}>
+                  {i > 0 && <br />}
+                  {line}
+                </span>
+              ))}
           </div>
         )}
         {pinned.length > 0 && (
           <>
-            <div className="sidebar-section-head">ピン留め</div>
+            <div className="sidebar-section-head">{t('sidebar.pinned')}</div>
             {pinned.map(renderActiveRow)}
           </>
         )}
@@ -403,7 +411,7 @@ export default function Sidebar() {
           <div className="sidebar-section-archived">
             <button className="sidebar-section-head sidebar-section-toggle" onClick={toggleArchivedOpen}>
               <span className={`codicon codicon-chevron-${archivedOpen ? 'down' : 'right'}`} />
-              アーカイブ済み ({archived.length})
+              {t('sidebar.archived', { n: archived.length })}
             </button>
             {archivedOpen && archived.map(renderArchivedRow)}
           </div>

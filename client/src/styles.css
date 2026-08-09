@@ -164,6 +164,27 @@ textarea:focus {
   align-items: center;
   gap: 2px;
 }
+.rail-lang {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  overflow: hidden;
+}
+.rail-lang-btn {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 2px 6px;
+  font-size: 10px;
+  color: var(--fg-dim);
+}
+.rail-lang-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.rail-lang-btn.active {
+  background: var(--surface-active);
+  color: var(--fg);
+}
 /* ベルのポップオーバーはレール基準で開く (右端アンカーだと画面外へはみ出す) */
 .rail .bell {
   position: static;

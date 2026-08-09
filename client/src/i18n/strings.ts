@@ -1,9 +1,13 @@
 import type { Lang } from './langStore';
+import { FILES_STRINGS } from './strings-files';
+import { GIT_STRINGS } from './strings-git';
 
 // UI 文字列辞書。キーは <領域>.<意味> の camelCase。プレースホルダーは {name} 形式。
 // サーバーが返すエラーメッセージは対象外 (将来課題)。
+// 量が多い領域は strings-files.ts (ファイル/タイル/検索系) と
+// strings-git.ts (Git 系) に分割し、ここでマージする。
 
-export const STRINGS = {
+const CORE_STRINGS = {
   // ---- 共通 ----
   'common.loading': { ja: '読み込み中...', en: 'Loading…' },
   'common.close': { ja: '閉じる', en: 'Close' },
@@ -137,5 +141,11 @@ export const STRINGS = {
   },
   'bell.sound': { ja: 'サウンド', en: 'Sound' },
 } as const satisfies Record<string, Record<Lang, string>>;
+
+export const STRINGS = {
+  ...CORE_STRINGS,
+  ...FILES_STRINGS,
+  ...GIT_STRINGS,
+} as const;
 
 export type StringKey = keyof typeof STRINGS;

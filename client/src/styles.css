@@ -1451,45 +1451,36 @@ button.statusbar-item:hover:not(:disabled) {
 .tile-pane.focused .tile-header {
   color: var(--fg);
 }
-.tile-tabs {
-  display: flex;
-  align-items: stretch;
-  height: 100%;
-  min-width: 0;
-  overflow: hidden;
-}
-.tile-tab {
+/* ビュー切替トリガー (アイコン + ラベル + プルダウン)。P8-3 で旧タブ帯を置換 */
+.tile-view-trigger {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 12px;
+  padding: 3px 8px;
   background: transparent;
   border: none;
-  border-radius: 0;
-  border-bottom: 2px solid transparent;
-  color: var(--fg-dim);
+  border-radius: calc(var(--radius) - 2px);
+  color: var(--fg);
   font-size: 13px;
   white-space: nowrap;
+  min-width: 0;
 }
-.tile-tab:hover {
-  background: transparent;
-  color: var(--fg);
+.tile-view-trigger:hover:not(:disabled) {
+  background: var(--bg-hover);
 }
-.tile-tab.active {
-  color: var(--fg);
-  border-bottom-color: var(--primary);
+.tile-view-trigger svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
-.tile-tab .codicon {
-  font-size: 13px;
+.tile-view-trigger .tile-view-chevron {
+  width: 12px;
+  height: 12px;
+  color: var(--fg-dim);
 }
 .tile-tab-count {
   font-size: 10px;
   color: var(--fg-dim);
-}
-.tile-tab .badge {
-  padding: 0;
-  border: none;
-  background: transparent;
 }
 /* 狭いタイルではラベルを隠してアイコンだけにする */
 @container tile (max-width: 380px) {

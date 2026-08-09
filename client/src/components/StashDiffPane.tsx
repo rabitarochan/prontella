@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { useT } from '../i18n';
 import { classifyDiffLine, truncateStashDiffText } from '../stashDiffText';
 
 /**
@@ -10,6 +11,7 @@ import { classifyDiffLine, truncateStashDiffText } from '../stashDiffText';
  * ハンク単位の stage/unstage/discard 操作は一切出さない (このタブは常に読み取り専用)。
  */
 export default function StashDiffPane({ dir, stashRef }: { dir: string; stashRef: string }) {
+  const t = useT();
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState('');
 
@@ -23,8 +25,8 @@ export default function StashDiffPane({ dir, stashRef }: { dir: string; stashRef
   }, [dir, stashRef]);
 
   if (error) return <div className="placeholder">⚠ {error}</div>;
-  if (text === null) return <div className="placeholder">読み込み中...</div>;
-  if (!text) return <div className="placeholder">差分はありません (tracked な変更なし)</div>;
+  if (text === null) return <div className="placeholder">{t('common.loading')}</div>;
+  if (!text) return <div className="placeholder">{t('stashdiff.noDiff')}</div>;
 
   // files.ts の MAX_FILE_SIZE と同じ閾値 (2MB、BlameModal 参照)。BlameModal は上限超過を
   // 全く表示しないが、ここは複数ファイルにまたがる 1 本のテキストなので、切り詰めた分まで
@@ -38,9 +40,7 @@ export default function StashDiffPane({ dir, stashRef }: { dir: string; stashRef
           {line || ' '}
         </div>
       ))}
-      {truncated && (
-        <div className="sdiff-truncated">⚠ 差分が大きすぎるため以降を省略しています (2MB を超えています)</div>
-      )}
+      {truncated && <div className="sdiff-truncated">⚠ {t('stashdiff.truncated')}</div>}
     </div>
   );
 }

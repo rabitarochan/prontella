@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
+import { useT } from '../i18n';
 import { useDeck } from '../store';
 import type { StatusFile } from '../types';
 import { useConfirm } from './ConfirmDialog';
@@ -22,6 +23,7 @@ export default function ChangesTab({
   /** このタブが現在表示中かどうか。非表示中はポーリングを止める。 */
   visible: boolean;
 }) {
+  const t = useT();
   const refreshDeck = useDeck((s) => s.refresh);
   const { confirm: confirmDialog, dialog } = useConfirm();
   // discardAll の confirm ダイアログ内チェックボックス state。ReactNode として一度きり
@@ -72,11 +74,12 @@ export default function ChangesTab({
   };
 
   const discard = async (file: StatusFile) => {
-    const what = file.untracked ? 'この未追跡ファイルを削除' : 'この変更を破棄';
     const ok = await confirmDialog({
-      title: what,
-      message: `${what}しますか?\n${file.path}\n\n※ 元に戻せません`,
-      confirmLabel: '破棄',
+      title: file.untracked ? t('changes.discardUntrackedTitle') : t('changes.discardTrackedTitle'),
+      message: file.untracked
+        ? t('changes.discardUntrackedMessage', { path: file.path })
+        : t('changes.discardTrackedMessage', { path: file.path }),
+      confirmLabel: t('git.discard'),
       severity: 'danger',
     });
     if (!ok) return;
@@ -87,14 +90,14 @@ export default function ChangesTab({
     let lastCommitLine = '';
     try {
       const [last] = await api.log(dir, 1);
-      if (last) lastCommitLine = `\n\n直前のコミット: ${last.shortHash} ${last.subject}`;
+      if (last) lastCommitLine = t('changes.lastCommitLine', { hash: last.shortHash, subject: last.subject });
     } catch {
       // 取得できなくても確認自体は続行する
     }
     const ok = await confirmDialog({
-      title: '直前のコミットを取り消す',
-      message: `直前のコミットを取り消しますか?(reset --soft HEAD~1)\n変更はステージ済みとして残ります。${lastCommitLine}`,
-      confirmLabel: '取り消す',
+      title: t('changes.undoLastCommitTitle'),
+      message: t('changes.undoLastCommitMessage', { lastCommitLine }),
+      confirmLabel: t('changes.undoConfirm'),
       severity: 'normal',
     });
     if (!ok) return;
@@ -106,10 +109,10 @@ export default function ChangesTab({
     const untrackedCount = unstagedFiles.filter((f) => f.untracked).length;
     discardUntrackedRef.current = false;
     const ok = await confirmDialog({
-      title: 'すべての変更を破棄',
+      title: t('changes.discardAllTitle'),
       message: (
         <>
-          <div>変更ファイル {trackedCount} 件の作業ツリーの変更を破棄します。</div>
+          <div>{t('changes.discardAllMessage', { n: trackedCount })}</div>
           <label className="amend-toggle">
             <input
               type="checkbox"
@@ -118,12 +121,12 @@ export default function ChangesTab({
                 discardUntrackedRef.current = e.target.checked;
               }}
             />
-            未追跡ファイルも削除する ({untrackedCount} 件)
+            {t('changes.discardAllUntrackedToggle', { n: untrackedCount })}
           </label>
-          <div>※ 元に戻せません</div>
+          <div>{t('git.cannotUndo')}</div>
         </>
       ),
-      confirmLabel: '破棄',
+      confirmLabel: t('git.discard'),
       severity: 'danger',
     });
     if (!ok) return;
@@ -139,7 +142,11 @@ export default function ChangesTab({
           : ''
       }`}
       onClick={() => (file.conflicted ? onOpenConflict(file) : onOpenDiff(file, staged))}
-      title={file.conflicted ? `${file.path} — クリックで競合を解決` : `${file.path} — クリックで差分をタブ表示`}
+      title={
+        file.conflicted
+          ? t('changes.conflictRowTooltip', { path: file.path })
+          : t('changes.diffRowTooltip', { path: file.path })
+      }
     >
       <span
         className={`change-mark mark-${file.conflicted ? 'U' : staged ? file.staged : file.untracked ? 'A' : file.unstaged}`}
@@ -152,7 +159,7 @@ export default function ChangesTab({
           <button
             className="icon-btn"
             disabled={busy}
-            title={file.untracked ? 'ファイルを削除' : '変更を破棄'}
+            title={file.untracked ? t('changes.deleteFileTooltip') : t('changes.discardChangeTooltip')}
             onClick={(e) => {
               e.stopPropagation();
               void discard(file);
@@ -165,7 +172,7 @@ export default function ChangesTab({
           <button
             className="icon-btn"
             disabled={busy}
-            title={staged ? 'ステージ解除' : 'ステージ'}
+            title={staged ? t('changes.unstageTooltip') : t('changes.stageTooltip')}
             onClick={(e) => {
               e.stopPropagation();
               void act(() => (staged ? api.unstage(dir, file.path) : api.stage(dir, file.path)));
@@ -184,12 +191,12 @@ export default function ChangesTab({
         {error && <div className="my-2 text-xs whitespace-pre-wrap text-[var(--status-red)]">⚠ {error}</div>}
         <div className="changes-section">
           <div className="changes-section-head">
-            <span>ステージ済み ({stagedFiles.length})</span>
+            <span>{t('changes.stagedSectionTitle', { n: stagedFiles.length })}</span>
             {stagedFiles.length > 0 && (
               <button
                 className="icon-btn"
                 disabled={busy}
-                title="すべてステージ解除"
+                title={t('changes.unstageAllTooltip')}
                 onClick={() => void act(() => api.unstageAll(dir))}
               >
                 <span className="codicon codicon-remove" />
@@ -200,13 +207,13 @@ export default function ChangesTab({
         </div>
         <div className="changes-section">
           <div className="changes-section-head">
-            <span>変更 ({unstagedFiles.length})</span>
+            <span>{t('changes.unstagedSectionTitle', { n: unstagedFiles.length })}</span>
             {unstagedFiles.length > 0 && (
               <span className="changes-section-actions">
                 <button
                   className="icon-btn"
                   disabled={busy}
-                  title="すべて破棄"
+                  title={t('changes.discardAllTooltip')}
                   onClick={() => void discardAllChanges()}
                 >
                   <span className="codicon codicon-trash" />
@@ -214,7 +221,7 @@ export default function ChangesTab({
                 <button
                   className="icon-btn"
                   disabled={busy}
-                  title="すべてステージ"
+                  title={t('changes.stageAllTooltip')}
                   onClick={() => void act(() => api.stageAll(dir))}
                 >
                   <span className="codicon codicon-add" />
@@ -224,20 +231,20 @@ export default function ChangesTab({
           </div>
           {unstagedFiles.map((f) => fileRow(f, false))}
         </div>
-        {files.length === 0 && !merging && <div className="placeholder">変更はありません</div>}
+        {files.length === 0 && !merging && <div className="placeholder">{t('changes.empty')}</div>}
         <div className="commit-box">
           <textarea
-            placeholder="コミットメッセージ"
+            placeholder={t('changes.commitMessagePlaceholder')}
             value={commitMsg}
             onChange={(e) => setCommitMsg(e.target.value)}
             rows={3}
           />
           <label className="amend-toggle">
             <input type="checkbox" checked={amend} onChange={(e) => setAmend(e.target.checked)} />
-            直前のコミットを修正 (--amend)
+            {t('changes.amendToggle')}
           </label>
           <button disabled={busy} onClick={() => void undoLastCommit()}>
-            直前のコミットを取り消す
+            {t('changes.undoLastCommitTitle')}
           </button>
           <button
             className="primary"
@@ -250,7 +257,7 @@ export default function ChangesTab({
               })
             }
           >
-            {amend ? 'コミットを修正' : `コミット (${stagedFiles.length} ファイル)`}
+            {amend ? t('changes.amendCommitButton') : t('changes.commitButton', { n: stagedFiles.length })}
           </button>
         </div>
       </div>

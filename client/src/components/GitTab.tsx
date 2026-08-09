@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
+import { useT, type StringKey } from '../i18n';
 import { useDeck } from '../store';
 import type {
   ActiveRepo,
@@ -24,11 +25,11 @@ type GitView = 'status' | 'history';
 
 const POLL_MS = 10_000;
 
-const OPERATION_LABELS: Record<GitOperation, string> = {
-  merge: 'マージ',
-  rebase: 'リベース',
-  'cherry-pick': 'チェリーピック',
-  revert: 'リバート',
+const OPERATION_LABEL_KEYS: Record<GitOperation, StringKey> = {
+  merge: 'git.merge',
+  rebase: 'git.rebase',
+  'cherry-pick': 'git.cherryPick',
+  revert: 'git.revert',
 };
 
 // git merge に --skip は存在しない (server/git.ts の OPERATION_SKIP_UNSUPPORTED と手動同期)。
@@ -48,6 +49,7 @@ export default function GitTab({
    *  Monaco モデル名前空間に使う (FilesTab の modelPath と同じ機構)。 */
   leafId: string;
 }) {
+  const t = useT();
   const refreshDeck = useDeck((s) => s.refresh);
   const { confirm: confirmDialog, dialog } = useConfirm();
   const { prompt: promptDialog, dialog: promptDlg } = usePrompt();
@@ -81,9 +83,10 @@ export default function GitTab({
   const openDiff = useCallback((file: StatusFile, staged: boolean) => {
     const key = diffTabKey(file, staged);
     setDiffTabs((prev) => {
-      const hit = prev.find((t) => t.key === key);
+      const hit = prev.find((tab) => tab.key === key);
       // 既存タブの再クリックは最新の差分を取り直す
-      if (hit) return prev.map((t) => (t.key === key && t.kind === 'diff' ? { ...t, gen: t.gen + 1 } : t));
+      if (hit)
+        return prev.map((tab) => (tab.key === key && tab.kind === 'diff' ? { ...tab, gen: tab.gen + 1 } : tab));
       return [
         ...prev,
         {
@@ -105,7 +108,9 @@ export default function GitTab({
   // アクティブ化するだけ (再クリックで gen を増やして作り直す、はしない)。
   const openConflict = useCallback((file: StatusFile) => {
     const key = conflictTabKey(file.path);
-    setDiffTabs((prev) => (prev.some((t) => t.key === key) ? prev : [...prev, { kind: 'conflict', key, path: file.path }]));
+    setDiffTabs((prev) =>
+      prev.some((tab) => tab.key === key) ? prev : [...prev, { kind: 'conflict', key, path: file.path }],
+    );
     setActiveDiff(key);
   }, []);
 
@@ -115,7 +120,9 @@ export default function GitTab({
   const openStashDiff = useCallback((s: StashEntry) => {
     const key = stashTabKey(s.ref);
     setDiffTabs((prev) =>
-      prev.some((t) => t.key === key) ? prev : [...prev, { kind: 'stash', key, ref: s.ref, message: s.message }],
+      prev.some((tab) => tab.key === key)
+        ? prev
+        : [...prev, { kind: 'stash', key, ref: s.ref, message: s.message }],
     );
     setActiveDiff(key);
   }, []);
@@ -125,21 +132,21 @@ export default function GitTab({
       // 競合タブは編集中の解決作業を保持する唯一のステートフルなタブ
       // (DiffTabsPane 冒頭コメント参照)。タブ全体がミドルクリックの標的に
       // なったので、誤爆で解決作業を失わないよう確認を挟む。
-      const target = diffTabs.find((t) => t.key === key);
+      const target = diffTabs.find((tab) => tab.key === key);
       if (target?.kind === 'conflict') {
         const ok = await confirmDialog({
-          title: '競合の解決を閉じる',
-          message: `${target.path} の解決作業を破棄して閉じますか?`,
-          confirmLabel: '破棄して閉じる',
+          title: t('git.closeConflictTitle'),
+          message: t('git.closeConflictMessage', { path: target.path }),
+          confirmLabel: t('git.discardAndCloseLabel'),
           severity: 'danger',
         });
         if (!ok) return;
       }
-      setDiffTabs((prev) => prev.filter((t) => t.key !== key));
+      setDiffTabs((prev) => prev.filter((tab) => tab.key !== key));
       setActiveDiff((current) => {
         if (current !== key) return current;
-        const idx = diffTabs.findIndex((t) => t.key === key);
-        const next = diffTabs.filter((t) => t.key !== key);
+        const idx = diffTabs.findIndex((tab) => tab.key === key);
+        const next = diffTabs.filter((tab) => tab.key !== key);
         return next[idx]?.key ?? next[idx - 1]?.key ?? null;
       });
     },
@@ -148,7 +155,7 @@ export default function GitTab({
 
   const reloadDiff = useCallback((key: string) => {
     setDiffTabs((prev) =>
-      prev.map((t) => (t.key === key && t.kind === 'diff' ? { ...t, gen: t.gen + 1 } : t)),
+      prev.map((tab) => (tab.key === key && tab.kind === 'diff' ? { ...tab, gen: tab.gen + 1 } : tab)),
     );
   }, []);
 
@@ -215,31 +222,34 @@ export default function GitTab({
 
   const createBranch = async () => {
     const name = await promptDialog({
-      title: 'ブランチを作成',
-      message: '新しいブランチ名 (現在の HEAD から作成して切り替え):',
-      confirmLabel: '作成',
+      title: t('git.createBranchTitle'),
+      message: t('git.createBranchPrompt'),
+      confirmLabel: t('git.create'),
     });
     if (!name?.trim()) return;
-    void act(() => api.switchBranch(dir, name.trim(), true), `${name.trim()} を作成しました`);
+    void act(
+      () => api.switchBranch(dir, name.trim(), true),
+      t('git.createdSuccess', { name: name.trim() }),
+    );
   };
 
   const stashCurrent = async () => {
     const msg = await promptDialog({
-      title: 'スタッシュ',
-      message: 'スタッシュのメッセージ (省略可):',
-      confirmLabel: 'スタッシュ',
+      title: t('git.stash'),
+      message: t('git.stashMessagePrompt'),
+      confirmLabel: t('git.stash'),
       allowEmpty: true,
     });
     if (msg === null) return;
-    void act(() => api.stashPush(dir, msg || undefined), 'スタッシュしました');
+    void act(() => api.stashPush(dir, msg || undefined), t('git.stashedSuccess'));
   };
 
   const deleteBranch = async (branch: string) => {
     if (
       !(await confirmDialog({
-        title: 'ブランチを削除',
-        message: `ブランチ ${branch} を削除しますか?`,
-        confirmLabel: '削除',
+        title: t('git.deleteBranchTitle'),
+        message: t('git.deleteBranchMessage', { name: branch }),
+        confirmLabel: t('common.remove'),
         severity: 'danger',
       }))
     )
@@ -251,9 +261,9 @@ export default function GitTab({
         const msg = e instanceof Error ? e.message : String(e);
         if (
           await confirmDialog({
-            title: 'ブランチを強制削除',
-            message: `削除に失敗しました:\n${msg}\n\nマージされていないコミットごと強制削除しますか?`,
-            confirmLabel: '強制削除',
+            title: t('git.forceDeleteBranchTitle'),
+            message: t('git.forceDeleteBranchMessage', { message: msg }),
+            confirmLabel: t('git.forceDelete'),
             severity: 'danger',
           })
         ) {
@@ -262,7 +272,7 @@ export default function GitTab({
           throw e;
         }
       }
-    }, 'ブランチを削除しました');
+    }, t('git.branchDeletedSuccess'));
   };
 
   const openBranchMenu = useCallback((e: React.MouseEvent, branch: BranchInfo) => {
@@ -273,29 +283,32 @@ export default function GitTab({
   // 新名の入力だけ PromptDialog (native prompt() の代替) を経由する。
   const renameBranch = async (b: BranchInfo) => {
     const name = await promptDialog({
-      title: 'ブランチ名を変更',
-      message: `'${b.name}' の新しい名前を入力してください。`,
+      title: t('git.renameBranchTitle'),
+      message: t('git.renameBranchPrompt', { name: b.name }),
       defaultValue: b.name,
-      confirmLabel: '変更',
+      confirmLabel: t('git.change'),
     });
     if (!name || name === b.name) return;
-    void act(() => api.renameBranch(dir, b.name, name), `${b.name} を ${name} に変更しました`);
+    void act(
+      () => api.renameBranch(dir, b.name, name),
+      t('git.renameBranchSuccess', { old: b.name, new: name }),
+    );
   };
 
   const mergeBranch = async (b: BranchInfo, ffOnly: boolean) => {
-    const target = currentBranch ?? '現在のブランチ';
+    const target = currentBranch ?? t('git.currentBranchFallback');
     const ok = await confirmDialog({
-      title: 'マージ',
+      title: t('git.merge'),
       message: ffOnly
-        ? `'${b.name}' を ${target} に fast-forward のみでマージしますか?`
-        : `'${b.name}' を ${target} にマージしますか? (--no-ff)`,
-      confirmLabel: 'マージ',
+        ? t('git.mergeFfOnlyMessage', { name: b.name, target })
+        : t('git.mergeMessage', { name: b.name, target }),
+      confirmLabel: t('git.merge'),
       severity: 'normal',
     });
     if (!ok) return;
     void act(
       () => api.merge(dir, b.name, ffOnly ? { ffOnly: true } : { noFf: true }),
-      'マージしました',
+      t('git.mergedSuccess'),
     );
   };
 
@@ -304,17 +317,15 @@ export default function GitTab({
   // する (merge と同じ扱い)。進行中 operation があるとブランチメニューからの多重実行を防ぐため
   // disabled にする (branchMenuItems 側)。
   const rebaseOntoBranch = async (b: BranchInfo) => {
-    const target = currentBranch ?? '現在のブランチ';
+    const target = currentBranch ?? t('git.currentBranchFallback');
     const ok = await confirmDialog({
-      title: 'リベース',
-      message:
-        `${target} のコミットを '${b.name}' の上に付け替えます。\n` +
-        '競合した場合は競合解決画面に移ります。',
-      confirmLabel: 'リベース',
+      title: t('git.rebase'),
+      message: t('git.rebaseMessage', { target, name: b.name }),
+      confirmLabel: t('git.rebase'),
       severity: 'normal',
     });
     if (!ok) return;
-    void act(() => api.rebase(dir, b.name), `${b.name} にリベースしました`);
+    void act(() => api.rebase(dir, b.name), t('git.rebasedSuccess', { name: b.name }));
   };
 
   // 進行中操作 (merge/rebase/cherry-pick/revert) の続行/中止/スキップ。abort は破壊的操作
@@ -322,22 +333,22 @@ export default function GitTab({
   // continue/skip は git 自身が競合未解決なら拒否するフェイルセーフのため確認なしで実行する。
   const runOperation = async (action: GitOperationAction) => {
     if (!operation) return;
-    const label = OPERATION_LABELS[operation];
+    const label = t(OPERATION_LABEL_KEYS[operation]);
     if (action === 'abort') {
       const ok = await confirmDialog({
-        title: `${label}を中止`,
-        message: `進行中の${label}を中止して元の状態に戻します。よろしいですか?`,
-        confirmLabel: '中止',
+        title: t('git.operationAbortTitle', { label }),
+        message: t('git.operationAbortMessage', { label }),
+        confirmLabel: t('git.abort'),
         severity: 'danger',
       });
       if (!ok) return;
     }
     const successMsg =
       action === 'abort'
-        ? `${label}を中止しました`
+        ? t('git.operationAbortSuccess', { label })
         : action === 'skip'
-          ? `${label}を 1 件スキップしました`
-          : `${label}を続行しました`;
+          ? t('git.operationSkipSuccess', { label })
+          : t('git.operationContinueSuccess', { label });
     void act(() => api.operationAction(dir, operation, action), successMsg);
   };
 
@@ -351,25 +362,27 @@ export default function GitTab({
   // この操作が upstream を書き換えることを実行前に確認する (merge/rebase と同じ severity: 'normal')。
   const pushBranchAs = async (b: BranchInfo) => {
     const name = await promptDialog({
-      title: '別名でプッシュ',
-      message: `'${b.name}' をプッシュする先のリモートブランチ名を入力してください。`,
+      title: t('git.pushAsTitle'),
+      message: t('git.pushAsPromptMessage', { name: b.name }),
       defaultValue: b.name,
-      confirmLabel: 'プッシュ',
+      confirmLabel: t('git.push'),
     });
     if (!name) return;
     if (b.upstream) {
       const remote = b.upstreamRemote ?? 'origin';
       const ok = await confirmDialog({
-        title: '別名でプッシュ',
-        message:
-          `'${b.name}' を ${remote}/${name} にプッシュします。\n` +
-          `upstream は '${b.upstream}' から '${remote}/${name}' に変わります。`,
-        confirmLabel: 'プッシュ',
+        title: t('git.pushAsTitle'),
+        message: t('git.pushAsConfirmMessage', {
+          name: b.name,
+          ref: `${remote}/${name}`,
+          upstream: b.upstream,
+        }),
+        confirmLabel: t('git.push'),
         severity: 'normal',
       });
       if (!ok) return;
     }
-    void act(() => api.branchPush(dir, b.name, name), `${b.name} を ${name} としてプッシュしました`);
+    void act(() => api.branchPush(dir, b.name, name), t('git.pushAsSuccess', { name: b.name, as: name }));
   };
 
   // ---- リモート同期 (fetch/pull/push)。act() 経由なので成功/失敗とも
@@ -380,9 +393,10 @@ export default function GitTab({
   ) => {
     setSyncing(kind);
     try {
-      if (kind === 'fetch') await act(() => api.fetch(dir), 'フェッチしました');
-      else if (kind === 'pull') await act(() => api.pull(dir, { rebase: opts?.rebase }), 'プルしました');
-      else await act(() => api.push(dir, { forceWithLease: opts?.forceWithLease }), 'プッシュしました');
+      if (kind === 'fetch') await act(() => api.fetch(dir), t('git.fetchedSuccess'));
+      else if (kind === 'pull')
+        await act(() => api.pull(dir, { rebase: opts?.rebase }), t('git.pulledSuccess'));
+      else await act(() => api.push(dir, { forceWithLease: opts?.forceWithLease }), t('git.pushedGenericSuccess'));
     } finally {
       setSyncing(null);
     }
@@ -392,9 +406,9 @@ export default function GitTab({
   // rebase でのプルは非破壊 (競合すれば operation バナーが拾う) のため確認なしで即実行する。
   const forcePush = async () => {
     const ok = await confirmDialog({
-      title: 'force-with-lease でプッシュ',
-      message: 'リモートの履歴を書き換えます (--force-with-lease)。よろしいですか?',
-      confirmLabel: 'プッシュ',
+      title: t('git.forcePushLabel'),
+      message: t('git.forcePushMessage'),
+      confirmLabel: t('git.push'),
       severity: 'danger',
     });
     if (!ok) return;
@@ -406,27 +420,29 @@ export default function GitTab({
   const pushCurrentAs = async () => {
     if (!currentBranch) return;
     const name = await promptDialog({
-      title: '別名でプッシュ',
-      message: `'${currentBranch}' をプッシュする先のリモートブランチ名を入力してください。`,
+      title: t('git.pushAsTitle'),
+      message: t('git.pushAsPromptMessage', { name: currentBranch }),
       defaultValue: currentBranch,
-      confirmLabel: 'プッシュ',
+      confirmLabel: t('git.push'),
     });
     if (!name) return;
     const currentUpstream = worktree.status?.upstream;
     if (currentUpstream) {
       const ok = await confirmDialog({
-        title: '別名でプッシュ',
-        message:
-          `'${currentBranch}' をリモート側の '${name}' へプッシュします。\n` +
-          `upstream は '${currentUpstream}' から '${name}' を指すよう変わります。`,
-        confirmLabel: 'プッシュ',
+        title: t('git.pushAsTitle'),
+        message: t('git.pushCurrentAsConfirmMessage', {
+          name: currentBranch,
+          as: name,
+          upstream: currentUpstream,
+        }),
+        confirmLabel: t('git.push'),
         severity: 'normal',
       });
       if (!ok) return;
     }
     void act(
       () => api.branchPush(dir, currentBranch, name),
-      `${currentBranch} を ${name} としてプッシュしました`,
+      t('git.pushAsSuccess', { name: currentBranch, as: name }),
     );
   };
 
@@ -434,7 +450,7 @@ export default function GitTab({
     syncMenu?.kind === 'pull'
       ? [
           {
-            label: 'rebase でプル',
+            label: t('git.pullRebaseLabel'),
             icon: 'arrow-down',
             disabled: busy,
             onClick: () => void sync('pull', { rebase: true }),
@@ -443,14 +459,14 @@ export default function GitTab({
       : syncMenu?.kind === 'push'
         ? [
             {
-              label: 'force-with-lease でプッシュ',
+              label: t('git.forcePushLabel'),
               icon: 'arrow-up',
               disabled: busy,
               danger: true,
               onClick: () => void forcePush(),
             },
             {
-              label: '別名でプッシュ…',
+              label: t('git.pushAsMenuLabel'),
               icon: 'cloud-upload',
               disabled: busy || !currentBranch,
               onClick: () => void pushCurrentAs(),
@@ -472,44 +488,45 @@ export default function GitTab({
     const isCurrent = b.name === currentBranch;
     return [
       {
-        label: '切り替え',
+        label: t('git.switchLabel'),
         icon: 'arrow-swap',
         disabled: busy || usedElsewhere || isCurrent,
-        onClick: () => void act(() => api.switchBranch(dir, b.name), `${b.name} に切り替えました`),
+        onClick: () =>
+          void act(() => api.switchBranch(dir, b.name), t('git.switchedSuccess', { name: b.name })),
       },
       {
-        label: `'${b.name}' を現在のブランチにマージ (--no-ff)`,
+        label: t('git.mergeIntoCurrentLabel', { name: b.name }),
         icon: 'git-merge',
         disabled: busy || isCurrent,
         onClick: () => void mergeBranch(b, false),
       },
       {
-        label: 'fast-forward のみでマージ',
+        label: t('git.ffOnlyMergeLabel'),
         icon: 'git-merge',
         disabled: busy || isCurrent,
         onClick: () => void mergeBranch(b, true),
       },
       {
-        label: '現在のブランチをこのブランチにリベース…',
+        label: t('git.rebaseOntoLabel'),
         icon: 'git-branch',
         disabled: busy || isCurrent || operation != null,
         onClick: () => void rebaseOntoBranch(b),
       },
       {
-        label: '名前を変更…',
+        label: t('git.renameEllipsisLabel'),
         icon: 'edit',
         disabled: busy || usedElsewhere,
         onClick: () => void renameBranch(b),
       },
       {
-        label: '削除',
+        label: t('common.remove'),
         icon: 'trash',
         disabled: busy || usedElsewhere || isCurrent,
         danger: true,
         onClick: () => void deleteBranch(b.name),
       },
       {
-        label: 'upstream からフェッチして早送り',
+        label: t('git.fetchFfLabel'),
         icon: 'cloud-download',
         // 非破壊 (早送りのみ・非 FF は git 自身が拒否する) なので ConfirmDialog は挟まない。
         disabled:
@@ -520,10 +537,10 @@ export default function GitTab({
           b.upstreamRemote === '.' ||
           usedElsewhere,
         onClick: () =>
-          void act(() => api.branchFetchFf(dir, b.name), `${b.name} を upstream まで進めました`),
+          void act(() => api.branchFetchFf(dir, b.name), t('git.fetchFfSuccess', { name: b.name })),
       },
       {
-        label: 'プッシュ',
+        label: t('git.push'),
         icon: 'cloud-upload',
         // push は作業ツリーに触らないため usedElsewhere では無効化しない。
         disabled: busy || operation != null,
@@ -535,11 +552,11 @@ export default function GitTab({
                 b.name,
                 b.upstreamRemoteRef ? stripHeadsPrefix(b.upstreamRemoteRef) : b.name,
               ),
-            `${b.name} をプッシュしました`,
+            t('git.pushedSuccess', { name: b.name }),
           ),
       },
       {
-        label: '別名でプッシュ…',
+        label: t('git.pushAsMenuLabel'),
         icon: 'cloud-upload',
         disabled: busy || operation != null,
         onClick: () => void pushBranchAs(b),
@@ -551,28 +568,28 @@ export default function GitTab({
   // ローカル削除と異なり ConfirmDialog(danger) を必須で挟む。
   const deleteRemoteBranch = async (b: BranchInfo) => {
     const ok = await confirmDialog({
-      title: 'リモートブランチを削除',
-      message: `'${b.name}' をリモートから削除しますか?\nこの操作はリモートに反映され、元に戻せません。`,
-      confirmLabel: '削除',
+      title: t('git.deleteRemoteBranchTitle'),
+      message: t('git.deleteRemoteBranchMessage', { name: b.name }),
+      confirmLabel: t('common.remove'),
       severity: 'danger',
     });
     if (!ok) return;
-    void act(() => api.deleteRemoteBranch(dir, b.name), `${b.name} を削除しました`);
+    void act(() => api.deleteRemoteBranch(dir, b.name), t('git.deletedSuccess', { name: b.name }));
   };
 
   const remoteBranchMenuItems = (b: BranchInfo): ContextMenuItem[] => [
     {
-      label: 'チェックアウト',
+      label: t('git.checkoutLabel'),
       icon: 'arrow-swap',
       disabled: busy,
       onClick: () =>
         void act(
           () => api.switchBranchTracking(dir, b.name),
-          `${b.name} を追跡するローカルブランチを作成しました`,
+          t('git.trackingBranchCreated', { name: b.name }),
         ),
     },
     {
-      label: 'リモートブランチを削除…',
+      label: t('git.deleteRemoteBranchMenuLabel'),
       icon: 'trash',
       disabled: busy,
       danger: true,
@@ -584,46 +601,46 @@ export default function GitTab({
   // name → URL の 2 段 PromptDialog (usePrompt) だけを通す。
   const addRemote = async () => {
     const name = await promptDialog({
-      title: 'リモートを追加',
-      message: 'リモート名を入力してください。',
+      title: t('git.addRemoteTitle'),
+      message: t('git.addRemoteNamePrompt'),
       placeholder: 'origin',
-      confirmLabel: '次へ',
+      confirmLabel: t('git.next'),
     });
     if (!name) return;
     const url = await promptDialog({
-      title: 'リモートを追加',
-      message: `'${name}' の URL を入力してください。`,
+      title: t('git.addRemoteTitle'),
+      message: t('git.addRemoteUrlPrompt', { name }),
       placeholder: 'https://example.com/repo.git',
-      confirmLabel: '追加',
+      confirmLabel: t('common.add'),
     });
     if (!url) return;
-    void act(() => api.addRemote(dir, name, url), `${name} を追加しました`);
+    void act(() => api.addRemote(dir, name, url), t('git.addRemoteSuccess', { name }));
   };
 
   // URL の変更も非破壊操作 (取得済みの remote-tracking ref はそのまま残る) なので、
   // 現在の fetch URL を初期値にした PromptDialog のみで確認なしに実行する。
   const setRemoteUrl = async (r: RemoteInfo) => {
     const url = await promptDialog({
-      title: 'リモート URL を変更',
-      message: `'${r.name}' の新しい URL を入力してください。`,
+      title: t('git.setRemoteUrlTitle'),
+      message: t('git.setRemoteUrlPrompt', { name: r.name }),
       defaultValue: r.fetchUrl,
-      confirmLabel: '変更',
+      confirmLabel: t('git.change'),
     });
     if (!url || url === r.fetchUrl) return;
-    void act(() => api.setRemoteUrl(dir, r.name, url), `${r.name} の URL を変更しました`);
+    void act(() => api.setRemoteUrl(dir, r.name, url), t('git.setRemoteUrlSuccess', { name: r.name }));
   };
 
   // リモート自体の削除は remote-tracking ref を丸ごと消す破壊的操作なので
   // ConfirmDialog(danger) を必須で挟む (リモートブランチ削除と同じ扱い)。
   const removeRemote = async (r: RemoteInfo) => {
     const ok = await confirmDialog({
-      title: 'リモートを削除',
-      message: `'${r.name}' を削除しますか?\nこのリモートの追跡ブランチ (${r.name}/*) も一覧から消えます。`,
-      confirmLabel: '削除',
+      title: t('git.removeRemoteTitle'),
+      message: t('git.removeRemoteMessage', { name: r.name }),
+      confirmLabel: t('common.remove'),
       severity: 'danger',
     });
     if (!ok) return;
-    void act(() => api.removeRemote(dir, r.name), `${r.name} を削除しました`);
+    void act(() => api.removeRemote(dir, r.name), t('git.removeRemoteSuccess', { name: r.name }));
   };
 
   // タグ名もメッセージも PromptDialog で受ける (メッセージは allowEmpty で省略可)。
@@ -632,49 +649,52 @@ export default function GitTab({
   // タグ作成自体を中止する。
   const createTag = async () => {
     const name = await promptDialog({
-      title: '新しいタグを作成',
-      message: 'HEAD にタグを作成します。タグ名を入力してください。',
+      title: t('git.newTagTitle'),
+      message: t('git.newTagNamePrompt'),
       placeholder: 'v1.0.0',
-      confirmLabel: '次へ',
+      confirmLabel: t('git.next'),
     });
     if (!name) return;
     const msg = await promptDialog({
-      title: '新しいタグを作成',
-      message: 'タグのメッセージ (省略可。入力すると注釈付きタグになります):',
-      confirmLabel: '作成',
+      title: t('git.newTagTitle'),
+      message: t('git.newTagMessagePrompt'),
+      confirmLabel: t('git.create'),
       allowEmpty: true,
     });
     if (msg === null) return;
-    void act(() => api.createTag(dir, name, msg || undefined), `${name} を作成しました`);
+    void act(() => api.createTag(dir, name, msg || undefined), t('git.createdSuccess', { name }));
   };
 
-  const pushTag = (t: TagInfo) => {
-    void act(() => api.pushTag(dir, t.name), `${t.name} を origin に push しました`);
+  const pushTag = (tag: TagInfo) => {
+    void act(() => api.pushTag(dir, tag.name), t('git.pushTagSuccess', { name: tag.name }));
   };
 
   // ローカル削除は取り消せないが再作成は容易 (同じ HEAD からいつでも作り直せる) な操作。
   // それでも誤操作防止のため ConfirmDialog(danger) を必須にする (ブランチ削除と同じ扱い)。
-  const deleteTagLocal = async (t: TagInfo) => {
+  const deleteTagLocal = async (tag: TagInfo) => {
     const ok = await confirmDialog({
-      title: 'タグを削除',
-      message: `'${t.name}' をローカルから削除しますか?`,
-      confirmLabel: '削除',
+      title: t('git.deleteTagTitle'),
+      message: t('git.deleteTagLocalMessage', { name: tag.name }),
+      confirmLabel: t('common.remove'),
       severity: 'danger',
     });
     if (!ok) return;
-    void act(() => api.deleteTag(dir, t.name), `${t.name} を削除しました`);
+    void act(() => api.deleteTag(dir, tag.name), t('git.deletedSuccess', { name: tag.name }));
   };
 
   // リモートブランチ削除と同じ扱い: リモートに波及する破壊的操作なので ConfirmDialog(danger) 必須。
-  const deleteTagRemote = async (t: TagInfo) => {
+  const deleteTagRemote = async (tag: TagInfo) => {
     const ok = await confirmDialog({
-      title: 'リモートのタグを削除',
-      message: `'${t.name}' を origin から削除しますか?\nこの操作はリモートに反映され、元に戻せません。`,
-      confirmLabel: '削除',
+      title: t('git.deleteTagRemoteTitle'),
+      message: t('git.deleteTagRemoteMessage', { name: tag.name }),
+      confirmLabel: t('common.remove'),
       severity: 'danger',
     });
     if (!ok) return;
-    void act(() => api.deleteRemoteTag(dir, t.name), `${t.name} を origin から削除しました`);
+    void act(
+      () => api.deleteRemoteTag(dir, tag.name),
+      t('git.deleteTagFromOriginSuccess', { name: tag.name }),
+    );
   };
 
   const locals = branches.filter((b) => !b.remote);
@@ -719,13 +739,13 @@ export default function GitTab({
   if (repo.gitMode === 'none') {
     return (
       <div className="placeholder">
-        <p>Git リポジトリーではありません</p>
+        <p>{t('git.notARepo')}</p>
         <button
           className="primary"
           disabled={busy}
-          onClick={() => void act(() => api.gitInit(dir), 'git init を実行しました')}
+          onClick={() => void act(() => api.gitInit(dir), t('git.gitInitSuccess'))}
         >
-          git init を実行
+          {t('git.runGitInit')}
         </button>
         {message && <div className="git-side-msg">{message}</div>}
       </div>
@@ -738,16 +758,16 @@ export default function GitTab({
         <div className="git-sync-bar">
           <button
             className="icon-btn git-sync-btn"
-            title="フェッチ (git fetch --all --prune)"
+            title={t('git.fetchTooltip')}
             disabled={busy}
             onClick={() => void sync('fetch')}
           >
             <span className={`codicon codicon-refresh ${syncing === 'fetch' ? 'spin' : ''}`} />
-            フェッチ
+            {t('git.fetch')}
           </button>
           <button
             className="icon-btn git-sync-btn"
-            title={`プル${worktree.status?.behind ? ` (↓${worktree.status.behind})` : ''} (右クリック: rebase でプル)`}
+            title={`${t('git.pull')}${worktree.status?.behind ? ` (↓${worktree.status.behind})` : ''}${t('git.pullHint')}`}
             disabled={busy}
             onClick={() => void sync('pull')}
             onContextMenu={(e) => {
@@ -756,14 +776,14 @@ export default function GitTab({
             }}
           >
             <span className={`codicon codicon-arrow-down ${syncing === 'pull' ? 'spin' : ''}`} />
-            プル
+            {t('git.pull')}
             {(worktree.status?.behind ?? 0) > 0 && (
               <span className="sync-count">{worktree.status?.behind}</span>
             )}
           </button>
           <button
             className="icon-btn git-sync-btn"
-            title={`プッシュ${worktree.status?.ahead ? ` (↑${worktree.status.ahead})` : ''}${worktree.status?.upstream ? '' : ' — upstream 未設定のため -u origin で公開'} (右クリック: force-with-lease でプッシュ)`}
+            title={`${t('git.push')}${worktree.status?.ahead ? ` (↑${worktree.status.ahead})` : ''}${worktree.status?.upstream ? '' : t('git.pushNoUpstreamHint')}${t('git.pushHint')}`}
             disabled={busy}
             onClick={() => void sync('push')}
             onContextMenu={(e) => {
@@ -772,30 +792,30 @@ export default function GitTab({
             }}
           >
             <span className={`codicon codicon-arrow-up ${syncing === 'push' ? 'spin' : ''}`} />
-            プッシュ
+            {t('git.push')}
             {(worktree.status?.ahead ?? 0) > 0 && (
               <span className="sync-count">{worktree.status?.ahead}</span>
             )}
           </button>
         </div>
-        <div className="git-section-head git-section-title">ワークスペース</div>
+        <div className="git-section-head git-section-title">{t('git.workspaceSectionTitle')}</div>
         <div
           className={`git-nav-row ${view === 'status' ? 'active' : ''}`}
           onClick={() => setView('status')}
         >
-          <span className="codicon codicon-diff-multiple" /> ファイルステータス
+          <span className="codicon codicon-diff-multiple" /> {t('git.fileStatusNav')}
           {dirty > 0 && <span className="wt-dirty">{dirty}</span>}
         </div>
         <div
           className={`git-nav-row ${view === 'history' ? 'active' : ''}`}
           onClick={() => setView('history')}
         >
-          <span className="codicon codicon-history" /> 履歴
+          <span className="codicon codicon-history" /> {t('git.historyNav')}
         </div>
 
-        {sectionHead('ブランチ', openLocal, () => setOpenLocal((v) => !v), {
+        {sectionHead(t('git.branchesSectionTitle'), openLocal, () => setOpenLocal((v) => !v), {
           icon: 'add',
-          title: '新しいブランチを作成',
+          title: t('git.newBranchTooltip'),
           onClick: () => void createBranch(),
         })}
         {openLocal && (
@@ -807,15 +827,15 @@ export default function GitTab({
           />
         )}
 
-        {sectionHead('リモート', openRemote, () => setOpenRemote((v) => !v), {
+        {sectionHead(t('git.remotesSectionTitle'), openRemote, () => setOpenRemote((v) => !v), {
           icon: 'add',
-          title: 'リモートを追加',
+          title: t('git.addRemoteTitle'),
           onClick: () => void addRemote(),
         })}
         {openRemote && (
           <>
             {gitRemotes.length === 0 ? (
-              <div className="git-side-empty">リモートはありません</div>
+              <div className="git-side-empty">{t('git.noRemotes')}</div>
             ) : (
               gitRemotes.map((r) => (
                 <div
@@ -828,7 +848,7 @@ export default function GitTab({
                   <span className="branch-actions">
                     <button
                       className="icon-btn"
-                      title="URL を変更…"
+                      title={t('git.editRemoteUrlTooltip')}
                       disabled={busy}
                       onClick={() => void setRemoteUrl(r)}
                     >
@@ -836,7 +856,7 @@ export default function GitTab({
                     </button>
                     <button
                       className="icon-btn"
-                      title="削除…"
+                      title={t('git.deleteEllipsisTooltip')}
                       disabled={busy}
                       onClick={() => void removeRemote(r)}
                     >
@@ -847,27 +867,27 @@ export default function GitTab({
               ))
             )}
             {remotes.length === 0 ? (
-              <div className="git-side-empty">リモートブランチはありません</div>
+              <div className="git-side-empty">{t('git.noRemoteBranches')}</div>
             ) : (
               <BranchTree branches={remotes} onContextMenu={openBranchMenu} />
             )}
           </>
         )}
 
-        {sectionHead('スタッシュ', openStash, () => setOpenStash((v) => !v), {
+        {sectionHead(t('git.stashSectionTitle'), openStash, () => setOpenStash((v) => !v), {
           icon: 'archive',
-          title: '現在の変更をスタッシュ (未追跡ファイル含む)',
+          title: t('git.stashAllTooltip'),
           onClick: () => void stashCurrent(),
         })}
         {openStash &&
           (stashes.length === 0 ? (
-            <div className="git-side-empty">スタッシュはありません</div>
+            <div className="git-side-empty">{t('git.noStashes')}</div>
           ) : (
             stashes.map((s) => (
               <div
                 key={s.ref}
                 className={`git-branch-row git-stash-row ${activeDiff === stashTabKey(s.ref) ? 'selected' : ''}`}
-                title={`${s.ref}: ${s.message} — クリックで差分を表示`}
+                title={t('git.stashRowTooltip', { ref: s.ref, message: s.message })}
                 onClick={() => openStashDiff(s)}
               >
                 <span className="codicon codicon-archive branch-icon" />
@@ -875,42 +895,42 @@ export default function GitTab({
                 <span className="branch-actions">
                   <button
                     className="icon-btn"
-                    title="適用して削除 (pop)"
+                    title={t('git.stashPopTooltip')}
                     disabled={busy}
                     onClick={(e) => {
                       e.stopPropagation();
-                      void act(() => api.stashApply(dir, s.ref, true), '適用しました');
+                      void act(() => api.stashApply(dir, s.ref, true), t('git.appliedSuccess'));
                     }}
                   >
                     <span className="codicon codicon-debug-step-out" />
                   </button>
                   <button
                     className="icon-btn"
-                    title="適用 (スタッシュは残す)"
+                    title={t('git.stashApplyTooltip')}
                     disabled={busy}
                     onClick={(e) => {
                       e.stopPropagation();
-                      void act(() => api.stashApply(dir, s.ref, false), '適用しました');
+                      void act(() => api.stashApply(dir, s.ref, false), t('git.appliedSuccess'));
                     }}
                   >
                     <span className="codicon codicon-desktop-download" />
                   </button>
                   <button
                     className="icon-btn"
-                    title="削除"
+                    title={t('common.remove')}
                     disabled={busy}
                     onClick={(e) => {
                       e.stopPropagation();
                       void (async () => {
                         if (
                           await confirmDialog({
-                            title: 'スタッシュを削除',
-                            message: `${s.ref} を削除しますか?\n${s.message}`,
-                            confirmLabel: '削除',
+                            title: t('git.stashDropTitle'),
+                            message: t('git.stashDropMessage', { ref: s.ref, message: s.message }),
+                            confirmLabel: t('common.remove'),
                             severity: 'danger',
                           })
                         ) {
-                          void act(() => api.stashDrop(dir, s.ref), '削除しました');
+                          void act(() => api.stashDrop(dir, s.ref), t('git.stashDropSuccess'));
                         }
                       })();
                     }}
@@ -922,41 +942,41 @@ export default function GitTab({
             ))
           ))}
 
-        {sectionHead('タグ', openTags, () => setOpenTags((v) => !v), {
+        {sectionHead(t('git.tagsSectionTitle'), openTags, () => setOpenTags((v) => !v), {
           icon: 'add',
-          title: '新しいタグを作成 (HEAD)',
+          title: t('git.newTagSectionTooltip'),
           onClick: () => void createTag(),
         })}
         {openTags &&
           (tags.length === 0 ? (
-            <div className="git-side-empty">タグはありません</div>
+            <div className="git-side-empty">{t('git.noTags')}</div>
           ) : (
-            tags.map((t) => (
-              <div key={t.name} className="git-branch-row" title={t.hash}>
+            tags.map((tag) => (
+              <div key={tag.name} className="git-branch-row" title={tag.hash}>
                 <span className="codicon codicon-tag branch-icon" />
-                <span className="branch-name">{t.name}</span>
+                <span className="branch-name">{tag.name}</span>
                 <span className="branch-actions">
                   <button
                     className="icon-btn"
-                    title="origin へ push"
+                    title={t('git.pushToOriginTooltip')}
                     disabled={busy || !!operation}
-                    onClick={() => pushTag(t)}
+                    onClick={() => pushTag(tag)}
                   >
                     <span className="codicon codicon-cloud-upload" />
                   </button>
                   <button
                     className="icon-btn"
-                    title="ローカルタグを削除…"
+                    title={t('git.deleteTagLocalTooltip')}
                     disabled={busy || !!operation}
-                    onClick={() => void deleteTagLocal(t)}
+                    onClick={() => void deleteTagLocal(tag)}
                   >
                     <span className="codicon codicon-trash" />
                   </button>
                   <button
                     className="icon-btn"
-                    title="リモート (origin) から削除…"
+                    title={t('git.deleteTagRemoteTooltip')}
                     disabled={busy || !!operation}
-                    onClick={() => void deleteTagRemote(t)}
+                    onClick={() => void deleteTagRemote(tag)}
                   >
                     <span className="codicon codicon-cloud" />
                   </button>
@@ -970,18 +990,20 @@ export default function GitTab({
       <div className="git-main">
         {operation && (
           <div className="operation-banner">
-            <span>⚠ {OPERATION_LABELS[operation]}進行中 — コンフリクトを解決してから続行してください</span>
+            <span>
+              ⚠ {t('git.operationBanner', { label: t(OPERATION_LABEL_KEYS[operation]) })}
+            </span>
             <span className="operation-actions">
               <button className="primary" disabled={busy} onClick={() => void runOperation('continue')}>
-                続行
+                {t('git.continue')}
               </button>
               {!OPERATION_SKIP_UNSUPPORTED.includes(operation) && (
                 <button disabled={busy} onClick={() => void runOperation('skip')}>
-                  スキップ
+                  {t('git.skip')}
                 </button>
               )}
               <button className="danger" disabled={busy} onClick={() => void runOperation('abort')}>
-                中止
+                {t('git.abort')}
               </button>
             </span>
           </div>

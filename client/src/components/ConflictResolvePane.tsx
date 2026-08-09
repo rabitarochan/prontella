@@ -9,6 +9,7 @@ import {
   type ConflictBlock,
   type ConflictResolveKind,
 } from '../conflictBlocks';
+import { useT, type StringKey } from '../i18n';
 import { languageFor } from '../monaco-setup';
 import { monacoThemeName } from '../theme/monacoTheme';
 import { useTheme } from '../theme/themeStore';
@@ -35,9 +36,9 @@ const EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOptions = {
   renderWhitespace: 'selection',
 };
 
-const SIDE_LABEL: Record<ConflictSide, string> = {
-  ours: '現在のブランチ側 (ours)',
-  theirs: 'マージ相手側 (theirs)',
+const SIDE_LABEL_KEYS: Record<ConflictSide, StringKey> = {
+  ours: 'conflict.sideOurs',
+  theirs: 'conflict.sideTheirs',
 };
 
 function disposeModelSoon(uriPath: string) {
@@ -58,6 +59,7 @@ export default function ConflictResolvePane({
   leafId: string;
   onResolved?: () => void;
 }) {
+  const t = useT();
   const resolvedTheme = useTheme((s) => s.resolved);
   const { confirm: confirmDialog, dialog } = useConfirm();
   const [file, setFile] = useState<FileContent | null>(null);
@@ -141,17 +143,15 @@ export default function ConflictResolvePane({
   const resolveWholeFile = async (side: ConflictSide) => {
     const dirty = draft !== (file?.content ?? '');
     const ok = await confirmDialog({
-      title: `ファイル全体を ${side} で解決`,
+      title: t('conflict.resolveWholeTitle', { side }),
       message: (
         <>
-          <div>
-            {path} の内容全体を{SIDE_LABEL[side]}で上書きします(自動的にステージされます)。
-          </div>
-          {dirty && <div>※ エディター上の未保存の編集は破棄されます。</div>}
-          <div>※ 元に戻せません</div>
+          <div>{t('conflict.resolveWholeMessage', { path, sideLabel: t(SIDE_LABEL_KEYS[side]) })}</div>
+          {dirty && <div>{t('conflict.unsavedWillBeDiscarded')}</div>}
+          <div>{t('git.cannotUndo')}</div>
         </>
       ),
-      confirmLabel: '解決',
+      confirmLabel: t('git.resolve'),
       severity: 'danger',
     });
     if (!ok) return;
@@ -164,7 +164,7 @@ export default function ConflictResolvePane({
       setDraft(f.content ?? '');
       const model = currentModel();
       if (f.content !== null && model) model.setValue(f.content);
-      setMessage(`✓ ${side} で解決しました (ステージ済み)`);
+      setMessage(`✓ ${t('conflict.resolvedSideSuccess', { side })}`);
       onResolved?.();
     } catch (e) {
       setMessage(`⚠ ${e instanceof Error ? e.message : String(e)}`);
@@ -186,7 +186,7 @@ export default function ConflictResolvePane({
       await api.stage(dir, path);
       setFile((f) => (f ? { ...f, content, encoding: enc.encoding, hasBom: enc.bom } : f));
       setDraft(content);
-      setMessage('✓ 保存してステージしました');
+      setMessage(`✓ ${t('conflict.savedAndStagedSuccess')}`);
       onResolved?.();
     } catch (e) {
       setMessage(`⚠ ${e instanceof Error ? e.message : String(e)}`);
@@ -202,7 +202,9 @@ export default function ConflictResolvePane({
           {path}
         </span>
         <span className={`conflict-marker-count ${blocks.length === 0 ? 'ok' : ''}`}>
-          {blocks.length > 0 ? `⚠ 未解決の競合 ${blocks.length} 件` : '✓ 競合マーカーなし'}
+          {blocks.length > 0
+            ? `⚠ ${t('conflict.unresolvedCount', { n: blocks.length })}`
+            : `✓ ${t('conflict.noMarkers')}`}
         </span>
         <span className="conflict-toolbar-msg">{message}</span>
       </div>
@@ -213,22 +215,34 @@ export default function ConflictResolvePane({
               <div key={index} className="hunk-chip">
                 <button
                   className="hunk-chip-loc"
-                  title="この位置へスクロール"
+                  title={t('git.scrollToTooltip')}
                   onClick={() => revealBlock(block)}
                 >
-                  競合 {index + 1}
+                  {t('conflict.blockLabel', { n: index + 1 })}
                   {block.hasBase ? ' (diff3)' : ''}
                   {block.oursLabel && ` — ours: ${block.oursLabel}`}
                   {block.theirsLabel && ` / theirs: ${block.theirsLabel}`}
                 </button>
                 <span className="hunk-chip-actions conflict-chip-actions">
-                  <button disabled={busy} title="この行をours採用" onClick={() => applyBlock(block, 'ours')}>
+                  <button
+                    disabled={busy}
+                    title={t('conflict.applyOursTooltip')}
+                    onClick={() => applyBlock(block, 'ours')}
+                  >
                     ours
                   </button>
-                  <button disabled={busy} title="この行をtheirs採用" onClick={() => applyBlock(block, 'theirs')}>
+                  <button
+                    disabled={busy}
+                    title={t('conflict.applyTheirsTooltip')}
+                    onClick={() => applyBlock(block, 'theirs')}
+                  >
                     theirs
                   </button>
-                  <button disabled={busy} title="ours→theirsの順で両方残す" onClick={() => applyBlock(block, 'both')}>
+                  <button
+                    disabled={busy}
+                    title={t('conflict.applyBothTooltip')}
+                    onClick={() => applyBlock(block, 'both')}
+                  >
                     both
                   </button>
                 </span>
@@ -241,14 +255,12 @@ export default function ConflictResolvePane({
         {error ? (
           <div className="placeholder">⚠ {error}</div>
         ) : !file ? (
-          <div className="placeholder">読み込み中...</div>
+          <div className="placeholder">{t('common.loading')}</div>
         ) : file.binary ? (
-          <div className="placeholder">
-            バイナリファイルは表示できません ({file.size} bytes)。「ファイル全体を ours/theirs」で解決してください
-          </div>
+          <div className="placeholder">{t('conflict.binaryMessage', { size: file.size })}</div>
         ) : file.tooLarge ? (
           <div className="placeholder">
-            ファイルが大きすぎます ({Math.round(file.size / 1024)} KB)。「ファイル全体を ours/theirs」で解決してください
+            {t('conflict.tooLargeMessage', { size: Math.round(file.size / 1024) })}
           </div>
         ) : (
           // FilesTab と同じく uncontrolled: defaultValue は初回のみ、以降は onChange のみで
@@ -268,19 +280,19 @@ export default function ConflictResolvePane({
       <div className="conflict-actions-bar">
         <span className="conflict-actions-left">
           <button disabled={busy} onClick={() => void resolveWholeFile('ours')}>
-            ファイル全体を ours で解決
+            {t('conflict.resolveOursButton')}
           </button>
           <button disabled={busy} onClick={() => void resolveWholeFile('theirs')}>
-            ファイル全体を theirs で解決
+            {t('conflict.resolveTheirsButton')}
           </button>
         </span>
         <button
           className="primary"
           disabled={busy || blocks.length > 0 || !file || file.content === null}
-          title={blocks.length > 0 ? `未解決の競合が ${blocks.length} 件残っています` : ''}
+          title={blocks.length > 0 ? t('conflict.unresolvedRemainingTooltip', { n: blocks.length }) : ''}
           onClick={() => void resolve()}
         >
-          解決済み (保存してステージ)
+          {t('conflict.resolvedButton')}
         </button>
       </div>
       {dialog}

@@ -1,3 +1,4 @@
+import { useT } from '../i18n';
 import type { StatusFile } from '../types';
 import ConflictResolvePane from './ConflictResolvePane';
 import DiffPane from './DiffPane';
@@ -90,6 +91,7 @@ export default function DiffTabsPane({
    *  再取得や worktree.status の更新など、GitTab 側の「status 更新」をトリガーする。 */
   onStatusChanged?: () => void;
 }) {
+  const t = useT();
   // ハンク操作 (stage/unstage/discard) や競合解決が成功したタブ (sourceKey) と同じ
   // ファイルを別スコープ/別タブで開いている兄弟タブがあれば、diff タブなら既存の
   // 「差分を取り直す」と同じ経路 (onReload → gen++ → DiffPane の key が変わって再マウント)
@@ -100,49 +102,49 @@ export default function DiffTabsPane({
   // マウント済み) になっているケースでは、単に「マウントされている」だけでは古い内容の
   // ままなので、gen++ で key を変えて明示的に再マウント/再フェッチさせる必要がある。
   const notifySiblings = (path: string, sourceKey: string) => {
-    for (const t of tabs) {
-      // StashTab は path を持たないため、t.kind === 'diff' を先に見て絞り込んでから t.path
-      // にアクセスする (TS の型絞り込みは論理式を左から評価するため、絞り込み前の t.path
+    for (const tab of tabs) {
+      // StashTab は path を持たないため、tab.kind === 'diff' を先に見て絞り込んでから tab.path
+      // にアクセスする (TS の型絞り込みは論理式を左から評価するため、絞り込み前の tab.path
       // 参照は StashTab に存在しないプロパティとしてコンパイルエラーになる)。
-      if (t.kind === 'diff' && t.key !== sourceKey && t.path === path) onReload(t.key);
+      if (tab.kind === 'diff' && tab.key !== sourceKey && tab.path === path) onReload(tab.key);
     }
   };
 
   return (
     <div className="git-file-tabs">
       {tabs.length === 0 ? (
-        <div className="placeholder">ファイルを選択すると差分をタブで表示します</div>
+        <div className="placeholder">{t('difftabs.empty')}</div>
       ) : (
         <>
           <div className="editor-tabs" {...middleClickAutoscrollGuard}>
-            {tabs.map((t) => (
+            {tabs.map((tab) => (
               <div
-                key={t.key}
-                className={`editor-tab ${activeKey === t.key ? 'active' : ''}`}
+                key={tab.key}
+                className={`editor-tab ${activeKey === tab.key ? 'active' : ''}`}
                 title={
-                  t.kind === 'diff'
-                    ? `${t.path}${t.staged ? ' (ステージ済みの変更)' : ''}`
-                    : t.kind === 'conflict'
-                      ? `${t.path} (競合の解決)`
-                      : `${t.ref}: ${t.message}`
+                  tab.kind === 'diff'
+                    ? `${tab.path}${tab.staged ? t('difftabs.titleStaged') : ''}`
+                    : tab.kind === 'conflict'
+                      ? `${tab.path}${t('difftabs.titleConflict')}`
+                      : `${tab.ref}: ${tab.message}`
                 }
-                onClick={() => onActivate(t.key)}
-                {...middleClickClose(() => onClose(t.key))}
+                onClick={() => onActivate(tab.key)}
+                {...middleClickClose(() => onClose(tab.key))}
               >
                 <span
-                  className={`codicon codicon-${t.kind === 'diff' ? 'diff' : t.kind === 'conflict' ? 'warning' : 'archive'}`}
+                  className={`codicon codicon-${tab.kind === 'diff' ? 'diff' : tab.kind === 'conflict' ? 'warning' : 'archive'}`}
                 />
                 <span className="editor-tab-name">
-                  {t.kind === 'stash' ? t.message || t.ref : basename(t.path)}
-                  {t.kind === 'diff' && t.staged && <span className="diff-tab-staged"> S</span>}
+                  {tab.kind === 'stash' ? tab.message || tab.ref : basename(tab.path)}
+                  {tab.kind === 'diff' && tab.staged && <span className="diff-tab-staged"> S</span>}
                 </span>
                 <span className="editor-tab-actions">
                   <button
                     className="editor-tab-close"
-                    title="閉じる"
+                    title={t('common.close')}
                     onClick={(e) => {
                       e.stopPropagation();
-                      onClose(t.key);
+                      onClose(tab.key);
                     }}
                   >
                     <span className="codicon codicon-close" />
@@ -151,73 +153,75 @@ export default function DiffTabsPane({
               </div>
             ))}
           </div>
-          {tabs.map((t) => {
+          {tabs.map((tab) => {
             // 競合タブは編集途中の状態を保持するステートフルなタブなので、非アクティブ時も
             // アンマウントせず display:none で隠す (冒頭コメント参照)。diff/stash タブは
             // 読み取り専用でマウント時に再フェッチする設計なので、非アクティブなら
             // DOM ごと作らない (Monaco DiffEditor / ResizeObserver をタブ数だけ常駐させない)。
-            if (t.kind === 'conflict') {
+            if (tab.kind === 'conflict') {
               return (
                 <div
-                  key={t.key}
+                  key={tab.key}
                   className="diff-page"
-                  style={{ display: activeKey === t.key ? undefined : 'none' }}
+                  style={{ display: activeKey === tab.key ? undefined : 'none' }}
                 >
                   <ConflictResolvePane
                     dir={dir}
                     leafId={leafId}
-                    path={t.path}
+                    path={tab.path}
                     onResolved={() => {
-                      notifySiblings(t.path, t.key);
+                      notifySiblings(tab.path, tab.key);
                       onStatusChanged?.();
                     }}
                   />
                 </div>
               );
             }
-            if (activeKey !== t.key) return null;
+            if (activeKey !== tab.key) return null;
             return (
-              <div key={t.key} className="diff-page">
-                {t.kind === 'diff' ? (
+              <div key={tab.key} className="diff-page">
+                {tab.kind === 'diff' ? (
                   <>
                     <div className="diff-toolbar">
-                      <span className="diff-path" title={t.path}>
-                        {t.path}
+                      <span className="diff-path" title={tab.path}>
+                        {tab.path}
                       </span>
                       <span className="diff-scope">
-                        {t.staged
-                          ? 'ステージ済みの変更 (HEAD ↔ インデックス)'
-                          : '未ステージの変更 (インデックス ↔ 作業ツリー)'}
+                        {tab.staged ? t('difftabs.stagedScopeLabel') : t('difftabs.unstagedScopeLabel')}
                       </span>
                       {/* このボタンはアクティブ (= 既にマウント済み) なタブ自身を対象にする。
                           非アクティブタブのアンマウントとは無関係に、gen++ で key を変えて
                           DiffPane を明示的に再マウントさせないと再フェッチが起きない。 */}
-                      <button className="icon-btn" title="差分を取り直す" onClick={() => onReload(t.key)}>
+                      <button
+                        className="icon-btn"
+                        title={t('difftabs.reloadTooltip')}
+                        onClick={() => onReload(tab.key)}
+                      >
                         <span className="codicon codicon-refresh" />
                       </button>
                     </div>
                     <div className="diff-body">
                       <DiffPane
-                        key={`${t.gen}:${reloadKey}`}
+                        key={`${tab.gen}:${reloadKey}`}
                         dir={dir}
-                        path={t.path}
-                        scope={t.staged ? 'staged' : 'worktree'}
-                        origPath={t.origPath}
-                        untracked={t.untracked}
-                        onHunksChanged={() => notifySiblings(t.path, t.key)}
+                        path={tab.path}
+                        scope={tab.staged ? 'staged' : 'worktree'}
+                        origPath={tab.origPath}
+                        untracked={tab.untracked}
+                        onHunksChanged={() => notifySiblings(tab.path, tab.key)}
                       />
                     </div>
                   </>
                 ) : (
                   <>
                     <div className="diff-toolbar">
-                      <span className="diff-path" title={t.ref}>
-                        {t.message || t.ref}
+                      <span className="diff-path" title={tab.ref}>
+                        {tab.message || tab.ref}
                       </span>
-                      <span className="diff-scope">スタッシュの差分 (読み取り専用)</span>
+                      <span className="diff-scope">{t('difftabs.stashScopeLabel')}</span>
                     </div>
                     <div className="diff-body">
-                      <StashDiffPane dir={dir} stashRef={t.ref} />
+                      <StashDiffPane dir={dir} stashRef={tab.ref} />
                     </div>
                   </>
                 )}

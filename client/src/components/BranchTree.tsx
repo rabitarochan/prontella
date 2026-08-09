@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useT } from "../i18n";
 import type { BranchInfo } from "../types";
 
 interface FolderNode {
@@ -63,6 +64,7 @@ export default function BranchTree({
   worktreePath?: string;
   onContextMenu?: (e: React.MouseEvent, branch: BranchInfo) => void;
 }) {
+  const t = useT();
   // 開いているフォルダのフルパスを保持。初期値は空 = 全フォルダ閉じ。
   // GitTab の 10 秒ポーリングで branches が更新されても、この state はここに
   // 留まる (BranchTree 自体は key で再マウントされない) ので開閉はリセットされない。
@@ -142,7 +144,7 @@ export default function BranchTree({
         <span className="branch-name">
           {node.name}
           {usedElsewhere && (
-            <span className="branch-used-mark" title="他の Worktree で使用中">
+            <span className="branch-used-mark" title={t("branch.usedElsewhereTooltip")}>
               {" "}
               ◈
             </span>
@@ -155,7 +157,7 @@ export default function BranchTree({
           </span>
         )}
         {b.upstreamGone === true && (
-          <span className="branch-upstream-gone" title="upstream が見つかりません">
+          <span className="branch-upstream-gone" title={t("branch.upstreamGoneTooltip")}>
             ⚠
           </span>
         )}

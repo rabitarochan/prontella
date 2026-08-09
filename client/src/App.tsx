@@ -1,14 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { connectAgentEvents, useAgentEvents, waitingSessions } from './agentEvents';
-import { isActive } from './repoSections';
 import { useDeck, findSelection } from './store';
 import { useSearchHotkeys } from './search/useSearchHotkeys';
 import type { FilesTabHandle } from './search/registry';
-import AttentionBell from './components/AttentionBell';
-import ThemeToggle from './components/ThemeToggle';
-import Sidebar from './components/Sidebar';
 import DeckView from './components/DeckView';
 import QuickOpenModal from './components/QuickOpenModal';
+import Rail from './components/Rail';
 import WorktreeView from './components/WorktreeView';
 
 const POLL_MS = 4000;
@@ -60,33 +57,21 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="topbar">
-        <span className="topbar-logo" onClick={() => useDeck.getState().select(null)}>
-          ◆ Claude Deck
-        </span>
-        <span className="topbar-sub">repos: {repos.filter(isActive).length}</span>
-        <span className="topbar-right">
-          {error && (
-            <span className="topbar-error" onClick={() => setError(null)} title="クリックで閉じる">
-              ⚠ {error}
-            </span>
-          )}
-          <ThemeToggle />
-          <AttentionBell />
-        </span>
-      </header>
-      <div className="body">
-        <Sidebar />
-        <main className="main">
-          {!loaded ? (
-            <div className="placeholder">読み込み中...</div>
-          ) : current ? (
-            <WorktreeView key={current.worktree.path} repo={current.repo} worktree={current.worktree} />
-          ) : (
-            <DeckView />
-          )}
-        </main>
-      </div>
+      <Rail onOpenQuickOpen={setQuickOpenTarget} />
+      <main className="main">
+        {error && (
+          <div className="main-error" onClick={() => setError(null)} title="クリックで閉じる">
+            ⚠ {error}
+          </div>
+        )}
+        {!loaded ? (
+          <div className="placeholder">読み込み中...</div>
+        ) : current ? (
+          <WorktreeView key={current.worktree.path} repo={current.repo} worktree={current.worktree} />
+        ) : (
+          <DeckView />
+        )}
+      </main>
       {quickOpenTarget && (
         <QuickOpenModal target={quickOpenTarget} onClose={() => setQuickOpenTarget(null)} />
       )}

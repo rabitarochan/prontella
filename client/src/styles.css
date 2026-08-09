@@ -613,6 +613,8 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* カンバス: アプリ地 (--bg) より一段明るい地にカードが浮かぶ (モックアップの .work-main) */
+  background: var(--canvas);
 }
 /* ヘッダーはカンバス上のパンくず (repo / branch / 状態)。面も罫線も持たない */
 .wt-header {

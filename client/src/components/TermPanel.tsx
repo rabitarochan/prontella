@@ -71,7 +71,7 @@ export default function TermPanel({
             >
               <span className="codicon codicon-terminal" />
               <span className="editor-tab-name">{session?.title ?? t('term.endedLabel')}</span>
-              {session && <StatusBadge status={session.status} compact />}
+              {session && <StatusBadge status={session.status} dot />}
               <span className="editor-tab-actions">
                 <button
                   className="editor-tab-close"

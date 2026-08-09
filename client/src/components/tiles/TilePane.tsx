@@ -93,17 +93,16 @@ export default function TilePane({
       onMouseDownCapture={() => actions.focusLeaf(leaf.id)}
     >
       <header className="tile-header">
-        {/* ビュー切替: アイコン + プルダウン (P8-3)。旧タブ帯では 3 タブが常時見えて
-            いたため、セッション数とステータスはトリガー側に常時出して情報量を保つ */}
+        {/* ビュー切替: アイコン + 小さな▼のみ (モックアップの .view-btn)。
+            旧タブ帯では 3 タブが常時見えていたため、セッション数とステータスは
+            トリガーの隣に常時出して情報量を保つ */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="tile-view-trigger" title={t('tile.switchViewTooltip')}>
+            <button
+              className="tile-view-trigger"
+              title={`${t(current.labelKey)} — ${t('tile.switchViewTooltip')}`}
+            >
               <CurrentIcon />
-              <span className="tile-tab-label">{t(current.labelKey)}</span>
-              {leaf.sessions.length > 0 && (
-                <span className="tile-tab-count">{leaf.sessions.length}</span>
-              )}
-              {termStatus && <StatusBadge status={termStatus} compact />}
               <ChevronDown className="tile-view-chevron" />
             </button>
           </DropdownMenuTrigger>
@@ -115,11 +114,13 @@ export default function TilePane({
                 {view === 'term' && leaf.sessions.length > 0 && (
                   <span className="tile-tab-count">{leaf.sessions.length}</span>
                 )}
-                {leaf.view === view && <Check className="ml-auto" />}
+                {leaf.view === view && <Check className="ml-auto text-primary" />}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+        {leaf.sessions.length > 0 && <span className="tile-tab-count">{leaf.sessions.length}</span>}
+        {termStatus && <StatusBadge status={termStatus} dot />}
         <span className="tile-actions">
           <button
             className="icon-btn"

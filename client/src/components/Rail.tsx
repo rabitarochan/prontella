@@ -1,11 +1,8 @@
 import { useLang, useT } from '../i18n';
-import type { Lang } from '../i18n';
 import { useDeck } from '../store';
 import AttentionBell from './AttentionBell';
 import Sidebar from './Sidebar';
 import ThemeToggle from './ThemeToggle';
-
-const LANGS: Lang[] = ['ja', 'en'];
 
 /**
  * 左ペイン (レール): タイトル行 (ロゴ = デッキへ戻る / ベル / 言語 / テーマ) +
@@ -26,17 +23,14 @@ export default function Rail({ onOpenPalette }: { onOpenPalette: () => void }) {
         </button>
         <span className="rail-title-actions">
           <AttentionBell />
-          <span className="rail-lang" title={t('rail.langTooltip')}>
-            {LANGS.map((l) => (
-              <button
-                key={l}
-                className={`rail-lang-btn ${lang === l ? 'active' : ''}`}
-                onClick={() => setLang(l)}
-              >
-                {l.toUpperCase()}
-              </button>
-            ))}
-          </span>
+          {/* モックアップ同様の単一トグル: 現在の言語を表示し、クリックで ja ⇄ en */}
+          <button
+            className="icon-btn rail-lang-btn"
+            title={t('rail.langTooltip')}
+            onClick={() => setLang(lang === 'ja' ? 'en' : 'ja')}
+          >
+            {lang.toUpperCase()}
+          </button>
           <ThemeToggle />
         </span>
       </div>

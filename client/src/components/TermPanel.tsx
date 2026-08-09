@@ -1,5 +1,7 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
+import { useTileBarSlots } from '../layout/tileBarSlots';
 import type { TerminalSession } from '../types';
 import { useConfirm } from './ConfirmDialog';
 import { middleClickAutoscrollGuard, middleClickClose } from './editorTabs';
@@ -18,6 +20,7 @@ export default function TermPanel({
   ownedIds,
   activeId,
   visible,
+  leafId,
   onActivate,
   onCloseTab,
   create,
@@ -27,6 +30,8 @@ export default function TermPanel({
   activeId: string | null;
   /** このビューが表示中か (アクティブ端末のフォーカス制御用) */
   visible: boolean;
+  /** タイルの leaf id。タイルバーのスロット (tileBarSlots) の参照キー。 */
+  leafId: string;
   onActivate: (id: string) => void;
   onCloseTab: (id: string) => Promise<void>;
   create: (run?: string) => Promise<void>;
@@ -56,10 +61,14 @@ export default function TermPanel({
     run(() => onCloseTab(id));
   };
 
-  return (
-    <div className="term-panel">
-      <div className="editor-tabs" {...middleClickAutoscrollGuard}>
-        {ownedIds.map((id) => {
+  // セッションタブ行: 表示中はタイルバーのメインゾーンへポータルして 1 段化。
+  // スロット未登録時のみパネル内へインライン描画するフォールバック。
+  const barSlot = useTileBarSlots((s) => s.slots[leafId] ?? null);
+  const inBar = visible && barSlot !== null;
+
+  const tabsRow = (
+    <div className={`editor-tabs${inBar ? ' in-bar' : ''}`} {...middleClickAutoscrollGuard}>
+      {ownedIds.map((id) => {
           const session = liveMap.get(id) ?? null;
           return (
             <div
@@ -71,7 +80,7 @@ export default function TermPanel({
             >
               <span className="codicon codicon-terminal" />
               <span className="editor-tab-name">{session?.title ?? t('term.endedLabel')}</span>
-              {session && <StatusBadge status={session.status} compact />}
+              {session && <StatusBadge status={session.status} dot />}
               <span className="editor-tab-actions">
                 <button
                   className="editor-tab-close"
@@ -105,7 +114,12 @@ export default function TermPanel({
             ✦
           </button>
         </span>
-      </div>
+    </div>
+  );
+
+  return (
+    <div className="term-panel">
+      {inBar && barSlot ? createPortal(tabsRow, barSlot) : tabsRow}
       <div className="term-body">
         {ownedIds.length === 0 && (
           <div className="term-empty">

@@ -154,6 +154,11 @@ export default function EditorStatusBar({
 
   return (
     <div className="editor-statusbar">
+      {/* パス表示: ヘッダー統合 (旧 editor-toolbar 廃止) でここへ移設。左端に置き、
+          margin-right: auto で既存の右寄せ項目群と分ける */}
+      <span className="statusbar-path" title={activePath}>
+        {activePath}
+      </span>
       {position && (
         <span className="statusbar-item static">
           {t('files.positionIndicator', { line: position.line, column: position.column })}

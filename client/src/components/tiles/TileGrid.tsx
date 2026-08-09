@@ -42,7 +42,11 @@ export default function TileGrid({
   };
 
   const root = actions.layout.root;
-  const allLeaves = leaves(root);
+  // ポータルの描画順は木の走査順に依存させず id で安定ソートする。DnD の
+  // スワップ等で leaf の木上の位置が入れ替わっても、ポータル配列の並びが
+  // 変わらなければ React の再調停でコンテンツが remount される余地がない
+  // (実測: 並び替えを伴う再構成で Monaco が dispose → 再生成されていた)。
+  const allLeaves = leaves(root).slice().sort((a, b) => a.id.localeCompare(b.id));
 
   // Drop hosts whose leaf is gone (their portal unmounts in the same commit).
   useEffect(() => {

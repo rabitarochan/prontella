@@ -111,6 +111,10 @@ export const FILES_STRINGS = {
     en: 'There are unsaved changes. Close the tile?',
   },
   'tile.switchViewTooltip': { ja: '表示を切り替え', en: 'Switch view' },
+  'tile.dragHint': {
+    ja: 'ドラッグでタイルを移動 (端 = 分割 / 中央 = 入れ替え)',
+    en: 'Drag to move tile (edges = split, center = swap)',
+  },
   'tile.splitRightTooltip': { ja: '右に分割', en: 'Split right' },
   'tile.splitDownTooltip': { ja: '下に分割', en: 'Split down' },
   'tile.empty': { ja: 'タイルがありません', en: 'No tiles' },

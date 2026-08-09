@@ -314,14 +314,14 @@ export default function Sidebar() {
             onClick={() => select({ repoId: repo.id, worktreePath: wt.path })}
             title={wt.path}
           >
-            <StatusBadge status={wt.agent.status} compact />
+            <StatusBadge status={wt.agent.status} dot />
             <span className="wt-branch">
               {repo.gitMode === 'none'
                 ? t('common.noGit')
                 : (wt.branch ?? t('common.detached', { head: wt.head }))}
               {repo.gitMode === 'root' && wt.isMain && <span className="wt-main-mark"> ●main</span>}
             </span>
-            {dirty > 0 && <span className="wt-dirty">{dirty}</span>}
+            {dirty > 0 && <span className="wt-dirty">±{dirty}</span>}
             {!wt.isMain && (
               <button
                 className="icon-btn wt-remove"

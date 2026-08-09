@@ -1,5 +1,5 @@
-import { useCallback, useEffect } from 'react';
-import { Check, ChevronDown, FileText, GitBranch, Terminal } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Check, ChevronDown, FileText, GitBranch, GripVertical, Terminal } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,8 +9,9 @@ import {
 import { useT, type StringKey } from '../../i18n';
 import type { AgentStatus, TerminalSession } from '../../types';
 import { LEAD_SLOT_SUFFIX, useTileBarSlots } from '../../layout/tileBarSlots';
+import { useTileDnd } from '../../layout/tileDnd';
 import type { LeafNode, TileView } from '../../layout/tileTree';
-import type { TileActions } from '../../layout/useTileLayout';
+import type { TileActions, TileDropZone } from '../../layout/useTileLayout';
 import { useConfirm } from '../ConfirmDialog';
 import StatusBadge from '../StatusBadge';
 
@@ -54,6 +55,41 @@ export default function TilePane({
   const { confirm: confirmDialog, dialog } = useConfirm();
   const setSlot = useTileBarSlots((s) => s.setSlot);
   const clearSlot = useTileBarSlots((s) => s.clearSlot);
+  // DnD レイアウト再構成: ドラッグ中はドロップ先候補の全タイルに 5 ゾーンの
+  // オーバーレイを出す (VS Code のタブ DnD と同じ UX)。
+  const draggingId = useTileDnd((s) => s.draggingId);
+  const dndStart = useTileDnd((s) => s.start);
+  const dndEnd = useTileDnd((s) => s.end);
+  const [dropZone, setDropZone] = useState<TileDropZone | null>(null);
+  const isDragSource = draggingId === leaf.id;
+  const isDropTarget = draggingId !== null && !isDragSource;
+
+  const onHeaderDragStart = (e: React.DragEvent) => {
+    const el = e.target as HTMLElement;
+    // グリップ以外の対話要素 (ボタン・タブ等) からのドラッグは無効にして
+    // クリック操作を優先する。ヘッダーの空き領域とグリップだけがハンドル。
+    if (
+      !el.closest('.tile-drag-handle') &&
+      el.closest('button, input, .editor-tab, [data-slot]')
+    ) {
+      e.preventDefault();
+      return;
+    }
+    // dragover 中は getData が読めない (protected mode) ため値は使わないが、
+    // Firefox はデータ 0 個だとドラッグ自体を開始しない
+    e.dataTransfer.setData('text/plain', leaf.id);
+    e.dataTransfer.effectAllowed = 'move';
+    dndStart(leaf.id);
+  };
+
+  const zoneFromEvent = (e: React.DragEvent): TileDropZone => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width;
+    const y = (e.clientY - r.top) / r.height;
+    if (x > 0.25 && x < 0.75 && y > 0.25 && y < 0.75) return 'center';
+    const m = Math.min(x, 1 - x, y, 1 - y);
+    return m === x ? 'left' : m === 1 - x ? 'right' : m === y ? 'top' : 'bottom';
+  };
   // A DOM move (host re-append after a split/close elsewhere) drops focus;
   // give it back to the focused terminal. Mount-only: focus changes from
   // clicks are handled by the browser itself.
@@ -92,14 +128,22 @@ export default function TilePane({
 
   return (
     <section
-      className={`tile-pane ${focused ? 'focused' : ''}`}
+      className={`tile-pane ${focused ? 'focused' : ''} ${isDragSource ? 'dragging' : ''}`}
       onMouseDownCapture={() => actions.focusLeaf(leaf.id)}
     >
-      <header className={`tile-header ${leaf.view === 'files' ? 'split' : ''}`}>
+      <header
+        className={`tile-header ${leaf.view === 'files' ? 'split' : ''}`}
+        draggable
+        onDragStart={onHeaderDragStart}
+        onDragEnd={dndEnd}
+      >
         {/* 先頭ゾーン: ビュー切替 + (files ビュー時) ツリー列ヘッダーのポータル先。
             files ビューではツリー列幅 (--files-tree-w) に固定し、下のペイン境界と
             ヘッダーの区切りを揃える */}
         <div className="tile-header-lead">
+          <span className="tile-drag-handle" title={t('tile.dragHint')}>
+            <GripVertical />
+          </span>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
@@ -170,6 +214,31 @@ export default function TilePane({
         </span>
       </header>
       <div className="tile-body" ref={adoptHost} />
+      {/* ドロップ先オーバーレイ: ドラッグ中のみタイル全面を覆い、5 ゾーン
+          (上下左右 = 分割挿入 / 中央 = 位置交換) のインジケーターを出す。
+          全面で dragover を受けるので xterm/Monaco がイベントを奪うことはない */}
+      {isDropTarget && (
+        <div
+          className="tile-drop-overlay"
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            const z = zoneFromEvent(e);
+            setDropZone((prev) => (prev === z ? prev : z));
+          }}
+          onDragLeave={() => setDropZone(null)}
+          onDrop={(e) => {
+            e.preventDefault();
+            const src = draggingId;
+            const zone = dropZone ?? zoneFromEvent(e);
+            setDropZone(null);
+            dndEnd();
+            if (src) actions.move(src, leaf.id, zone);
+          }}
+        >
+          {dropZone && <div className={`tile-drop-indicator zone-${dropZone}`} />}
+        </div>
+      )}
       {dialog}
     </section>
   );

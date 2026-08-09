@@ -1622,6 +1622,7 @@ button.statusbar-item:hover:not(:disabled) {
 }
 /* タイル = カンバスに浮かぶカード。フォーカスは枠線の色で示す */
 .tile-pane {
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -1634,6 +1635,9 @@ button.statusbar-item:hover:not(:disabled) {
   overflow: hidden;
   container: tile / inline-size;
   transition: border-color 0.15s;
+}
+.tile-pane.dragging {
+  opacity: 0.5;
 }
 .tile-pane.focused {
   border-color: color-mix(in srgb, var(--primary) 50%, var(--border));
@@ -1655,7 +1659,66 @@ button.statusbar-item:hover:not(:disabled) {
   align-items: center;
   gap: 4px;
   min-width: 0;
-  padding: 8px 4px 8px 10px;
+  padding: 8px 4px 8px 6px;
+}
+/* DnD グリップ (レイアウト再構成のドラッグハンドル。ヘッダーの空き領域も可) */
+.tile-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 26px;
+  flex-shrink: 0;
+  color: var(--fg-dim);
+  opacity: 0.6;
+  cursor: grab;
+}
+.tile-drag-handle svg {
+  width: 13px;
+  height: 13px;
+}
+.tile-drag-handle:hover {
+  opacity: 1;
+}
+/* ドロップ先オーバーレイと 5 ゾーンインジケーター */
+.tile-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+}
+.tile-drop-indicator {
+  position: absolute;
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  pointer-events: none;
+}
+.tile-drop-indicator.zone-left {
+  left: 4px;
+  top: 4px;
+  bottom: 4px;
+  width: calc(50% - 8px);
+}
+.tile-drop-indicator.zone-right {
+  right: 4px;
+  top: 4px;
+  bottom: 4px;
+  width: calc(50% - 8px);
+}
+.tile-drop-indicator.zone-top {
+  top: 4px;
+  left: 4px;
+  right: 4px;
+  height: calc(50% - 8px);
+}
+.tile-drop-indicator.zone-bottom {
+  bottom: 4px;
+  left: 4px;
+  right: 4px;
+  height: calc(50% - 8px);
+}
+.tile-drop-indicator.zone-center {
+  inset: 4px;
 }
 /* files ビュー: 先頭ゾーンをツリー列幅に固定し、ペイン境界と区切りを揃える */
 .tile-header.split .tile-header-lead {

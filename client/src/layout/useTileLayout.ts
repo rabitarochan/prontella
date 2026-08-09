@@ -9,6 +9,7 @@ import {
   findLeaf,
   leaves,
   makeLeaf,
+  moveLeaf,
   normalize,
   pruneSessions,
   removeLeaf,
@@ -16,11 +17,15 @@ import {
   sanitize,
   setSizes,
   splitLeaf,
+  swapLeaves,
   updateLeaf,
   type TileView,
   type TileNode,
   type WorktreeLayout,
 } from './tileTree';
+
+/** タイル DnD のドロップ先ゾーン。上下左右 = その方向へ分割挿入、center = 位置交換。 */
+export type TileDropZone = 'left' | 'right' | 'top' | 'bottom' | 'center';
 
 function loadLayout(worktreePath: string): WorktreeLayout {
   try {
@@ -55,6 +60,11 @@ export interface TileActions {
    * terminal view and activates the new tab.
    */
   openTerminal: (run?: string, leafId?: string) => Promise<void>;
+  /**
+   * DnD でのレイアウト再構成: src タイルを target の上下左右へ分割挿入、
+   * または center で位置交換。中身は leaf.id 追従の Portal なので remount しない。
+   */
+  move: (srcId: string, targetId: string, zone: TileDropZone) => void;
   /** Persist pane sizes after a drag. */
   applySizes: (splitId: string, sizes: number[]) => void;
   /** Back to the default layout (escape hatch for broken layouts). */
@@ -202,6 +212,22 @@ export function useTileLayout(
     [createSession, update],
   );
 
+  const move = useCallback(
+    (srcId: string, targetId: string, zone: TileDropZone) => {
+      const root = layoutRef.current.root;
+      if (!root || srcId === targetId) return;
+      if (zone === 'center') {
+        update(swapLeaves(root, srcId, targetId));
+      } else {
+        const dir = zone === 'left' || zone === 'right' ? 'row' : 'column';
+        const before = zone === 'left' || zone === 'top';
+        update(moveLeaf(root, srcId, targetId, dir, before));
+      }
+      setFocusedLeafId(srcId);
+    },
+    [update],
+  );
+
   const applySizes = useCallback((splitId: string, sizes: number[]) => {
     const root = layoutRef.current.root;
     if (!root) return;
@@ -226,6 +252,7 @@ export function useTileLayout(
     setActiveSession,
     closeSessionTab,
     openTerminal,
+    move,
     applySizes,
     reset,
   };

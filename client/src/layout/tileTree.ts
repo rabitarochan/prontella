@@ -129,6 +129,69 @@ export function removeLeaf(root: TileNode, leafId: string): TileNode | null {
   return rec(root);
 }
 
+/**
+ * Move leaf `srcId` next to leaf `targetId`: remove it from its current
+ * position (collapsing its old parent like removeLeaf), then insert it
+ * beside the target with splitLeaf's rules — extending a same-dir split
+ * in place, otherwise wrapping the target into a new 50/50 split.
+ * No-ops (returns root unchanged) when src === target, either id is
+ * missing, or src is the only leaf.
+ */
+export function moveLeaf(
+  root: TileNode,
+  srcId: string,
+  targetId: string,
+  dir: 'row' | 'column',
+  before: boolean,
+): TileNode {
+  if (srcId === targetId) return root;
+  const src = findLeaf(root, srcId);
+  if (!src || !findLeaf(root, targetId)) return root;
+  const without = removeLeaf(root, srcId);
+  if (!without) return root; // src was the only leaf — nothing to attach to
+
+  const insert = (node: TileNode): TileNode => {
+    if (node.type === 'leaf') {
+      if (node.id !== targetId) return node;
+      const children = before ? [src, node] : [node, src];
+      return { type: 'split', id: newId(), dir, sizes: [50, 50], children };
+    }
+    const idx = node.children.findIndex((c) => c.type === 'leaf' && c.id === targetId);
+    if (idx >= 0 && node.dir === dir) {
+      const children = [...node.children];
+      const sizes = [...node.sizes];
+      const half = (sizes[idx] ?? 100 / node.children.length) / 2;
+      sizes[idx] = half;
+      const at = before ? idx : idx + 1;
+      children.splice(at, 0, src);
+      sizes.splice(at, 0, half);
+      return { ...node, children, sizes };
+    }
+    return { ...node, children: node.children.map(insert) };
+  };
+  return insert(without);
+}
+
+/**
+ * Swap the tree positions of two leaves. Content follows leaf.id (the portal
+ * layer is keyed by it), so a swap re-parents both hosts without remounts.
+ */
+export function swapLeaves(root: TileNode, aId: string, bId: string): TileNode {
+  if (aId === bId) return root;
+  const a = findLeaf(root, aId);
+  const b = findLeaf(root, bId);
+  if (!a || !b) return root;
+  const rec = (node: TileNode): TileNode => {
+    if (node.type === 'leaf') {
+      if (node.id === aId) return b;
+      if (node.id === bId) return a;
+      return node;
+    }
+    return { ...node, children: node.children.map(rec) };
+  };
+  return rec(root);
+}
+
 export function updateLeaf(
   root: TileNode,
   leafId: string,

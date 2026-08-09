@@ -1183,13 +1183,15 @@ button.statusbar-item:hover:not(:disabled) {
 .git-sync-bar {
   display: flex;
   gap: 2px;
-  padding: 8px 10px 2px;
+  padding: 8px 8px 2px;
 }
 .git-sync-btn {
   display: flex;
   align-items: center;
   gap: 4px;
   font-size: 12px;
+  white-space: nowrap;
+  padding: 3px 5px;
 }
 .sync-count {
   font-size: 10px;

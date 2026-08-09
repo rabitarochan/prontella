@@ -21,10 +21,27 @@ const LABELS: Record<AgentStatus, { key: StringKey; className: string; dotClassN
   none: { key: 'status.none', className: 'text-muted-foreground opacity-60' },
 };
 
-export default function StatusBadge({ status, compact }: { status: AgentStatus; compact?: boolean }) {
+export default function StatusBadge({
+  status,
+  compact,
+  dot,
+}: {
+  status: AgentStatus;
+  compact?: boolean;
+  /** 枠なしの 7px ドットのみ (レールの worktree 行用。モックアップの mini-dot)。 */
+  dot?: boolean;
+}) {
   const t = useT();
   const { key, className, dotClassName } = LABELS[status] ?? LABELS.none;
   const text = t(key);
+  if (dot) {
+    return (
+      <span
+        className={cn('inline-block size-[7px] shrink-0 rounded-full bg-current', className, dotClassName)}
+        title={t('status.agentTooltip', { status: text })}
+      />
+    );
+  }
   return (
     <Badge
       variant="outline"

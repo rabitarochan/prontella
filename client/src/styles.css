@@ -129,61 +129,65 @@ textarea:focus {
   cursor: pointer;
 }
 
-/* ---- rail (左ペイン) ---- */
+/* ---- rail (左ペイン)。見た目はコンセプトモックアップ v4 の .rail に合わせる ---- */
 
 .rail {
-  width: 264px;
+  width: 256px;
   flex-shrink: 0;
   position: relative;
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel);
+  padding-top: 12px;
+  background: var(--bg);
   border-right: 1px solid var(--border);
 }
 .rail-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 10px 8px 6px;
+  gap: 2px;
+  padding: 0 12px 10px 10px;
 }
 .rail-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   background: transparent;
   border: none;
-  padding: 4px 8px;
-  font-weight: 600;
+  border-radius: 8px;
+  padding: 4px 6px;
+  font-weight: 650;
+  font-size: 15px;
+  letter-spacing: -0.02em;
   color: var(--fg);
+  white-space: nowrap;
 }
 .rail-logo:hover:not(:disabled) {
   background: var(--bg-hover);
 }
 .rail-logo-mark {
   color: var(--primary);
+  font-size: 13px;
 }
 .rail-title-actions {
   display: flex;
   align-items: center;
   gap: 2px;
 }
-.rail-lang {
-  display: flex;
-  border: 1px solid var(--border);
-  border-radius: calc(var(--radius) - 2px);
-  overflow: hidden;
+/* ワードマーク行のスクエアボタン (ベル / 言語 / テーマ) */
+.rail-title-actions .icon-btn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
 }
 .rail-lang-btn {
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  padding: 2px 6px;
-  font-size: 10px;
-  color: var(--fg-dim);
-}
-.rail-lang-btn:hover:not(:disabled) {
-  background: var(--bg-hover);
-}
-.rail-lang-btn.active {
-  background: var(--surface-active);
-  color: var(--fg);
+  font-family: 'Cascadia Code', Consolas, ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
 }
 /* ベルのポップオーバーはレール基準で開く (右端アンカーだと画面外へはみ出す) */
 .rail .bell {
@@ -192,26 +196,28 @@ textarea:focus {
 .rail .bell-panel {
   left: 8px;
   right: auto;
-  top: 44px;
+  top: 48px;
   width: 320px;
 }
+/* 検索・コマンドバー (kbar) */
 .rail-search {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 10px 10px;
-  padding: 6px 10px;
-  background: transparent;
-  border: 1px solid var(--input);
-  border-radius: calc(var(--radius) - 2px);
+  margin: 0 12px 4px;
+  height: 32px;
+  padding: 0 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
   color: var(--fg-dim);
-  font-size: 13px;
+  font-size: 12.5px;
   white-space: nowrap;
+  transition: border-color 0.15s;
 }
 .rail-search:hover:not(:disabled) {
-  background: transparent;
-  border-color: var(--ring);
-  color: var(--fg);
+  background: var(--card);
+  border-color: var(--fg-dim);
 }
 .rail-search .codicon {
   font-size: 14px;
@@ -221,11 +227,12 @@ textarea:focus {
   text-align: left;
 }
 .rail-search-kbd {
-  font-family: inherit;
-  font-size: 10px;
+  font-family: 'Cascadia Code', Consolas, ui-monospace, monospace;
+  font-size: 10.5px;
   color: var(--fg-dim);
+  background: var(--secondary);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 5px;
   padding: 1px 5px;
 }
 
@@ -260,15 +267,17 @@ textarea:focus {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 14px 8px;
-  font-size: 12px;
+  padding: 8px 20px 6px;
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.07em;
   color: var(--fg-dim);
 }
 .sidebar-list {
   overflow-y: auto;
   flex: 1;
+  padding: 0 10px 12px;
 }
 .sidebar-empty {
   padding: 24px 12px;
@@ -277,10 +286,11 @@ textarea:focus {
   line-height: 1.8;
 }
 .sidebar-section-head {
-  padding: 10px 14px 4px;
-  font-size: 12px;
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.07em;
   color: var(--fg-dim);
 }
 .sidebar-section-toggle {
@@ -312,7 +322,13 @@ textarea:focus {
   margin-top: 4px;
 }
 .repo-group {
-  margin-bottom: 6px;
+  margin-bottom: 2px;
+}
+/* リポジトリー間の区切り線 (モックアップの .rail-sep 相当) */
+.repo-group + .repo-group {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
 }
 /* T5 (DnD): ドラッグ単位は .repo-group(worktree 行も含めて一緒に動く見た目)、
    ハンドルは .repo-row のみ。worktree 行 (.wt-row) は draggable にしない
@@ -332,9 +348,19 @@ textarea:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 7px 14px;
+  padding: 6px 10px 2px;
   font-weight: 600;
   cursor: grab;
+}
+/* リポジトリー名は大文字の小ラベル (モックアップの .rail-label) */
+.repo-row .repo-name {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .repo-group.dragging .repo-row {
   cursor: grabbing;
@@ -357,34 +383,40 @@ textarea:focus {
 .wt-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 12px 7px 22px;
+  gap: 9px;
+  padding: 7px 10px;
+  margin: 1px 0;
+  border-radius: 8px;
   cursor: pointer;
-  border-left: 2px solid transparent;
+  color: var(--fg-dim);
+  transition:
+    background-color 0.12s,
+    color 0.12s;
 }
 .wt-row:hover {
   background: var(--bg-hover);
+  color: var(--fg);
 }
 .wt-row.active {
-  background: var(--bg-active);
-  border-left-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--fg);
 }
 .wt-branch {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: 'Cascadia Code', Consolas, ui-monospace, monospace;
+  font-size: 12px;
 }
 .wt-main-mark {
   color: var(--fg-dim);
   font-size: 10px;
 }
 .wt-dirty {
-  background: var(--bg-active);
-  border-radius: 8px;
-  padding: 0 7px;
+  font-family: 'Cascadia Code', Consolas, ui-monospace, monospace;
   font-size: 11px;
-  color: var(--yellow);
+  color: var(--fg-dim);
 }
 .wt-remove {
   visibility: hidden;

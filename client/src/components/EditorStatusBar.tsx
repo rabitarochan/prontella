@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+import { useT } from '../i18n';
 import type { FileContent } from '../types';
 
 type EditorInstance = Parameters<OnMount>[0];
@@ -42,13 +43,15 @@ const SAVE_ITEMS: { label: string; encoding: string; bom: boolean }[] = [
   { label: 'Windows-1252', encoding: 'windows-1252', bom: false },
 ];
 
-const INDENT_CHOICES: { label: string; insertSpaces: boolean; size: number }[] = [
-  { label: 'スペース: 2', insertSpaces: true, size: 2 },
-  { label: 'スペース: 4', insertSpaces: true, size: 4 },
-  { label: 'スペース: 8', insertSpaces: true, size: 8 },
-  { label: 'タブ: 2', insertSpaces: false, size: 2 },
-  { label: 'タブ: 4', insertSpaces: false, size: 4 },
-  { label: 'タブ: 8', insertSpaces: false, size: 8 },
+// label はモジュールスコープに直接持たせず、insertSpaces/size のみ保持して
+// 描画時に t() で組み立てる (StatusBadge の LABELS パターン)。
+const INDENT_CHOICES: { insertSpaces: boolean; size: number }[] = [
+  { insertSpaces: true, size: 2 },
+  { insertSpaces: true, size: 4 },
+  { insertSpaces: true, size: 8 },
+  { insertSpaces: false, size: 2 },
+  { insertSpaces: false, size: 4 },
+  { insertSpaces: false, size: 8 },
 ];
 
 function encodingLabel(encoding: string | null, hasBom: boolean): string | null {
@@ -94,6 +97,7 @@ export default function EditorStatusBar({
   onSaveWithEncoding: (encoding: string, bom: boolean) => void;
   onEolOverride: () => void;
 }) {
+  const t = useT();
   const [position, setPosition] = useState<{ line: number; column: number } | null>(null);
   const [indent, setIndent] = useState<{ insertSpaces: boolean; size: number } | null>(null);
   const [eol, setEol] = useState<'LF' | 'CRLF' | null>(null);
@@ -145,24 +149,26 @@ export default function EditorStatusBar({
   };
 
   const currentEncoding = encodingLabel(file.encoding, file.hasBom);
+  const indentLabel = (c: { insertSpaces: boolean; size: number }) =>
+    c.insertSpaces ? t('files.indentSpaces', { n: c.size }) : t('files.indentTabs', { n: c.size });
 
   return (
     <div className="editor-statusbar">
       {position && (
         <span className="statusbar-item static">
-          行 {position.line}, 列 {position.column}
+          {t('files.positionIndicator', { line: position.line, column: position.column })}
         </span>
       )}
       {indent && (
         <DropdownMenu>
-          <DropdownMenuTrigger className={TRIGGER_CLS} title="インデントを変更">
-            {indent.insertSpaces ? `スペース: ${indent.size}` : `タブ: ${indent.size}`}
+          <DropdownMenuTrigger className={TRIGGER_CLS} title={t('files.changeIndentTooltip')}>
+            {indentLabel(indent)}
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
             {INDENT_CHOICES.map((c) => (
               <CheckItem
-                key={c.label}
-                label={c.label}
+                key={`${c.insertSpaces}-${c.size}`}
+                label={indentLabel(c)}
                 selected={indent.insertSpaces === c.insertSpaces && indent.size === c.size}
                 onSelect={() => chooseIndent(c.insertSpaces, c.size)}
               />
@@ -172,12 +178,12 @@ export default function EditorStatusBar({
       )}
       {currentEncoding && (
         <DropdownMenu>
-          <DropdownMenuTrigger className={TRIGGER_CLS} title="エンコーディングを変更">
+          <DropdownMenuTrigger className={TRIGGER_CLS} title={t('files.changeEncodingTooltip')}>
             {currentEncoding}
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
             <DropdownMenuSub>
-              <DropdownMenuSubTrigger>エンコーディング指定で再読み込み</DropdownMenuSubTrigger>
+              <DropdownMenuSubTrigger>{t('files.reloadWithEncoding')}</DropdownMenuSubTrigger>
               <DropdownMenuSubContent>
                 {RELOAD_ITEMS.map((c) => (
                   <CheckItem
@@ -190,7 +196,7 @@ export default function EditorStatusBar({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
             <DropdownMenuSub>
-              <DropdownMenuSubTrigger>エンコーディング指定で保存</DropdownMenuSubTrigger>
+              <DropdownMenuSubTrigger>{t('files.saveWithEncoding')}</DropdownMenuSubTrigger>
               <DropdownMenuSubContent>
                 {SAVE_ITEMS.map((c) => (
                   <CheckItem
@@ -207,7 +213,7 @@ export default function EditorStatusBar({
       )}
       {eol && (
         <DropdownMenu>
-          <DropdownMenuTrigger className={TRIGGER_CLS} title="改行コードを変更">
+          <DropdownMenuTrigger className={TRIGGER_CLS} title={t('files.changeEolTooltip')}>
             {eol}
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" onCloseAutoFocus={(e) => e.preventDefault()}>

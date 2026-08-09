@@ -1,15 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { findWorktree, resolveAndSelect, useAgentEvents, waitingSessions } from '../agentEvents';
+import { formatElapsed, useLang, useT } from '../i18n';
 import { notificationPermission, requestNotificationPermission } from '../notify';
 import type { TerminalSession } from '../types';
-
-function elapsed(since: number, now: number): string {
-  const s = Math.max(0, Math.floor((now - since) / 1000));
-  if (s < 60) return `${s}秒`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}分`;
-  return `${Math.floor(m / 60)}時間${m % 60}分`;
-}
 
 function itemLabel(session: TerminalSession): string {
   const hit = findWorktree(session.cwd);
@@ -17,8 +10,10 @@ function itemLabel(session: TerminalSession): string {
   return session.cwd.split(/[\\/]/).pop() || session.cwd;
 }
 
-/** トップバーのベル: 要対応キュー (確認待ち/待機中の一覧) と通知設定。 */
+/** レールのベル: 要対応キュー (確認待ち/待機中の一覧) と通知設定。 */
 export default function AttentionBell() {
+  const t = useT();
+  const lang = useLang((s) => s.lang);
   const sessions = useAgentEvents((s) => s.sessions);
   const desktopEnabled = useAgentEvents((s) => s.desktopEnabled);
   const soundEnabled = useAgentEvents((s) => s.soundEnabled);
@@ -58,7 +53,7 @@ export default function AttentionBell() {
       setLocateError(null);
       setOpen(false);
     } else {
-      setLocateError(`このセッションの worktree を特定できません: ${session.cwd}`);
+      setLocateError(t('deck.locateError', { cwd: session.cwd }));
     }
   };
 
@@ -78,7 +73,7 @@ export default function AttentionBell() {
       <span className="bell-item-label" title={session.cwd}>
         {itemLabel(session)}
       </span>
-      <span className="bell-item-time">{elapsed(session.statusSince, now)}</span>
+      <span className="bell-item-time">{formatElapsed(lang, session.statusSince, now)}</span>
     </button>
   );
 
@@ -86,7 +81,7 @@ export default function AttentionBell() {
     <div className="bell">
       <button
         className={`icon-btn bell-btn ${waiting.length > 0 ? 'bell-alert' : ''}`}
-        title={waiting.length > 0 ? `確認待ち ${waiting.length} 件` : '要対応キュー'}
+        title={waiting.length > 0 ? t('bell.tooltipWaiting', { n: waiting.length }) : t('bell.tooltip')}
         onClick={() => setOpen((v) => !v)}
       >
         <span className={`codicon ${waiting.length > 0 ? 'codicon-bell-dot' : 'codicon-bell'}`} />
@@ -97,15 +92,19 @@ export default function AttentionBell() {
           <div className="bell-overlay" onClick={() => setOpen(false)} />
           <div className="bell-panel">
             {locateError && <div className="bell-error">⚠ {locateError}</div>}
-            <div className="bell-section-title">確認待ち{waiting.length > 0 && ` (${waiting.length})`}</div>
+            <div className="bell-section-title">
+              {waiting.length > 0
+                ? t('bell.waitingSectionCount', { n: waiting.length })
+                : t('bell.waitingSection')}
+            </div>
             {waiting.length === 0 ? (
-              <div className="bell-empty">対応が必要なエージェントはありません</div>
+              <div className="bell-empty">{t('bell.empty')}</div>
             ) : (
               waiting.map((s) => renderItem(s, 'bell-dot-waiting'))
             )}
             {idleAgents.length > 0 && (
               <>
-                <div className="bell-section-title">待機中のエージェント ({idleAgents.length})</div>
+                <div className="bell-section-title">{t('bell.idleSection', { n: idleAgents.length })}</div>
                 {idleAgents.map((s) => renderItem(s, 'bell-dot-idle'))}
               </>
             )}
@@ -117,10 +116,10 @@ export default function AttentionBell() {
                   disabled={permission === 'denied' || permission === 'unsupported'}
                   onChange={(e) => void toggleDesktop(e.target.checked)}
                 />
-                デスクトップ通知
+                {t('bell.desktopNotifications')}
               </label>
               {permission === 'denied' && (
-                <span className="bell-note">ブラウザ設定で通知がブロックされています</span>
+                <span className="bell-note">{t('bell.notificationsBlocked')}</span>
               )}
               <label>
                 <input
@@ -128,7 +127,7 @@ export default function AttentionBell() {
                   checked={soundEnabled}
                   onChange={(e) => setSoundEnabled(e.target.checked)}
                 />
-                サウンド
+                {t('bell.sound')}
               </label>
             </div>
           </div>

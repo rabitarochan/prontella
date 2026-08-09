@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { api } from '../api';
+import { useT } from '../i18n';
 import type { LogEntry } from '../types';
 import DiffPane from './DiffPane';
 
@@ -34,6 +35,7 @@ export default function FileHistoryModal({
   path: string;
   onClose: () => void;
 }) {
+  const t = useT();
   const [log, setLog] = useState<LogEntry[] | null>(null);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<LogEntry | null>(null);
@@ -56,7 +58,7 @@ export default function FileHistoryModal({
       <DialogContent className="flex h-[640px] max-h-[88vh] w-[92vw] flex-col sm:max-w-[900px]">
         <DialogHeader>
           <DialogTitle className="truncate pr-6" title={path}>
-            ファイルの履歴 — {path}
+            {t('fileHistory.title', { path })}
           </DialogTitle>
         </DialogHeader>
         {error ? (
@@ -65,9 +67,9 @@ export default function FileHistoryModal({
           <div className="file-history-body">
             <div className="file-history-list">
               {log === null ? (
-                <div className="placeholder">読み込み中...</div>
+                <div className="placeholder">{t('common.loading')}</div>
               ) : log.length === 0 ? (
-                <div className="placeholder">このファイルのコミット履歴はありません</div>
+                <div className="placeholder">{t('git.noCommitHistory')}</div>
               ) : (
                 log.map((entry) => (
                   <div
@@ -89,7 +91,7 @@ export default function FileHistoryModal({
                         className="file-history-rename"
                         title={`${entry.origPath} → ${entry.path}`}
                       >
-                        リネーム: {entry.origPath} → {entry.path}
+                        {t('fileHistory.renameLabel', { from: entry.origPath, to: entry.path ?? path })}
                       </div>
                     )}
                   </div>
@@ -98,7 +100,7 @@ export default function FileHistoryModal({
             </div>
             <div className="file-history-diff">
               {!selected ? (
-                <div className="placeholder">コミットを選択すると差分を表示します</div>
+                <div className="placeholder">{t('fileHistory.selectCommitHint')}</div>
               ) : (
                 <DiffPane
                   dir={dir}
@@ -113,7 +115,7 @@ export default function FileHistoryModal({
         )}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            閉じる
+            {t('common.close')}
           </Button>
         </DialogFooter>
       </DialogContent>

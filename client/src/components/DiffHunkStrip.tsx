@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { classifyHunkLine, HUNK_CONFLICT_MESSAGE, hunkStats } from '../diffHunk';
+import { useT } from '../i18n';
 import { useDeck } from '../store';
 import type { DiffHunk } from '../types';
 import { useConfirm } from './ConfirmDialog';
@@ -32,6 +33,7 @@ export default function DiffHunkStrip({
   /** ハンク行クリック時、Monaco 側をその位置へスクロールさせる (省略可) */
   onReveal?: (hunk: DiffHunk) => void;
 }) {
+  const t = useT();
   const refreshDeck = useDeck((s) => s.refresh);
   const { confirm: confirmDialog, dialog } = useConfirm();
   const [hunks, setHunks] = useState<DiffHunk[] | null>(null);
@@ -95,7 +97,7 @@ export default function DiffHunkStrip({
       const msg = e instanceof Error ? e.message : String(e);
       if (msg === HUNK_CONFLICT_MESSAGE) {
         // 409: 操作は適用されていない。差分とハンク一覧を取り直すだけで、破棄確認等はやり直させる。
-        setNotice('差分が変化したため再読み込みしました');
+        setNotice(t('hunk.reloadedNotice'));
         await load();
         onApplied();
       } else {
@@ -110,9 +112,9 @@ export default function DiffHunkStrip({
 
   const discard = async (index: number, hunk: DiffHunk) => {
     const ok = await confirmDialog({
-      title: 'ハンクを破棄',
-      message: `この変更を破棄しますか?\n${hunk.header}\n\n※ 元に戻せません`,
-      confirmLabel: '破棄',
+      title: t('hunk.discardTitle'),
+      message: t('hunk.discardMessage', { header: hunk.header }),
+      confirmLabel: t('git.discard'),
       severity: 'danger',
     });
     if (!ok) return;
@@ -140,14 +142,15 @@ export default function DiffHunkStrip({
     const hasEofMarker = hunk.lines.some((l) => l.startsWith('\\'));
     const changeLineCount = hunk.lines.filter((l) => l.startsWith('+') || l.startsWith('-')).length;
     const coversAllChangeLines = selectedLines.size >= changeLineCount;
-    const expansionWarning =
-      hasEofMarker && !coversAllChangeLines
-        ? '※ このハンクは末尾に改行がない変更を含むため、選択した行に加えて関連する行末の変更も一緒に戻る場合があります\n'
-        : '';
+    const expansionWarning = hasEofMarker && !coversAllChangeLines ? t('hunk.eofWarning') : '';
     const ok = await confirmDialog({
-      title: '選択した行を破棄',
-      message: `選択した ${selectedLines.size} 行を破棄しますか?\n${hunk.header}\n\n${expansionWarning}※ 元に戻せません`,
-      confirmLabel: '破棄',
+      title: t('hunk.discardLinesTitle'),
+      message: t('hunk.discardLinesMessage', {
+        n: selectedLines.size,
+        header: hunk.header,
+        warning: expansionWarning,
+      }),
+      confirmLabel: t('git.discard'),
       severity: 'danger',
     });
     if (!ok) return;
@@ -193,14 +196,14 @@ export default function DiffHunkStrip({
                 <button
                   className="icon-btn hunk-chip-toggle"
                   disabled={busy}
-                  title={isExpanded ? '行選択を閉じる' : '行を選択'}
+                  title={isExpanded ? t('hunk.collapseLinesTooltip') : t('hunk.selectLinesTooltip')}
                   onClick={() => toggleExpand(index)}
                 >
                   <span className={`codicon codicon-chevron-right hunk-chip-chevron${isExpanded ? ' open' : ''}`} />
                 </button>
                 <button
                   className="hunk-chip-loc"
-                  title="この位置へスクロール"
+                  title={t('git.scrollToTooltip')}
                   onClick={() => onReveal?.(hunk)}
                 >
                   {hunk.header}
@@ -215,7 +218,7 @@ export default function DiffHunkStrip({
                       <button
                         className="icon-btn"
                         disabled={busy}
-                        title="このハンクをステージ"
+                        title={t('hunk.stageTooltip')}
                         onClick={() => void apply(index, 'stage')}
                       >
                         <span className="codicon codicon-add" />
@@ -223,7 +226,7 @@ export default function DiffHunkStrip({
                       <button
                         className="icon-btn"
                         disabled={busy}
-                        title="このハンクを破棄"
+                        title={t('hunk.discardTooltip')}
                         onClick={() => void discard(index, hunk)}
                       >
                         <span className="codicon codicon-discard" />
@@ -234,7 +237,7 @@ export default function DiffHunkStrip({
                     <button
                       className="icon-btn"
                       disabled={busy}
-                      title="このハンクをステージ解除"
+                      title={t('hunk.unstageTooltip')}
                       onClick={() => void apply(index, 'unstage')}
                     >
                       <span className="codicon codicon-remove" />
@@ -277,14 +280,14 @@ export default function DiffHunkStrip({
                           disabled={busy || selectedLines.size === 0}
                           onClick={() => void applyLines(index, 'stage')}
                         >
-                          選択行をステージ
+                          {t('hunk.stageLinesButton')}
                         </button>
                         <button
                           className="danger"
                           disabled={busy || selectedLines.size === 0}
                           onClick={() => void discardLines(index, hunk)}
                         >
-                          選択行を破棄
+                          {t('hunk.discardLinesButton')}
                         </button>
                       </>
                     )}
@@ -293,7 +296,7 @@ export default function DiffHunkStrip({
                         disabled={busy || selectedLines.size === 0}
                         onClick={() => void applyLines(index, 'unstage')}
                       >
-                        選択行をステージ解除
+                        {t('hunk.unstageLinesButton')}
                       </button>
                     )}
                   </div>

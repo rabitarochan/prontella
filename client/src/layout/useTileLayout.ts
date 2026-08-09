@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useT } from '../i18n';
 import type { TerminalSession } from '../types';
 import { pruneEditorState, TILE_LAYOUT_STORAGE_PREFIX } from '../editorState';
 import {
@@ -66,6 +67,7 @@ export function useTileLayout(
   createSession: (run?: string, place?: (s: TerminalSession) => void) => Promise<TerminalSession>,
   killSession: (id: string) => Promise<void>,
 ): TileActions {
+  const t = useT();
   const [layout, setLayout] = useState<WorktreeLayout>(() => loadLayout(worktreePath));
   const [focusedLeafId, setFocusedLeafId] = useState<string | null>(null);
 
@@ -128,12 +130,12 @@ export function useTileLayout(
       if (!target) return;
       const alive = target.sessions.filter((id) => sessionsRef.current?.some((s) => s.id === id));
       if (alive.length > 0) {
-        if (!confirm(`このタイルを閉じますか? (ターミナル ${alive.length} 件を終了します)`)) return;
+        if (!confirm(t('tile.closeSessionsConfirm', { n: alive.length }))) return;
         for (const id of alive) await killSession(id);
       }
       update(removeLeaf(layoutRef.current.root ?? root, leafId));
     },
-    [killSession, update],
+    [killSession, t, update],
   );
 
   const setView = useCallback(

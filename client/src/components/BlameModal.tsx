@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { api } from '../api';
+import { useT } from '../i18n';
 import type { BlameLine, BlameResult } from '../types';
 
 const ZERO_HASH = '0'.repeat(40);
@@ -44,6 +45,7 @@ export default function BlameModal({
   path: string;
   onClose: () => void;
 }) {
+  const t = useT();
   const [result, setResult] = useState<BlameResult | null>(null);
   const [error, setError] = useState('');
 
@@ -67,19 +69,19 @@ export default function BlameModal({
         {error ? (
           <div className="placeholder">⚠ {error}</div>
         ) : result === null ? (
-          <div className="placeholder">読み込み中...</div>
+          <div className="placeholder">{t('common.loading')}</div>
         ) : result.binary ? (
-          <div className="placeholder">バイナリファイルの blame は表示できません</div>
+          <div className="placeholder">{t('blame.binaryUnsupported')}</div>
         ) : result.tooLarge ? (
           // files.ts の MAX_FILE_SIZE と同じ閾値(2MB)。エディターが開けないファイルを
           // blame では丸ごと読めてしまう非対称を避けるためのガード(6.5R R-3)。
-          <div className="placeholder">ファイルが大きすぎます(2MB を超えています)</div>
+          <div className="placeholder">{t('blame.tooLarge')}</div>
         ) : result.notFound ? (
           // 未追跡ファイル等、blame 対象の履歴が無いケース。「ファイルの履歴...」
           // (FileHistoryModal)の同状況での文言に揃える(6.5R R-4、対称性の基準)。
-          <div className="placeholder">このファイルのコミット履歴はありません</div>
+          <div className="placeholder">{t('git.noCommitHistory')}</div>
         ) : result.lines.length === 0 ? (
-          <div className="placeholder">空のファイルです</div>
+          <div className="placeholder">{t('blame.emptyFile')}</div>
         ) : (
           <div className="blame-body">
             {result.lines.map((l, i) => {
@@ -91,9 +93,11 @@ export default function BlameModal({
                   {showAnnotation ? (
                     <span
                       className="blame-annotation"
-                      title={`${uncommitted ? '未コミットの変更' : l.hash}\n${l.summary}\n${l.author} — ${formatAuthorTime(l.authorTime)}`}
+                      title={`${uncommitted ? t('blame.uncommittedFull') : l.hash}\n${l.summary}\n${l.author} — ${formatAuthorTime(l.authorTime)}`}
                     >
-                      <span className="blame-hash">{uncommitted ? '未コミット' : l.hash.slice(0, 7)}</span>
+                      <span className="blame-hash">
+                        {uncommitted ? t('blame.uncommittedShort') : l.hash.slice(0, 7)}
+                      </span>
                       <span className="blame-author">{l.author}</span>
                     </span>
                   ) : (
@@ -107,7 +111,7 @@ export default function BlameModal({
         )}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            閉じる
+            {t('common.close')}
           </Button>
         </DialogFooter>
       </DialogContent>

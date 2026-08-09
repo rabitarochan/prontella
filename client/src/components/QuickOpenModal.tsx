@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from '
 import fuzzysort from 'fuzzysort';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import { useT } from '../i18n';
 import { getCachedFileList, refreshFileList, type QuickOpenTarget } from '../search/fileListCache';
 import type { FilesTabHandle } from '../search/registry';
 import { fileIcon } from './FileTree';
@@ -56,6 +57,7 @@ export default function QuickOpenModal({
   target: FilesTabHandle;
   onClose: () => void;
 }) {
+  const t = useT();
   const [query, setQuery] = useState('');
   const [entry, setEntry] = useState(() => getCachedFileList(target.root));
   const [selected, setSelected] = useState(0);
@@ -128,24 +130,24 @@ export default function QuickOpenModal({
         // コマンドパレット風: 上部固定・パディングなし・角丸内にリストを収める
         className="top-[15%] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-[600px]"
       >
-        <DialogTitle className="sr-only">ファイルを開く</DialogTitle>
+        <DialogTitle className="sr-only">{t('files.quickOpenTitle')}</DialogTitle>
         <input
           ref={inputRef}
           className="placeholder:text-muted-foreground h-11 w-full border-b bg-transparent px-4 text-sm outline-none"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="ファイル名で検索"
+          placeholder={t('files.quickOpenPlaceholder')}
           autoFocus
           spellCheck={false}
         />
         <div className="max-h-[420px] overflow-y-auto p-1" ref={listRef}>
           {!entry && (
-            <div className="text-muted-foreground py-6 text-center text-sm">読み込み中...</div>
+            <div className="text-muted-foreground py-6 text-center text-sm">{t('common.loading')}</div>
           )}
           {entry && items.length === 0 && (
             <div className="text-muted-foreground py-6 text-center text-sm">
-              ファイルが見つかりません
+              {t('files.noFilesFound')}
             </div>
           )}
           {items.map((item, i) => {
@@ -163,10 +165,14 @@ export default function QuickOpenModal({
             return (
               <Fragment key={item.rel}>
                 {!query && item.open && i === 0 && (
-                  <div className="text-muted-foreground px-2 py-1.5 text-xs">開いているファイル</div>
+                  <div className="text-muted-foreground px-2 py-1.5 text-xs">
+                    {t('files.openFilesSection')}
+                  </div>
                 )}
                 {!query && !item.open && items[i - 1]?.open && (
-                  <div className="text-muted-foreground px-2 py-1.5 text-xs">ファイル</div>
+                  <div className="text-muted-foreground px-2 py-1.5 text-xs">
+                    {t('files.filesSection')}
+                  </div>
                 )}
                 <div
                   className={cn(

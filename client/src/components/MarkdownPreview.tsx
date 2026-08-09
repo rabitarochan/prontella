@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useT } from '../i18n';
 import { renderMarkdownToFragment } from '../markdown/render';
 import { highlightInto } from '../markdown/highlight';
 import { isMarkdownPath } from '../markdown/paths';
@@ -56,6 +57,7 @@ export default function MarkdownPreview({
   onOpenFile,
   scrollPositions,
 }: MarkdownPreviewProps) {
+  const t = useT();
   // 外部画像を読み込むかどうかはこのコンポーネントの state のみで持ち、永続化しない
   // (タブの寿命と揃える。既定は false — 起動直後・切替直後は一切の外部通信を発生させない)。
   const [allowExternalImages, setAllowExternalImages] = useState(false);
@@ -176,13 +178,13 @@ export default function MarkdownPreview({
         <span className="editor-path" title={path}>
           {path}
         </span>
-        <button className="icon-btn" onClick={onRefresh} title="更新">
+        <button className="icon-btn" onClick={onRefresh} title={t('files.refreshTooltip')}>
           <span className="codicon codicon-refresh" />
         </button>
         <button
           className={`icon-btn md-preview-toggle ${allowExternalImages ? 'active' : ''}`}
           onClick={() => setAllowExternalImages((v) => !v)}
-          title="外部画像を読み込む"
+          title={t('files.loadExternalImagesTooltip')}
         >
           <span className="codicon codicon-globe" />
         </button>
@@ -190,11 +192,11 @@ export default function MarkdownPreview({
       {error ? (
         <div className="placeholder">⚠ {error}</div>
       ) : binary ? (
-        <div className="placeholder">バイナリファイルは表示できません</div>
+        <div className="placeholder">{t('files.binaryFileMessage')}</div>
       ) : tooLarge ? (
-        <div className="placeholder">ファイルが大きすぎます</div>
+        <div className="placeholder">{t('files.tooLargeMessage')}</div>
       ) : source === null ? (
-        <div className="placeholder">読み込み中...</div>
+        <div className="placeholder">{t('common.loading')}</div>
       ) : null}
       {showBody && (
         <div className="md-preview-body" ref={bodyRefCallback} onClick={handleClick} onScroll={handleScroll} />

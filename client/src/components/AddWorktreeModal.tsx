@@ -10,10 +10,12 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { api } from '../api';
+import { useT } from '../i18n';
 import { useDeck } from '../store';
 import type { ActiveRepo, BranchInfo } from '../types';
 
 export default function AddWorktreeModal({ repo, onClose }: { repo: ActiveRepo; onClose: () => void }) {
+  const t = useT();
   const refresh = useDeck((s) => s.refresh);
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [mode, setMode] = useState<'existing' | 'new'>('new');
@@ -68,23 +70,23 @@ export default function AddWorktreeModal({ repo, onClose }: { repo: ActiveRepo; 
         }}
       >
         <DialogHeader>
-          <DialogTitle>Worktree を追加 — {repo.name}</DialogTitle>
+          <DialogTitle>{t('addWorktree.title', { name: repo.name })}</DialogTitle>
         </DialogHeader>
         <div className="grid gap-4">
           <div className="flex items-center gap-5 text-sm">
             <label className="flex items-center gap-1.5">
               <input type="radio" checked={mode === 'new'} onChange={() => setMode('new')} />
-              新しいブランチを作成
+              {t('addWorktree.newBranchOption')}
             </label>
             <label className="flex items-center gap-1.5">
               <input type="radio" checked={mode === 'existing'} onChange={() => setMode('existing')} />
-              既存のブランチ
+              {t('addWorktree.existingBranchOption')}
             </label>
           </div>
           {mode === 'new' ? (
             <>
               <div className="grid grid-cols-[110px_1fr] items-center gap-3">
-                <Label htmlFor="wt-new-branch">ブランチ名</Label>
+                <Label htmlFor="wt-new-branch">{t('addWorktree.branchNameLabel')}</Label>
                 <Input
                   id="wt-new-branch"
                   ref={branchInputRef}
@@ -94,7 +96,7 @@ export default function AddWorktreeModal({ repo, onClose }: { repo: ActiveRepo; 
                 />
               </div>
               <div className="grid grid-cols-[110px_1fr] items-center gap-3">
-                <Label htmlFor="wt-base">作成元 (base)</Label>
+                <Label htmlFor="wt-base">{t('addWorktree.baseLabel')}</Label>
                 <select id="wt-base" value={base} onChange={(e) => setBase(e.target.value)}>
                   {branches.map((b) => (
                     <option key={b.name} value={b.name}>
@@ -106,37 +108,37 @@ export default function AddWorktreeModal({ repo, onClose }: { repo: ActiveRepo; 
             </>
           ) : (
             <div className="grid grid-cols-[110px_1fr] items-center gap-3">
-              <Label htmlFor="wt-branch">ブランチ</Label>
+              <Label htmlFor="wt-branch">{t('addWorktree.branchLabel')}</Label>
               <select id="wt-branch" value={branch} onChange={(e) => setBranch(e.target.value)}>
                 {locals.map((b) => (
                   <option key={b.name} value={b.name} disabled={!!b.worktreePath}>
                     {b.name}
-                    {b.worktreePath ? ' (使用中)' : ''}
+                    {b.worktreePath ? t('addWorktree.inUseSuffix') : ''}
                   </option>
                 ))}
               </select>
             </div>
           )}
           <div className="grid grid-cols-[110px_1fr] items-center gap-3">
-            <Label htmlFor="wt-path">パス (省略可)</Label>
+            <Label htmlFor="wt-path">{t('addWorktree.pathLabel')}</Label>
             <Input
               id="wt-path"
               value={path}
               onChange={(e) => setPath(e.target.value)}
-              placeholder={`既定: ../${repo.name}.worktrees/<ブランチ名>`}
+              placeholder={t('addWorktree.pathPlaceholder', { name: repo.name })}
             />
           </div>
           {error && <div className="text-sm text-[var(--status-red)]">⚠ {error}</div>}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            キャンセル
+            {t('common.cancel')}
           </Button>
           <Button
             disabled={busy || (mode === 'new' ? !newBranch.trim() : !branch)}
             onClick={() => void submit()}
           >
-            {busy ? '作成中...' : '作成'}
+            {busy ? t('addWorktree.creating') : t('git.create')}
           </Button>
         </DialogFooter>
       </DialogContent>

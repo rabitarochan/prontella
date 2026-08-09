@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { useT } from '../i18n';
 
 export interface PromptRequest {
   title: string;
@@ -26,8 +27,8 @@ export default function PromptDialog({
   message,
   defaultValue = '',
   placeholder,
-  confirmLabel = '実行',
-  cancelLabel = 'キャンセル',
+  confirmLabel,
+  cancelLabel,
   allowEmpty = false,
   onConfirm,
   onCancel,
@@ -42,6 +43,7 @@ export default function PromptDialog({
   onConfirm: (value: string) => void;
   onCancel: () => void;
 }) {
+  const t = useT();
   const [value, setValue] = useState(defaultValue);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -76,10 +78,10 @@ export default function PromptDialog({
         />
         <DialogFooter>
           <Button variant="outline" onClick={onCancel}>
-            {cancelLabel}
+            {cancelLabel ?? t('common.cancel')}
           </Button>
           <Button disabled={!allowEmpty && !value.trim()} onClick={submit}>
-            {confirmLabel}
+            {confirmLabel ?? t('common.run')}
           </Button>
         </DialogFooter>
       </DialogContent>

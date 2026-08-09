@@ -7,6 +7,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { api } from '../api';
+import { useT, type StringKey } from '../i18n';
 import { useConfirm } from './ConfirmDialog';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import { layoutGraph, laneColor, type GraphRow } from '../graph';
@@ -25,12 +26,12 @@ type ColKey = 'tree' | 'subject' | 'commit' | 'author' | 'date';
 type ColWidths = { tree: number | null; subject: number; commit: number; author: number; date: number };
 const DEFAULT_COLS: ColWidths = { tree: null, subject: 360, commit: 90, author: 110, date: 150 };
 
-const COLUMNS: { key: ColKey; label: string }[] = [
-  { key: 'tree', label: 'ツリー' },
-  { key: 'subject', label: '説明' },
-  { key: 'commit', label: 'コミット' },
-  { key: 'author', label: '作者' },
-  { key: 'date', label: '日時' },
+const COLUMNS: { key: ColKey; labelKey: StringKey }[] = [
+  { key: 'tree', labelKey: 'history.colTree' },
+  { key: 'subject', labelKey: 'history.colSubject' },
+  { key: 'commit', labelKey: 'history.colCommit' },
+  { key: 'author', labelKey: 'history.colAuthor' },
+  { key: 'date', labelKey: 'history.colDate' },
 ];
 
 // 履歴検索 (6.4)。フィルター種別ごとに GET /api/git/log の author/grep/path のどれへ渡すかを切替える。
@@ -140,6 +141,7 @@ export default function HistoryTab({
    * (load + refreshDeck + reloadKey++、成功/失敗いずれも)を GitTab 側に一本化するため。 */
   onAct: (fn: () => Promise<unknown>, successMsg?: string) => void;
 }) {
+  const t = useT();
   const [log, setLog] = useState<LogEntry[] | null>(null);
   const [showAll, setShowAll] = useState(true);
   const [selected, setSelected] = useState<LogEntry | null>(null);
@@ -285,21 +287,22 @@ export default function HistoryTab({
       title: `Reset (${mode})`,
       message: (
         <>
-          <div>
-            HEAD を {entry.shortHash} ({entry.subject}) まで戻します ({mode})。
-          </div>
-          {mode === 'hard' && dirty > 0 && <div>※ 未コミットの変更 {dirty} 件が失われます。</div>}
+          <div>{t('history.resetMessage', { hash: entry.shortHash, subject: entry.subject, mode })}</div>
+          {mode === 'hard' && dirty > 0 && <div>{t('history.resetHardLossWarning', { n: dirty })}</div>}
           {mode === 'hard' && untracked > 0 && (
-            <div>※ 未追跡ファイル {untracked} 件は保持されます。</div>
+            <div>{t('history.resetHardUntrackedKept', { n: untracked })}</div>
           )}
-          {mode === 'hard' && <div>※ 元に戻せません</div>}
+          {mode === 'hard' && <div>{t('git.cannotUndo')}</div>}
         </>
       ),
       confirmLabel: 'Reset',
       severity: mode === 'hard' ? 'danger' : 'normal',
     });
     if (!ok) return;
-    onAct(() => api.reset(dir, entry.hash, mode), `${entry.shortHash} まで reset しました (${mode})`);
+    onAct(
+      () => api.reset(dir, entry.hash, mode),
+      t('history.resetSuccess', { hash: entry.shortHash, mode }),
+    );
   };
 
   // cherry-pick は競合し得るが git 自身が非破壊的に扱う (作業ツリーが cherry-pick 進行中の
@@ -307,13 +310,16 @@ export default function HistoryTab({
   // severity は 'normal'。
   const doCherryPick = async (entry: LogEntry) => {
     const ok = await confirmDialog({
-      title: 'チェリーピック',
-      message: `'${entry.shortHash}' (${entry.subject}) を現在のブランチに適用しますか?`,
-      confirmLabel: 'チェリーピック',
+      title: t('git.cherryPick'),
+      message: t('history.cherryPickMessage', { hash: entry.shortHash, subject: entry.subject }),
+      confirmLabel: t('git.cherryPick'),
       severity: 'normal',
     });
     if (!ok) return;
-    onAct(() => api.cherryPick(dir, entry.hash), `${entry.shortHash} をチェリーピックしました`);
+    onAct(
+      () => api.cherryPick(dir, entry.hash),
+      t('history.cherryPickSuccess', { hash: entry.shortHash }),
+    );
   };
 
   // revert も cherry-pick と同様、競合しても git 自身が進行中状態 (REVERT_HEAD) に留め置く
@@ -321,31 +327,31 @@ export default function HistoryTab({
   // エラーがそのまま表示される (スコープ外、ブリーフ参照)。
   const doRevert = async (entry: LogEntry) => {
     const ok = await confirmDialog({
-      title: 'リバート',
-      message: `'${entry.shortHash}' (${entry.subject}) を打ち消すコミットを作成しますか?`,
-      confirmLabel: 'リバート',
+      title: t('git.revert'),
+      message: t('history.revertMessage', { hash: entry.shortHash, subject: entry.subject }),
+      confirmLabel: t('git.revert'),
       severity: 'normal',
     });
     if (!ok) return;
-    onAct(() => api.revert(dir, entry.hash), `${entry.shortHash} をリバートしました`);
+    onAct(() => api.revert(dir, entry.hash), t('history.revertSuccess', { hash: entry.shortHash }));
   };
 
   const commitMenuItems = (entry: LogEntry): ContextMenuItem[] => [
     ...RESET_MODES.map((mode) => ({
-      label: `ここまで reset (${mode})…`,
+      label: t('history.resetToHereLabel', { mode }),
       icon: 'discard',
       disabled: busy || !!operation,
       danger: mode === 'hard',
       onClick: () => void doReset(entry, mode),
     })),
     {
-      label: 'このコミットをチェリーピック…',
+      label: t('history.cherryPickMenuLabel'),
       icon: 'git-commit',
       disabled: busy || !!operation,
       onClick: () => void doCherryPick(entry),
     },
     {
-      label: 'このコミットをリバート…',
+      label: t('history.revertMenuLabel'),
       icon: 'reply',
       disabled: busy || !!operation,
       onClick: () => void doRevert(entry),
@@ -360,7 +366,7 @@ export default function HistoryTab({
         <div className="graph-toolbar">
           <label className="branches-remote-toggle">
             <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
-            全ブランチを表示 (--all)
+            {t('history.showAllBranches')}
           </label>
           <div className="history-filter">
             <select
@@ -368,9 +374,9 @@ export default function HistoryTab({
               value={filterKind}
               onChange={(e) => setFilterKind(e.target.value as FilterKind)}
             >
-              <option value="message">メッセージ</option>
-              <option value="author">著者</option>
-              <option value="path">パス</option>
+              <option value="message">{t('history.filterMessage')}</option>
+              <option value="author">{t('history.filterAuthor')}</option>
+              <option value="path">{t('history.filterPath')}</option>
             </select>
             <input
               className="history-filter-input"
@@ -378,15 +384,15 @@ export default function HistoryTab({
               value={filterInput}
               onChange={(e) => setFilterInput(e.target.value)}
               placeholder={
-                filterKind === 'author' ? '著者名で絞り込み'
-                : filterKind === 'path' ? 'パスで絞り込み'
-                : 'メッセージで絞り込み'
+                filterKind === 'author' ? t('history.filterPlaceholderAuthor')
+                : filterKind === 'path' ? t('history.filterPlaceholderPath')
+                : t('history.filterPlaceholderMessage')
               }
             />
             {filterInput && (
               <button
                 className="icon-btn"
-                title="フィルターをクリア"
+                title={t('history.clearFilterTooltip')}
                 onClick={() => {
                   setFilterInput('');
                   setFilter('');
@@ -398,7 +404,8 @@ export default function HistoryTab({
           </div>
           {log && (
             <span className="graph-count">
-              {log.length} コミット{hasFilter ? ' (絞り込み中)' : ''}
+              {t('history.commitCount', { n: log.length })}
+              {hasFilter ? t('history.filteringSuffix') : ''}
             </span>
           )}
         </div>
@@ -406,7 +413,7 @@ export default function HistoryTab({
           <div className="graph-header" style={{ minWidth: totalW }}>
             {visibleColumns.map((col) => (
               <div key={col.key} className="graph-hcell" style={colStyle(col.key)}>
-                <span className="graph-hlabel">{col.label}</span>
+                <span className="graph-hlabel">{t(col.labelKey)}</span>
                 <span className="col-resize-handle" onMouseDown={startResize(col.key)} />
               </div>
             ))}
@@ -414,9 +421,11 @@ export default function HistoryTab({
           {logError ? (
             <div className="placeholder">⚠ {logError}</div>
           ) : log === null ? (
-            <div className="placeholder">読み込み中...</div>
+            <div className="placeholder">{t('common.loading')}</div>
           ) : log.length === 0 ? (
-            <div className="placeholder">{hasFilter ? '一致するコミットがありません' : 'コミットがありません'}</div>
+            <div className="placeholder">
+              {hasFilter ? t('history.noMatchingCommits') : t('history.noCommits')}
+            </div>
           ) : (
             log.map((entry, i) => (
               <div
@@ -456,7 +465,7 @@ export default function HistoryTab({
       </div>
       <div className="commit-pane">
         {!selected ? (
-          <div className="placeholder">コミットを選択すると詳細を表示します</div>
+          <div className="placeholder">{t('history.selectCommitHint')}</div>
         ) : (
           <>
             <div className="commit-side">
@@ -471,7 +480,7 @@ export default function HistoryTab({
               </div>
               <div className="commit-files">
                 {commitFiles === null ? (
-                  <span className="commit-files-loading">読み込み中...</span>
+                  <span className="commit-files-loading">{t('common.loading')}</span>
                 ) : (
                   commitFiles.map((file) => (
                     <div
@@ -499,7 +508,7 @@ export default function HistoryTab({
                   origPath={selectedFile.origPath}
                 />
               ) : (
-                <div className="placeholder">ファイルを選択すると差分を表示します</div>
+                <div className="placeholder">{t('history.selectFileHint')}</div>
               )}
             </div>
           </>

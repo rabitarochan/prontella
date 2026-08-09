@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { DiffEditor, type MonacoDiffEditor } from '@monaco-editor/react';
 import { api } from '../api';
+import { useT } from '../i18n';
 import { languageFor } from '../monaco-setup';
 import { parseHunkHeader } from '../diffHunk';
 import { monacoThemeName } from '../theme/monacoTheme';
@@ -33,6 +34,7 @@ export default function DiffPane({
   untracked,
   onHunksChanged,
 }: DiffPaneProps) {
+  const t = useT();
   const [pair, setPair] = useState<DiffPair | null>(null);
   const [error, setError] = useState('');
   const diffEditorRef = useRef<MonacoDiffEditor | null>(null);
@@ -69,10 +71,10 @@ export default function DiffPane({
   }, []);
 
   if (error) return <div className="placeholder">⚠ {error}</div>;
-  if (!pair) return <div className="placeholder">読み込み中...</div>;
-  if (pair.binary) return <div className="placeholder">バイナリファイルは差分表示できません</div>;
-  if (pair.tooLarge) return <div className="placeholder">ファイルが大きすぎます (2MB 超)</div>;
-  if (pair.original === pair.modified) return <div className="placeholder">差分はありません</div>;
+  if (!pair) return <div className="placeholder">{t('common.loading')}</div>;
+  if (pair.binary) return <div className="placeholder">{t('diff.binaryUnsupported')}</div>;
+  if (pair.tooLarge) return <div className="placeholder">{t('diff.tooLarge')}</div>;
+  if (pair.original === pair.modified) return <div className="placeholder">{t('diff.noDiff')}</div>;
 
   // commit scope と untracked ファイルの合成 diff にはハンク単位操作を出さない
   // (サーバー側 diff-hunks も scope=worktree/staged しか受け付けない)。

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { t } from './i18n';
 import { chime, desktopNotify } from './notify';
 import { locateSession, normPath } from './sessionLocate';
 import { useDeck } from './store';
@@ -64,7 +65,7 @@ export function findWorktree(cwd: string): { repo: ActiveRepo; worktree: Worktre
 export function sessionLabel(session: TerminalSession): string {
   const location = locateSession(useDeck.getState().repos, session.cwd);
   if (location?.kind === 'worktree') return `${location.repo.name} / ${location.worktree.branch ?? '(detached)'}`;
-  if (location?.kind === 'archived') return `${location.repo.name} (アーカイブ済み)`;
+  if (location?.kind === 'archived') return t('notify.archivedSessionLabel', { name: location.repo.name });
   return session.cwd.split(/[\\/]/).pop() || session.cwd;
 }
 
@@ -117,10 +118,8 @@ function notify(kind: 'waiting' | 'done', session: TerminalSession): void {
   if (soundEnabled) chime(kind);
   if (desktopEnabled) {
     desktopNotify(
-      kind === 'waiting' ? '確認待ち — Claude Deck' : '完了 — Claude Deck',
-      kind === 'waiting'
-        ? `${label}: エージェントが応答を待っています`
-        : `${label}: エージェントが待機中になりました`,
+      t(kind === 'waiting' ? 'notify.waitingTitle' : 'notify.doneTitle'),
+      t(kind === 'waiting' ? 'notify.waitingBody' : 'notify.doneBody', { label }),
       `deck3-${kind}-${session.id}`,
       () => focusSession(session),
     );

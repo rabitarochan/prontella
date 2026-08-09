@@ -6,16 +6,17 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { useT, type StringKey } from '../../i18n';
 import type { AgentStatus, TerminalSession } from '../../types';
 import type { LeafNode, TileView } from '../../layout/tileTree';
 import type { TileActions } from '../../layout/useTileLayout';
 import { useConfirm } from '../ConfirmDialog';
 import StatusBadge from '../StatusBadge';
 
-const VIEWS: { view: TileView; label: string; Icon: typeof FileText }[] = [
-  { view: 'files', label: 'ファイル', Icon: FileText },
-  { view: 'git', label: 'Git', Icon: GitBranch },
-  { view: 'term', label: 'ターミナル', Icon: Terminal },
+const VIEWS: { view: TileView; labelKey: StringKey; Icon: typeof FileText }[] = [
+  { view: 'files', labelKey: 'tile.viewFiles', Icon: FileText },
+  { view: 'git', labelKey: 'tile.viewGit', Icon: GitBranch },
+  { view: 'term', labelKey: 'tile.viewTerm', Icon: Terminal },
 ];
 
 /** タイル内セッションの「最も注意が必要な」ステータス (デッキのカードと同じ優先順)。 */
@@ -48,6 +49,7 @@ export default function TilePane({
   actions: TileActions;
   host: HTMLDivElement;
 }) {
+  const t = useT();
   const { confirm: confirmDialog, dialog } = useConfirm();
   // A DOM move (host re-append after a split/close elsewhere) drops focus;
   // give it back to the focused terminal. Mount-only: focus changes from
@@ -71,9 +73,9 @@ export default function TilePane({
     // would silently discard those drafts.
     if (host.querySelector('.editor-tab-dirty')) {
       const ok = await confirmDialog({
-        title: 'タイルを閉じる',
-        message: '未保存の変更があります。タイルを閉じますか?',
-        confirmLabel: '閉じる',
+        title: t('tile.closeTitle'),
+        message: t('tile.closeUnsavedMessage'),
+        confirmLabel: t('common.close'),
         severity: 'danger',
       });
       if (!ok) return;
@@ -95,9 +97,9 @@ export default function TilePane({
             いたため、セッション数とステータスはトリガー側に常時出して情報量を保つ */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="tile-view-trigger" title="表示を切り替え">
+            <button className="tile-view-trigger" title={t('tile.switchViewTooltip')}>
               <CurrentIcon />
-              <span className="tile-tab-label">{current.label}</span>
+              <span className="tile-tab-label">{t(current.labelKey)}</span>
               {leaf.sessions.length > 0 && (
                 <span className="tile-tab-count">{leaf.sessions.length}</span>
               )}
@@ -106,10 +108,10 @@ export default function TilePane({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
-            {VIEWS.map(({ view, label, Icon }) => (
+            {VIEWS.map(({ view, labelKey, Icon }) => (
               <DropdownMenuItem key={view} onSelect={() => actions.setView(leaf.id, view)}>
                 <Icon />
-                {label}
+                {t(labelKey)}
                 {view === 'term' && leaf.sessions.length > 0 && (
                   <span className="tile-tab-count">{leaf.sessions.length}</span>
                 )}
@@ -121,19 +123,19 @@ export default function TilePane({
         <span className="tile-actions">
           <button
             className="icon-btn"
-            title="右に分割"
+            title={t('tile.splitRightTooltip')}
             onClick={() => actions.split(leaf.id, 'row')}
           >
             <span className="codicon codicon-split-horizontal" />
           </button>
           <button
             className="icon-btn"
-            title="下に分割"
+            title={t('tile.splitDownTooltip')}
             onClick={() => actions.split(leaf.id, 'column')}
           >
             <span className="codicon codicon-split-vertical" />
           </button>
-          <button className="icon-btn" title="タイルを閉じる" onClick={() => void close()}>
+          <button className="icon-btn" title={t('tile.closeTitle')} onClick={() => void close()}>
             <span className="codicon codicon-close" />
           </button>
         </span>

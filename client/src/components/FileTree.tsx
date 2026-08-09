@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Tree, type NodeRendererProps, type TreeApi } from 'react-arborist';
 import { api } from '../api';
+import { useT } from '../i18n';
 import type { TreeEntry, TreeStatusEntry } from '../types';
 
 interface TNode {
@@ -159,6 +160,7 @@ const childrenAccessor = (d: TNode) => (d.type === 'dir' ? (d.children ?? []) : 
  * 必ずモジュールスコープに置き、FileTree のクロージャーが必要な値は FileTreeCtx 経由で渡すこと。
  */
 function TreeNode({ node, style }: NodeRendererProps<TNode>) {
+  const t = useT();
   const {
     selectedPath,
     onSelectFile,
@@ -185,7 +187,7 @@ function TreeNode({ node, style }: NodeRendererProps<TNode>) {
         <input
           className="tree-name-input"
           autoFocus
-          placeholder={isDirPh ? '新規フォルダー名' : '新規ファイル名'}
+          placeholder={isDirPh ? t('files.newFolderNamePlaceholder') : t('files.newFileNamePlaceholder')}
           onKeyDown={(e) => {
             if (e.key === 'Enter') void confirmCreate(e.currentTarget.value);
             else if (e.key === 'Escape') cancelCreate();
@@ -253,6 +255,7 @@ export default function FileTree({
    */
   onFileContextMenu?: (e: React.MouseEvent, path: string) => void;
 }) {
+  const t = useT();
   const [nodes, setNodes] = useState<TNode[] | null>(null);
   const [status, setStatus] = useState<TreeStatusEntry[]>([]);
   const [error, setError] = useState('');
@@ -496,19 +499,19 @@ export default function FileTree({
     <div className="tree-wrap">
       <div className="tree-toolbar">
         {notice && <span className="tree-notice" title={notice}>⚠ {notice}</span>}
-        <button className="icon-btn" onClick={() => void startCreate('file')} title="新規ファイル">
+        <button className="icon-btn" onClick={() => void startCreate('file')} title={t('files.newFileTooltip')}>
           <span className="codicon codicon-new-file" />
         </button>
-        <button className="icon-btn" onClick={() => void startCreate('dir')} title="新規フォルダー">
+        <button className="icon-btn" onClick={() => void startCreate('dir')} title={t('files.newFolderTooltip')}>
           <span className="codicon codicon-new-folder" />
         </button>
-        <button className="icon-btn" onClick={loadRoot} title="再読み込み">
+        <button className="icon-btn" onClick={loadRoot} title={t('files.reloadTitle')}>
           <span className="codicon codicon-refresh" />
         </button>
       </div>
       <div className="tree-host" ref={hostRef}>
         {displayNodes === null ? (
-          <div className="tree-loading">読み込み中...</div>
+          <div className="tree-loading">{t('common.loading')}</div>
         ) : (
           <FileTreeCtx.Provider value={ctx}>
             <Tree<TNode>

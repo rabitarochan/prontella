@@ -16,7 +16,9 @@ const LABELS: Record<AgentStatus, { key: StringKey; className: string; dotClassN
     className: 'border-[var(--status-yellow)] text-[var(--status-yellow)]',
     dotClassName: 'animate-pulse [animation-duration:0.6s]',
   },
-  idle: { key: 'status.idle', className: 'text-[var(--status-blue)]' },
+  // idle の枠線色は明示する (既定 border-color が --border になったため。
+  // busy/waiting と同じく「枠もステータス色」の従来の見た目を維持)
+  idle: { key: 'status.idle', className: 'border-[var(--status-blue)] text-[var(--status-blue)]' },
   shell: { key: 'status.shell', className: 'text-muted-foreground' },
   none: { key: 'status.none', className: 'text-muted-foreground opacity-60' },
 };

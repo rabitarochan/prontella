@@ -147,11 +147,14 @@
 
 @layer base {
   /* shadcn コンポーネント(data-slot 属性を必ず持つ)限定のミニリセット。
-     utilities 層は base より強いので、outline バリアント等の border は生き残る */
+     utilities 層は base より強いので、outline バリアント等の border は生き残る。
+     border-color を明示するのは shadcn 標準の `* { border-color: var(--border) }`
+     に相当する既定(preflight 不読込のため省くと currentColor = 前景色に落ち、
+     `border` ユーティリティだけを持つ DropdownMenu 等の枠線が黒くなる) */
   [data-slot],
   [data-slot]::before,
   [data-slot]::after {
-    border: 0 solid;
+    border: 0 solid var(--border);
   }
   button[data-slot] {
     background: transparent;

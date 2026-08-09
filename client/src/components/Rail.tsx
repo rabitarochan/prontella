@@ -1,6 +1,5 @@
 import { useLang, useT } from '../i18n';
 import type { Lang } from '../i18n';
-import { getActiveFilesTab, type FilesTabHandle } from '../search/registry';
 import { useDeck } from '../store';
 import AttentionBell from './AttentionBell';
 import Sidebar from './Sidebar';
@@ -10,24 +9,14 @@ const LANGS: Lang[] = ['ja', 'en'];
 
 /**
  * 左ペイン (レール): タイトル行 (ロゴ = デッキへ戻る / ベル / 言語 / テーマ) +
- * 検索・コマンドバー + リポジトリーナビ (Sidebar)。旧 topbar の要素はここに集約。
+ * 検索・コマンドバー (Ctrl+K パレット) + リポジトリーナビ (Sidebar)。
+ * 旧 topbar の要素はここに集約。
  */
-export default function Rail({
-  onOpenQuickOpen,
-}: {
-  onOpenQuickOpen: (target: FilesTabHandle) => void;
-}) {
+export default function Rail({ onOpenPalette }: { onOpenPalette: () => void }) {
   const t = useT();
   const select = useDeck((s) => s.select);
   const lang = useLang((s) => s.lang);
   const setLang = useLang((s) => s.setLang);
-
-  // P8-6 でグローバルコマンドパレット (Ctrl+K) に置き換えるまでの暫定:
-  // Ctrl+P (Quick Open) と同じ経路を開く。ファイルビューが無い画面では何もしない。
-  const openSearch = () => {
-    const tab = getActiveFilesTab();
-    if (tab) onOpenQuickOpen(tab);
-  };
 
   return (
     <aside className="rail">
@@ -51,10 +40,10 @@ export default function Rail({
           <ThemeToggle />
         </span>
       </div>
-      <button className="rail-search" title={t('rail.searchTooltip')} onClick={openSearch}>
+      <button className="rail-search" title={t('rail.searchTooltip')} onClick={onOpenPalette}>
         <span className="codicon codicon-search" />
         <span className="rail-search-label">{t('rail.searchLabel')}</span>
-        <kbd className="rail-search-kbd">Ctrl+P</kbd>
+        <kbd className="rail-search-kbd">Ctrl+K</kbd>
       </button>
       <Sidebar />
     </aside>

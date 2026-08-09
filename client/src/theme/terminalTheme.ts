@@ -6,9 +6,9 @@ import type { ResolvedTheme } from './themeStore';
 // ANSI 16 色は VS Code の Dark+ / Light+ のターミナルパレットに合わせた。
 
 const DARK: ITheme = {
-  background: '#09090b',
-  foreground: '#e4e4e7',
-  cursor: '#e4e4e7',
+  background: '#0c0a09',
+  foreground: '#e7e5e4',
+  cursor: '#e7e5e4',
   selectionBackground: '#264f78',
   black: '#000000',
   red: '#cd3131',
@@ -30,8 +30,8 @@ const DARK: ITheme = {
 
 const LIGHT: ITheme = {
   background: '#ffffff',
-  foreground: '#3f3f46',
-  cursor: '#3f3f46',
+  foreground: '#44403c',
+  cursor: '#44403c',
   selectionBackground: '#add6ff',
   black: '#000000',
   red: '#cd3131',

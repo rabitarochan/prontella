@@ -18,34 +18,36 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * テーマトークン。:root = ライト(zinc ベース)、.dark = ダーク(現行配色の写像)。
+ * テーマトークン。:root = ライト、.dark = ダーク。パレットは stone(暖色
+ * ニュートラル)。Claude オレンジの --primary と相性が良いため zinc から移行した。
  * shadcn のホバー色トークンは意図的に --accent という名前を使わず --surface-hover
  * とし、@theme inline で --color-accent に写像する(旧 CSS の --accent =
  * アクセントオレンジと名前が衝突するため。旧 --accent は --primary へ移行する)。
  */
 :root {
-  --background: #fafafa;
-  --foreground: #27272a;
+  --background: #fafaf9;
+  --foreground: #292524;
   --card: #ffffff;
-  --card-foreground: #27272a;
+  --card-foreground: #292524;
   --popover: #ffffff;
-  --popover-foreground: #27272a;
+  --popover-foreground: #292524;
   --primary: #d97757;
   --primary-foreground: #ffffff;
   --primary-dim: #c4603f;
-  --secondary: #f4f4f5;
-  --secondary-foreground: #27272a;
-  --muted: #f4f4f5;
-  --muted-foreground: #71717a;
-  --surface-hover: #f4f4f5;
-  --surface-active: #e4e4e7;
+  --secondary: #f5f5f4;
+  --secondary-foreground: #292524;
+  --muted: #f5f5f4;
+  --muted-foreground: #78716c;
+  --surface-hover: #f5f5f4;
+  --surface-active: #e7e5e4;
   --destructive: #dc2626;
   --destructive-foreground: #ffffff;
   --destructive-hover: #b91c1c;
-  --border: #e4e4e7;
-  --input: #e4e4e7;
+  --border: #e7e5e4;
+  --input: #e7e5e4;
   --ring: #d97757;
   --radius: 0.5rem;
+  --card-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 4px 12px rgb(0 0 0 / 0.05);
   --terminal-bg: #ffffff;
   --status-green: #059669;
   --status-yellow: #d97706;
@@ -59,30 +61,31 @@
   --file-icon-css: #9333ea;
 }
 
-/* shadcn 標準の zinc ダーク(旧 VS Code Dark 風配色は廃止)。--primary のみ Claude オレンジ */
+/* stone ダーク(管制塔デザイン)。--primary のみ Claude オレンジ */
 .dark {
-  --background: #09090b;
-  --foreground: #fafafa;
-  --card: #18181b;
-  --card-foreground: #fafafa;
-  --popover: #18181b;
-  --popover-foreground: #fafafa;
+  --background: #0c0a09;
+  --foreground: #fafaf9;
+  --card: #1c1917;
+  --card-foreground: #fafaf9;
+  --popover: #1c1917;
+  --popover-foreground: #fafaf9;
   --primary: #d97757;
   --primary-foreground: #ffffff;
   --primary-dim: #a85a40;
-  --secondary: #27272a;
-  --secondary-foreground: #fafafa;
-  --muted: #27272a;
-  --muted-foreground: #a1a1aa;
-  --surface-hover: #27272a;
-  --surface-active: #3f3f46;
+  --secondary: #292524;
+  --secondary-foreground: #fafaf9;
+  --muted: #292524;
+  --muted-foreground: #a8a29e;
+  --surface-hover: #292524;
+  --surface-active: #44403c;
   --destructive: #991b1b;
   --destructive-foreground: #ffffff;
   --destructive-hover: #b91c1c;
-  --border: #27272a;
-  --input: #27272a;
+  --border: #292524;
+  --input: #292524;
   --ring: #d97757;
-  --terminal-bg: #09090b;
+  --card-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 20px rgb(0 0 0 / 0.35);
+  --terminal-bg: #0c0a09;
   --status-green: #34d399;
   --status-yellow: #fbbf24;
   --status-orange: #fb923c;

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useT } from '../i18n';
 import type { TerminalSession } from '../types';
 import { useConfirm } from './ConfirmDialog';
 import { middleClickAutoscrollGuard, middleClickClose } from './editorTabs';
@@ -30,6 +31,7 @@ export default function TermPanel({
   onCloseTab: (id: string) => Promise<void>;
   create: (run?: string) => Promise<void>;
 }) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   const { confirm, dialog } = useConfirm();
   const liveMap = new Map((sessions ?? []).map((s) => [s.id, s]));
@@ -44,9 +46,9 @@ export default function TermPanel({
   const closeTab = async (id: string) => {
     if (liveMap.has(id)) {
       const ok = await confirm({
-        title: 'ターミナルを終了',
-        message: 'このターミナルを終了しますか?',
-        confirmLabel: '終了する',
+        title: t('term.closeTerminalTitle'),
+        message: t('term.closeTerminalMessage'),
+        confirmLabel: t('term.closeConfirm'),
         severity: 'danger',
       });
       if (!ok) return;
@@ -63,17 +65,17 @@ export default function TermPanel({
             <div
               key={id}
               className={`editor-tab ${active === id ? 'active' : ''}`}
-              title={session ? `${session.title} — ${session.cwd}` : 'セッションは終了しました'}
+              title={session ? `${session.title} — ${session.cwd}` : t('term.sessionEndedTitle')}
               onClick={() => onActivate(id)}
               {...middleClickClose(() => void closeTab(id))}
             >
               <span className="codicon codicon-terminal" />
-              <span className="editor-tab-name">{session?.title ?? '(終了)'}</span>
+              <span className="editor-tab-name">{session?.title ?? t('term.endedLabel')}</span>
               {session && <StatusBadge status={session.status} compact />}
               <span className="editor-tab-actions">
                 <button
                   className="editor-tab-close"
-                  title={session ? 'ターミナルを終了' : 'タブを閉じる'}
+                  title={session ? t('term.closeTerminalTitle') : t('term.closeTabTitle')}
                   onClick={(e) => {
                     e.stopPropagation();
                     void closeTab(id);
@@ -88,7 +90,7 @@ export default function TermPanel({
         <span className="term-tab-buttons">
           <button
             className="icon-btn"
-            title="新しいシェル"
+            title={t('term.newShell')}
             disabled={busy}
             onClick={() => run(() => create())}
           >
@@ -96,7 +98,7 @@ export default function TermPanel({
           </button>
           <button
             className="icon-btn term-claude"
-            title="このWorktreeでClaude Codeを起動"
+            title={t('term.launchClaudeTitle')}
             disabled={busy}
             onClick={() => run(() => create('claude'))}
           >
@@ -108,20 +110,20 @@ export default function TermPanel({
         {ownedIds.length === 0 && (
           <div className="term-empty">
             {sessions === null ? (
-              <p>接続中…</p>
+              <p>{t('term.connecting')}</p>
             ) : (
               <>
-                <p>ターミナルがありません</p>
+                <p>{t('term.empty')}</p>
                 <div className="term-empty-buttons">
                   <button disabled={busy} onClick={() => run(() => create())}>
-                    ＋ シェル
+                    {t('term.newShellButton')}
                   </button>
                   <button
                     className="claude"
                     disabled={busy}
                     onClick={() => run(() => create('claude'))}
                   >
-                    ✦ Claude 起動
+                    {t('term.launchClaudeButton')}
                   </button>
                 </div>
               </>

@@ -12,6 +12,7 @@ import {
   type LeafEditorState,
   type TabKind,
 } from '../editorState';
+import { useT, type StringKey } from '../i18n';
 import { isMarkdownPath } from '../markdown/paths';
 import { registerFilesTab, touchFilesTab, unregisterFilesTab } from '../search/registry';
 import { monacoThemeName } from '../theme/monacoTheme';
@@ -38,7 +39,7 @@ interface OpenTab {
   draft: string;
   error: string;
   /** Set when a restored draft was applied over disk content that changed while the tab was away. */
-  warning: string;
+  warning: StringKey | '';
 }
 
 function tabKey(kind: TabKind, path: string): string {
@@ -58,8 +59,11 @@ function isDirty(t: OpenTab): boolean {
 
 // sanitizeEditorState (editorState.ts) silently drops any draft over
 // MAX_DRAFT_TEXT_LENGTH on restore, so a draft that big is invisible to the
-// user unless flagged explicitly here.
-const OVERSIZE_DRAFT_WARNING = '未保存の編集が大きすぎるため、切替・リロード後は保持されません';
+// user unless flagged explicitly here. Holds the StringKey (not the resolved
+// text) so translate() can resolve it at render time (see StatusBadge's
+// LABELS pattern) — this constant also doubles as the sentinel value compared
+// against below, so the field itself stays a StringKey end to end.
+const OVERSIZE_DRAFT_WARNING: StringKey = 'files.oversizeDraftWarning';
 
 const EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOptions = {
   fontSize: 13,
@@ -151,6 +155,7 @@ function disposeModelsSoon(paths: string[]) {
 }
 
 export default function FilesTab({ root, leafId }: { root: string; leafId: string }) {
+  const t = useT();
   // theme prop が古い値のまま Editor が再マウントされるとグローバルテーマを
   // 巻き戻してしまうため、常に現在の解決済みテーマを渡す
   const resolvedTheme = useTheme((s) => s.resolved);
@@ -210,7 +215,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
   const [blamePath, setBlamePath] = useState<string | null>(null);
   const fileMenuItems = (path: string): ContextMenuItem[] => [
     {
-      label: 'ファイルの履歴...',
+      label: t('files.historyMenuItem'),
       icon: 'history',
       onClick: () => setHistoryPath(path),
     },
@@ -224,7 +229,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
     ...(isMarkdownPath(path)
       ? [
           {
-            label: 'プレビューを開く',
+            label: t('files.openPreview'),
             icon: 'preview',
             onClick: () => openPreview(path),
           },
@@ -386,7 +391,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
               return {
                 ...base,
                 draft: pending.text,
-                warning: '切替中にディスク上のファイルが変更されました。保存すると上書きします',
+                warning: 'files.diskChangedWhileAwayWarning',
               };
             }),
           );
@@ -528,15 +533,17 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
       const state = loadLeafEditorState(root, leafId);
       viewStatesRef.current = state?.viewStates ?? {};
       draftsRef.current = state?.drafts ?? {};
-      const restoredTabs = (state?.openFiles ?? []).map((ref) => ({
-        kind: ref.kind,
-        path: ref.path,
-        key: tabKey(ref.kind, ref.path),
-        file: null,
-        draft: '',
-        error: '',
-        warning: '',
-      }));
+      const restoredTabs = (state?.openFiles ?? []).map(
+        (ref): OpenTab => ({
+          kind: ref.kind,
+          path: ref.path,
+          key: tabKey(ref.kind, ref.path),
+          file: null,
+          draft: '',
+          error: '',
+          warning: '',
+        }),
+      );
       setTabs(restoredTabs);
       setActiveKey(state?.activeTab ? tabKey(state.activeTab.kind, state.activeTab.path) : null);
       for (const t of restoredTabs) loadFile(t.key, t.path);
@@ -585,7 +592,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
     // (tabs stays referentially the same → the [tabs, flush] deps see no change).
     setTabs((prev) => {
       let changed = false;
-      const next = prev.map((t) => {
+      const next = prev.map((t): OpenTab => {
         const oversize = isDirty(t) && t.draft.length > MAX_DRAFT_TEXT_LENGTH;
         if (oversize && t.warning === '') {
           changed = true;
@@ -754,9 +761,9 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
     if (!target) return;
     if (isDirty(target)) {
       const ok = await confirmDialog({
-        title: '変更を破棄',
-        message: `${basename(target.path)} の変更を破棄して閉じますか?`,
-        confirmLabel: '破棄して閉じる',
+        title: t('files.discardChangesTitle'),
+        message: t('files.discardChangesMessage', { name: basename(target.path) }),
+        confirmLabel: t('files.discardAndClose'),
         severity: 'danger',
       });
       if (!ok) return;
@@ -840,7 +847,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
           }),
         );
       }
-      setMessage('✓ 保存しました');
+      setMessage(t('files.savedMessage'));
       setTimeout(() => setMessage(''), 2500);
     } catch (e) {
       setMessage(`⚠ ${e instanceof Error ? e.message : String(e)}`);
@@ -858,9 +865,9 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
     const path = tab.path;
     if (tab.file && tab.file.content !== null && tab.draft !== tab.file.content) {
       const ok = await confirmDialog({
-        title: '再読み込み',
-        message: `${basename(path)} の未保存の変更を破棄して再読み込みしますか?`,
-        confirmLabel: '破棄して再読み込み',
+        title: t('files.reloadTitle'),
+        message: t('files.reloadDiscardMessage', { name: basename(path) }),
+        confirmLabel: t('files.discardAndReload'),
         severity: 'danger',
       });
       if (!ok) return;
@@ -954,14 +961,14 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
         <div className="side-switch">
           <button
             className={`side-switch-btn ${side === 'tree' ? 'active' : ''}`}
-            title="エクスプローラー"
+            title={t('files.explorerTooltip')}
             onClick={() => setSide('tree')}
           >
             <span className="codicon codicon-files" />
           </button>
           <button
             className={`side-switch-btn ${side === 'search' ? 'active' : ''}`}
-            title="検索 (Ctrl+Shift+F)"
+            title={t('files.searchTooltip')}
             onClick={showSearchPanel}
           >
             <span className="codicon codicon-search" />
@@ -989,28 +996,32 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
       </div>
       <div className="files-editor-pane">
         {tabs.length === 0 ? (
-          <div className="placeholder">ファイルを選択してください</div>
+          <div className="placeholder">{t('files.selectFilePlaceholder')}</div>
         ) : (
           <>
             <div className="editor-tabs" {...middleClickAutoscrollGuard}>
-              {tabs.map((t) => (
+              {/* map param named `tab` (not `t`) here: this scope also needs the outer
+                  translate function `t`, which an OpenTab-named `t` would shadow. */}
+              {tabs.map((tab) => (
                 <div
-                  key={t.key}
-                  className={`editor-tab ${activeKey === t.key ? 'active' : ''}`}
-                  title={t.kind === 'preview' ? `プレビュー: ${t.path}` : t.path}
-                  onClick={() => switchTo(t.key)}
-                  {...middleClickClose(() => void closeTab(t.key))}
+                  key={tab.key}
+                  className={`editor-tab ${activeKey === tab.key ? 'active' : ''}`}
+                  title={
+                    tab.kind === 'preview' ? t('files.previewTabTitle', { path: tab.path }) : tab.path
+                  }
+                  onClick={() => switchTo(tab.key)}
+                  {...middleClickClose(() => void closeTab(tab.key))}
                 >
-                  {t.kind === 'preview' && <span className="codicon codicon-preview" />}
-                  <span className="editor-tab-name">{basename(t.path)}</span>
+                  {tab.kind === 'preview' && <span className="codicon codicon-preview" />}
+                  <span className="editor-tab-name">{basename(tab.path)}</span>
                   <span className="editor-tab-actions">
-                    {isDirty(t) && <span className="editor-tab-dirty">●</span>}
+                    {isDirty(tab) && <span className="editor-tab-dirty">●</span>}
                     <button
                       className="editor-tab-close"
-                      title="閉じる"
+                      title={t('common.close')}
                       onClick={(e) => {
                         e.stopPropagation();
-                        void closeTab(t.key);
+                        void closeTab(tab.key);
                       }}
                     >
                       <span className="codicon codicon-close" />
@@ -1040,14 +1051,16 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
             ) : active.error ? (
               <div className="placeholder">⚠ {active.error}</div>
             ) : !active.file ? (
-              <div className="placeholder">読み込み中...</div>
+              <div className="placeholder">{t('common.loading')}</div>
             ) : active.file.binary ? (
               <div className="placeholder">
-                バイナリファイルは表示できません ({active.file.size} bytes)
+                {t('files.binaryFileMessageWithSize', { size: active.file.size })}
               </div>
             ) : active.file.tooLarge ? (
               <div className="placeholder">
-                ファイルが大きすぎます ({Math.round(active.file.size / 1024)} KB)
+                {t('files.tooLargeMessageWithSize', {
+                  size: Math.round(active.file.size / 1024),
+                })}
               </div>
             ) : (
               <>
@@ -1061,7 +1074,7 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
                     <button
                       className="icon-btn"
                       onClick={() => openPreview(active.path)}
-                      title="プレビューを開く"
+                      title={t('files.openPreview')}
                     >
                       <span className="codicon codicon-open-preview" />
                     </button>
@@ -1070,12 +1083,12 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
                     className="primary"
                     disabled={!modified || saving}
                     onClick={() => void save()}
-                    title="Ctrl+S でも保存できます"
+                    title={t('files.saveHintCtrlS')}
                   >
-                    {saving ? '保存中...' : '保存'}
+                    {saving ? t('files.saving') : t('files.save')}
                   </button>
                 </div>
-                {active.warning && <div className="editor-warning">⚠ {active.warning}</div>}
+                {active.warning && <div className="editor-warning">⚠ {t(active.warning)}</div>}
                 <div className="editor-host">
                   {/* Uncontrolled on purpose: passing `value` makes the library rewrite the
                       whole model whenever a re-render (e.g. the 4s repo poll) races a

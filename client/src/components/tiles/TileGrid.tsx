@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, type JSX } from 'react';
 import { createPortal } from 'react-dom';
 import { Group, Panel, Separator } from 'react-resizable-panels';
+import { useT } from '../../i18n';
 import type { ActiveRepo, TerminalSession, Worktree } from '../../types';
 import { leaves, type TileNode } from '../../layout/tileTree';
 import type { TileActions } from '../../layout/useTileLayout';
@@ -28,6 +29,7 @@ export default function TileGrid({
   sessions: TerminalSession[] | null;
   actions: TileActions;
 }) {
+  const t = useT();
   const hostsRef = useRef(new Map<string, HTMLDivElement>());
   const getHost = (id: string): HTMLDivElement => {
     let el = hostsRef.current.get(id);
@@ -106,17 +108,17 @@ export default function TileGrid({
         renderNode(root)
       ) : (
         <div className="tile-note">
-          <p>タイルがありません</p>
+          <p>{t('tile.empty')}</p>
           <div className="tile-picker-buttons">
-            <button onClick={() => void actions.openTerminal()}>＋ シェル</button>
+            <button onClick={() => void actions.openTerminal()}>{t('term.newShellButton')}</button>
             <button
               className="claude"
               onClick={() => void actions.openTerminal('claude')}
-              title="このWorktreeでClaude Codeを起動"
+              title={t('term.launchClaudeTitle')}
             >
-              ✦ Claude 起動
+              {t('term.launchClaudeButton')}
             </button>
-            <button onClick={() => actions.reset()}>レイアウト初期化</button>
+            <button onClick={() => actions.reset()}>{t('tile.resetLayout')}</button>
           </div>
         </div>
       )}

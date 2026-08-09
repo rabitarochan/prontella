@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { api } from '../api';
+import { useT } from '../i18n';
 import type { SearchTextResponse } from '../types';
 import { fileIcon } from './FileTree';
 
@@ -58,6 +59,7 @@ export default function SearchPanel({
   onJump: (path: string, line: number, column: number) => void;
   onClose: () => void;
 }) {
+  const t = useT();
   const [query, setQuery] = useState('');
   const [useRegex, setUseRegex] = useState(false);
   const [caseSensitive, setCaseSensitive] = useState(false);
@@ -145,7 +147,7 @@ export default function SearchPanel({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onInputKeyDown}
-          placeholder="検索"
+          placeholder={t('search.placeholder')}
           spellCheck={false}
         />
         <Button
@@ -155,7 +157,7 @@ export default function SearchPanel({
             'text-muted-foreground shrink-0 font-mono text-xs',
             caseSensitive && 'bg-accent text-accent-foreground',
           )}
-          title="大文字と小文字を区別"
+          title={t('search.caseSensitiveTooltip')}
           onClick={() => setCaseSensitive((v) => !v)}
         >
           Aa
@@ -167,7 +169,7 @@ export default function SearchPanel({
             'text-muted-foreground shrink-0 font-mono text-xs',
             useRegex && 'bg-accent text-accent-foreground',
           )}
-          title="正規表現を使用"
+          title={t('search.regexTooltip')}
           onClick={() => setUseRegex((v) => !v)}
         >
           .*
@@ -176,13 +178,14 @@ export default function SearchPanel({
       {error && <div className="search-error">⚠ {error}</div>}
       {data && (
         <div className="search-summary">
-          {data.fileCount} ファイル / {data.matchCount} 件{searching && ' …'}
-          {data.limitHit && <span className="search-limit">(上限に達したため一部のみ表示)</span>}
+          {t('search.summary', { files: data.fileCount, matches: data.matchCount })}
+          {searching && ' …'}
+          {data.limitHit && <span className="search-limit">{t('search.limitHit')}</span>}
         </div>
       )}
       <div className="search-results">
         {data?.results.length === 0 && !searching && (
-          <div className="search-empty">結果がありません</div>
+          <div className="search-empty">{t('search.noResults')}</div>
         )}
         {data?.results.map((file) => {
           const name = basename(file.path);

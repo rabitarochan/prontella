@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { WebglAddon } from '@xterm/addon-webgl';
+import { t } from '../i18n';
 import { useTheme } from '../theme/themeStore';
 import { terminalTheme } from '../theme/terminalTheme';
 
@@ -161,7 +162,7 @@ export default function XTermView({
       } else if (msg.type === 'data') {
         term.write(msg.data ?? '');
       } else if (msg.type === 'exit') {
-        term.write('\r\n\x1b[90m[プロセスが終了しました]\x1b[0m\r\n');
+        term.write(`\r\n\x1b[90m${t('term.processExited')}\x1b[0m\r\n`);
       } else if (msg.type === 'error') {
         term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
       }

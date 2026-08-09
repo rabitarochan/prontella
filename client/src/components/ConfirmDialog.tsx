@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useT } from '../i18n';
 
 export interface ConfirmRequest {
   title: string;
@@ -25,8 +26,8 @@ export interface ConfirmRequest {
 export default function ConfirmDialog({
   title,
   message,
-  confirmLabel = '実行',
-  cancelLabel = 'キャンセル',
+  confirmLabel,
+  cancelLabel,
   severity = 'normal',
   onConfirm,
   onCancel,
@@ -39,6 +40,7 @@ export default function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const t = useT();
   const actionRef = useRef<HTMLButtonElement>(null);
   return (
     <AlertDialog open onOpenChange={(open) => !open && onCancel()}>
@@ -56,13 +58,13 @@ export default function ConfirmDialog({
         {/* message は ReactNode (ブロック要素を含み得る) のため Description(<p>) は使わない */}
         <div className="text-muted-foreground text-sm">{message}</div>
         <AlertDialogFooter>
-          <AlertDialogCancel onClick={onCancel}>{cancelLabel}</AlertDialogCancel>
+          <AlertDialogCancel onClick={onCancel}>{cancelLabel ?? t('common.cancel')}</AlertDialogCancel>
           <AlertDialogAction
             ref={actionRef}
             className={cn(severity === 'danger' && buttonVariants({ variant: 'destructive' }))}
             onClick={onConfirm}
           >
-            {confirmLabel}
+            {confirmLabel ?? t('common.run')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

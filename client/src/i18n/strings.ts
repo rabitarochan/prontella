@@ -16,6 +16,7 @@ const CORE_STRINGS = {
   'common.add': { ja: '追加', en: 'Add' },
   'common.remove': { ja: '削除', en: 'Remove' },
   'common.clickToDismiss': { ja: 'クリックで閉じる', en: 'Click to dismiss' },
+  'common.run': { ja: '実行', en: 'Run' },
   'common.noGit': { ja: '(Git なし)', en: '(no Git)' },
   'common.detached': { ja: '(detached {head})', en: '(detached {head})' },
 

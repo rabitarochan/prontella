@@ -4,6 +4,9 @@ import { useT } from './i18n';
 import { useDeck, findSelection } from './store';
 import { useSearchHotkeys } from './search/useSearchHotkeys';
 import type { FilesTabHandle } from './search/registry';
+import type { ActiveRepo } from './types';
+import AddWorktreeModal from './components/AddWorktreeModal';
+import CommandPalette from './components/CommandPalette';
 import DeckView from './components/DeckView';
 import QuickOpenModal from './components/QuickOpenModal';
 import Rail from './components/Rail';
@@ -16,7 +19,24 @@ export default function App() {
   const { repos, loaded, selected, error, refresh, setError } = useDeck();
   const sessions = useAgentEvents((s) => s.sessions);
   const [quickOpenTarget, setQuickOpenTarget] = useState<FilesTabHandle | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [worktreeTarget, setWorktreeTarget] = useState<ActiveRepo | null>(null);
   useSearchHotkeys(setQuickOpenTarget);
+
+  // Ctrl+K = グローバルコマンドパレット。Ctrl+P (ファイル検索) と同じ流儀:
+  // ターミナルフォーカス中はシェルの Ctrl+K を奪わない。capture で Monaco より先に拾う。
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      if (e.key.toLowerCase() !== 'k') return;
+      if ((e.target as HTMLElement | null)?.closest?.('.xterm')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setPaletteOpen((v) => !v);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, []);
 
   useEffect(() => {
     void refresh();
@@ -60,7 +80,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Rail onOpenQuickOpen={setQuickOpenTarget} />
+      <Rail onOpenPalette={() => setPaletteOpen(true)} />
       <main className="main">
         {error && (
           <div className="main-error" onClick={() => setError(null)} title={t('common.clickToDismiss')}>
@@ -77,6 +97,16 @@ export default function App() {
       </main>
       {quickOpenTarget && (
         <QuickOpenModal target={quickOpenTarget} onClose={() => setQuickOpenTarget(null)} />
+      )}
+      {paletteOpen && (
+        <CommandPalette
+          onClose={() => setPaletteOpen(false)}
+          onOpenQuickOpen={setQuickOpenTarget}
+          onAddWorktree={setWorktreeTarget}
+        />
+      )}
+      {worktreeTarget && (
+        <AddWorktreeModal repo={worktreeTarget} onClose={() => setWorktreeTarget(null)} />
       )}
     </div>
   );

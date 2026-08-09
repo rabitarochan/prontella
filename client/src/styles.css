@@ -229,6 +229,14 @@ textarea:focus {
   padding: 1px 5px;
 }
 
+/* コマンドパレット (Ctrl+K) のアイコン色 */
+.palette-icon-waiting {
+  color: var(--yellow);
+}
+.palette-icon-claude {
+  color: var(--primary);
+}
+
 .placeholder {
   display: flex;
   flex-direction: column;

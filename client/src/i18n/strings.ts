@@ -39,8 +39,26 @@ const CORE_STRINGS = {
   // ---- レール ----
   'rail.backToDeck': { ja: 'デッキへ戻る', en: 'Back to deck' },
   'rail.searchLabel': { ja: '検索・コマンド', en: 'Search & commands' },
-  'rail.searchTooltip': { ja: 'ファイル検索 (Ctrl+P)', en: 'Find file (Ctrl+P)' },
+  'rail.searchTooltip': { ja: 'コマンドパレット (Ctrl+K)', en: 'Command palette (Ctrl+K)' },
   'rail.langTooltip': { ja: '表示言語', en: 'Display language' },
+
+  // ---- コマンドパレット (Ctrl+K) ----
+  'palette.title': { ja: 'コマンドパレット', en: 'Command palette' },
+  'palette.placeholder': {
+    ja: '移動先・コマンドを検索',
+    en: 'Search destinations & commands',
+  },
+  'palette.sectionWorktrees': { ja: 'ワークツリー', en: 'Worktrees' },
+  'palette.sectionCommands': { ja: 'コマンド', en: 'Commands' },
+  'palette.launchClaude': {
+    ja: 'Claude 起動(フォーカス中のタイル)',
+    en: 'Launch Claude (focused tile)',
+  },
+  'palette.addWorktree': { ja: 'Worktree を追加… — {repo}', en: 'Add worktree… — {repo}' },
+  'palette.quickOpen': { ja: 'ファイル検索 (Ctrl+P)', en: 'Find file (Ctrl+P)' },
+  'palette.theme': { ja: 'テーマ: {mode}', en: 'Theme: {mode}' },
+  'palette.langJa': { ja: '表示言語: 日本語', en: 'Language: 日本語' },
+  'palette.langEn': { ja: '表示言語: English', en: 'Language: English' },
 
   // ---- サイドバー (リポジトリーナビ) ----
   'sidebar.repositories': { ja: 'リポジトリー', en: 'Repositories' },

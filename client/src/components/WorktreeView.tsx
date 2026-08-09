@@ -1,7 +1,12 @@
+import { useEffect, useRef } from 'react';
 import { useT } from '../i18n';
 import type { ActiveRepo, Worktree } from '../types';
 import { useTerminalSessions } from '../layout/useTerminalSessions';
 import { useTileLayout } from '../layout/useTileLayout';
+import {
+  clearActiveWorktreeCommands,
+  setActiveWorktreeCommands,
+} from '../layout/worktreeCommands';
 import { useConfirm } from './ConfirmDialog';
 import StatusBadge from './StatusBadge';
 import TileGrid from './tiles/TileGrid';
@@ -16,6 +21,18 @@ export default function WorktreeView({ repo, worktree }: { repo: ActiveRepo; wor
   const { confirm: confirmDialog, dialog } = useConfirm();
   const { sessions, create, kill } = useTerminalSessions(worktree.path);
   const tiles = useTileLayout(worktree.path, sessions, create, kill);
+
+  // コマンドパレット (Ctrl+K) に「Claude 起動」を提供する。tiles は毎レンダー
+  // 新しいオブジェクトになり得るので ref 経由で最新を参照し、登録は path 単位。
+  const tilesRef = useRef(tiles);
+  tilesRef.current = tiles;
+  useEffect(() => {
+    setActiveWorktreeCommands({
+      path: worktree.path,
+      launchClaude: () => void tilesRef.current.openTerminal('claude'),
+    });
+    return () => clearActiveWorktreeCommands(worktree.path);
+  }, [worktree.path]);
 
   return (
     <div className="wt-view">

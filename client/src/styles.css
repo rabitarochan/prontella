@@ -699,12 +699,17 @@ textarea:focus {
 
 /* ---- files tab ---- */
 
+/* ツリー列幅。タイルバー先頭ゾーン (.tile-header.split .tile-header-lead) と
+   共有し、ヘッダーの区切りとペイン境界を揃える */
+.tile-pane {
+  --files-tree-w: 260px;
+}
 .files-tab {
   display: flex;
   height: 100%;
 }
 .files-tree-pane {
-  width: 260px;
+  width: var(--files-tree-w);
   flex-shrink: 0;
   border-right: 1px solid var(--border);
   overflow: hidden;
@@ -889,11 +894,26 @@ button.statusbar-item:hover:not(:disabled) {
   border-radius: 6px;
   flex-shrink: 0;
 }
-.editor-save {
-  height: 26px;
-  padding: 0 12px;
-  font-size: 12px;
-  flex-shrink: 0;
+/* タイルバー内スロット (パネル側がヘッダー UI をポータルで差し込む) */
+.tile-bar-slot {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+}
+/* 先頭ゾーン内スロット: ツリー切替 + ツリー操作 (右寄せは .side-switch-actions) */
+.tile-bar-slot-lead {
+  flex: 1;
+  padding: 0;
+}
+/* バー内に差し込まれたタブ行: 独自の罫線と余白は持たない (バー側が持つ) */
+.editor-tabs.in-bar {
+  flex: 1;
+  min-width: 0;
+  border-bottom: none;
+  padding: 0;
 }
 .editor-tab {
   display: flex;
@@ -1612,17 +1632,30 @@ button.statusbar-item:hover:not(:disabled) {
 .tile-pane.focused {
   border-color: color-mix(in srgb, var(--primary) 50%, var(--border));
 }
-/* タイルバー: モックアップの .tile-bar (26px 要素 + 極薄の下罫線) */
+/* タイルバー: モックアップの .tile-bar (26px 要素 + 極薄の下罫線)。
+   余白は先頭ゾーン / アクション側が持つ (files ビューのゾーン分割のため) */
 .tile-header {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 8px 10px;
   border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
   font-size: 12px;
   color: var(--fg-dim);
   user-select: none;
+}
+.tile-header-lead {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 4px 8px 10px;
+}
+/* files ビュー: 先頭ゾーンをツリー列幅に固定し、ペイン境界と区切りを揃える */
+.tile-header.split .tile-header-lead {
+  width: var(--files-tree-w);
+  flex-shrink: 0;
+  border-right: 1px solid var(--hairline);
 }
 .tile-pane.focused .tile-header {
   color: var(--fg);
@@ -1662,6 +1695,7 @@ button.statusbar-item:hover:not(:disabled) {
   margin-left: auto;
   display: flex;
   gap: 2px;
+  padding: 8px 10px 8px 0;
 }
 .tile-actions .icon-btn {
   width: 26px;
@@ -2345,6 +2379,7 @@ button.statusbar-item:hover:not(:disabled) {
   gap: 2px;
 }
 .side-switch .icon-btn,
+.tile-bar-slot-lead .icon-btn,
 .side-switch-btn {
   width: 26px;
   height: 26px;

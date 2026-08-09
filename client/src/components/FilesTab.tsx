@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Editor, { type OnMount } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import { api } from '../api';
@@ -23,6 +24,7 @@ import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import EditorStatusBar from './EditorStatusBar';
 import { middleClickAutoscrollGuard, middleClickClose } from './editorTabs';
 import FileHistoryModal from './FileHistoryModal';
+import { LEAD_SLOT_SUFFIX, useTileBarSlots } from '../layout/tileBarSlots';
 import FileTree, { type FileTreeHandle } from './FileTree';
 import MarkdownPreview from './MarkdownPreview';
 import SearchPanel from './SearchPanel';
@@ -154,7 +156,16 @@ function disposeModelsSoon(paths: string[]) {
   }, 0);
 }
 
-export default function FilesTab({ root, leafId }: { root: string; leafId: string }) {
+export default function FilesTab({
+  root,
+  leafId,
+  visible,
+}: {
+  root: string;
+  leafId: string;
+  /** このタイルが現在ファイルビューを表示中か。タイルバーへのポータルは表示中のみ。 */
+  visible: boolean;
+}) {
   const t = useT();
   // theme prop が古い値のまま Editor が再マウントされるとグローバルテーマを
   // 巻き戻してしまうため、常に現在の解決済みテーマを渡す
@@ -957,52 +968,125 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
 
   const touch = () => touchFilesTab(instanceRef.current);
 
+  // タイルバー統合 (1 段化): TilePane が登録したスロットへヘッダー UI を createPortal
+  // で差し込む。先頭ゾーン (ツリー列幅) = ビュー切替系、メインゾーン = タブ列。
+  // 表示中 (visible) のビューだけがバーを使う。スロット未登録時は従来どおり
+  // パネル内にインライン描画するフォールバック。
+  const barSlot = useTileBarSlots((s) => s.slots[leafId] ?? null);
+  const barSlotLead = useTileBarSlots((s) => s.slots[leafId + LEAD_SLOT_SUFFIX] ?? null);
+  const inBar = visible && barSlot !== null;
+  const leadInBar = visible && barSlotLead !== null;
+
+  // ツリー列ヘッダー: [ツリー] [検索] (空き) [新規ファイル] [新規フォルダー] [再読み込み]
+  const leadHeader = (
+    <>
+      <button
+        className={`side-switch-btn ${side === 'tree' ? 'active' : ''}`}
+        title={t('files.explorerTooltip')}
+        onClick={() => setSide('tree')}
+      >
+        <span className="codicon codicon-files" />
+      </button>
+      <button
+        className={`side-switch-btn ${side === 'search' ? 'active' : ''}`}
+        title={t('files.searchTooltip')}
+        onClick={showSearchPanel}
+      >
+        <span className="codicon codicon-search" />
+      </button>
+      {side === 'tree' && (
+        <span className="side-switch-actions">
+          <button
+            className="icon-btn"
+            onClick={() => treeCtl.current?.startCreate('file')}
+            title={t('files.newFileTooltip')}
+          >
+            <span className="codicon codicon-new-file" />
+          </button>
+          <button
+            className="icon-btn"
+            onClick={() => treeCtl.current?.startCreate('dir')}
+            title={t('files.newFolderTooltip')}
+          >
+            <span className="codicon codicon-new-folder" />
+          </button>
+          <button
+            className="icon-btn"
+            onClick={() => treeCtl.current?.reload()}
+            title={t('files.reloadTitle')}
+          >
+            <span className="codicon codicon-refresh" />
+          </button>
+        </span>
+      )}
+    </>
+  );
+
+  const tabsHeader = tabs.length === 0 ? null : (
+    <div className={`editor-tabs${inBar ? ' in-bar' : ''}`}>
+      <div className="editor-tabs-strip" {...middleClickAutoscrollGuard}>
+        {/* map param named `tab` (not `t`) here: this scope also needs the outer
+            translate function `t`, which an OpenTab-named `t` would shadow. */}
+        {tabs.map((tab) => (
+          <div
+            key={tab.key}
+            className={`editor-tab ${activeKey === tab.key ? 'active' : ''}`}
+            title={
+              tab.kind === 'preview' ? t('files.previewTabTitle', { path: tab.path }) : tab.path
+            }
+            onClick={() => switchTo(tab.key)}
+            {...middleClickClose(() => void closeTab(tab.key))}
+          >
+            {tab.kind === 'preview' && <span className="codicon codicon-preview" />}
+            <span className="editor-tab-name">{basename(tab.path)}</span>
+            <span className="editor-tab-actions">
+              {isDirty(tab) && <span className="editor-tab-dirty">●</span>}
+              <button
+                className="editor-tab-close"
+                title={t('common.close')}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void closeTab(tab.key);
+                }}
+              >
+                <span className="codicon codicon-close" />
+              </button>
+            </span>
+          </div>
+        ))}
+      </div>
+      {/* 保存ボタンは廃止 (Ctrl+S で保存)。保存結果メッセージと
+          Markdown プレビューだけを右端に出す */}
+      {active &&
+        active.kind !== 'preview' &&
+        !active.error &&
+        active.file &&
+        !active.file.binary &&
+        !active.file.tooLarge && (
+          <>
+            {message && <span className="editor-msg">{message}</span>}
+            {isMarkdownPath(active.path) && (
+              <button
+                className="icon-btn"
+                onClick={() => openPreview(active.path)}
+                title={t('files.openPreview')}
+              >
+                <span className="codicon codicon-open-preview" />
+              </button>
+            )}
+          </>
+        )}
+    </div>
+  );
+
   return (
     <div className="files-tab" ref={containerRef} onPointerDownCapture={touch} onFocusCapture={touch}>
       <div className="files-tree-pane">
-        {/* 統合ヘッダー行: ビュー切替 (左) + ツリー操作 (右)。旧 2 段 (切替行 +
-            ツリーツールバー行) を 1 行に集約してヘッダーの縦幅を節約する */}
-        <div className="side-switch">
-          <button
-            className={`side-switch-btn ${side === 'tree' ? 'active' : ''}`}
-            title={t('files.explorerTooltip')}
-            onClick={() => setSide('tree')}
-          >
-            <span className="codicon codicon-files" />
-          </button>
-          <button
-            className={`side-switch-btn ${side === 'search' ? 'active' : ''}`}
-            title={t('files.searchTooltip')}
-            onClick={showSearchPanel}
-          >
-            <span className="codicon codicon-search" />
-          </button>
-          {side === 'tree' && (
-            <span className="side-switch-actions">
-              <button
-                className="icon-btn"
-                onClick={() => treeCtl.current?.startCreate('file')}
-                title={t('files.newFileTooltip')}
-              >
-                <span className="codicon codicon-new-file" />
-              </button>
-              <button
-                className="icon-btn"
-                onClick={() => treeCtl.current?.startCreate('dir')}
-                title={t('files.newFolderTooltip')}
-              >
-                <span className="codicon codicon-new-folder" />
-              </button>
-              <button
-                className="icon-btn"
-                onClick={() => treeCtl.current?.reload()}
-                title={t('files.reloadTitle')}
-              >
-                <span className="codicon codicon-refresh" />
-              </button>
-            </span>
-          )}
-        </div>
+        {/* ツリー列ヘッダー (leadHeader) は表示中タイルバーの先頭ゾーンへポータル。
+            スロット未登録時のみ従来の行としてここに描画 */}
+        {leadInBar && barSlotLead
+          ? createPortal(leadHeader, barSlotLead)
+          : <div className="side-switch">{leadHeader}</div>}
         <div className="side-view" style={{ display: side === 'tree' ? undefined : 'none' }}>
           <FileTree
             root={root}
@@ -1030,69 +1114,9 @@ export default function FilesTab({ root, leafId }: { root: string; leafId: strin
           <div className="placeholder">{t('files.selectFilePlaceholder')}</div>
         ) : (
           <>
-            {/* 統合ヘッダー行: タブ列 (スクロール) + 保存系アクション (右端固定)。
-                旧 2 段 (タブ行 + パス/保存ツールバー行) を 1 行に集約。パスは下部の
-                ステータスバーへ移設した */}
-            <div className="editor-tabs">
-              <div className="editor-tabs-strip" {...middleClickAutoscrollGuard}>
-                {/* map param named `tab` (not `t`) here: this scope also needs the outer
-                    translate function `t`, which an OpenTab-named `t` would shadow. */}
-                {tabs.map((tab) => (
-                  <div
-                    key={tab.key}
-                    className={`editor-tab ${activeKey === tab.key ? 'active' : ''}`}
-                    title={
-                      tab.kind === 'preview' ? t('files.previewTabTitle', { path: tab.path }) : tab.path
-                    }
-                    onClick={() => switchTo(tab.key)}
-                    {...middleClickClose(() => void closeTab(tab.key))}
-                  >
-                    {tab.kind === 'preview' && <span className="codicon codicon-preview" />}
-                    <span className="editor-tab-name">{basename(tab.path)}</span>
-                    <span className="editor-tab-actions">
-                      {isDirty(tab) && <span className="editor-tab-dirty">●</span>}
-                      <button
-                        className="editor-tab-close"
-                        title={t('common.close')}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void closeTab(tab.key);
-                        }}
-                      >
-                        <span className="codicon codicon-close" />
-                      </button>
-                    </span>
-                  </div>
-                ))}
-              </div>
-              {active &&
-                active.kind !== 'preview' &&
-                !active.error &&
-                active.file &&
-                !active.file.binary &&
-                !active.file.tooLarge && (
-                  <>
-                    {message && <span className="editor-msg">{message}</span>}
-                    {isMarkdownPath(active.path) && (
-                      <button
-                        className="icon-btn"
-                        onClick={() => openPreview(active.path)}
-                        title={t('files.openPreview')}
-                      >
-                        <span className="codicon codicon-open-preview" />
-                      </button>
-                    )}
-                    <button
-                      className="primary editor-save"
-                      disabled={!modified || saving}
-                      onClick={() => void save()}
-                      title={t('files.saveHintCtrlS')}
-                    >
-                      {saving ? t('files.saving') : t('files.save')}
-                    </button>
-                  </>
-                )}
-            </div>
+            {/* タブ行 (tabsHeader): 表示中はタイルバーのスロットへポータルして
+                ヘッダーを 1 段に。スロット未登録時はここへインライン描画 */}
+            {inBar && barSlot ? createPortal(tabsHeader, barSlot) : tabsHeader}
             {/* active.kind === 'preview' branches out entirely to MarkdownPreview before any
                 of the editor-only checks below run, so EditorStatusBar / <Editor> stay
                 structurally unreachable from a preview tab (no `file` non-null narrowing

@@ -43,7 +43,7 @@ export default function TileWorkspace({
     <div className="tile-workspace" onMouseDownCapture={() => actions.focusLeaf(leaf.id)}>
       {visited.has('files') && (
         <div className="tile-view" style={{ display: leaf.view === 'files' ? undefined : 'none' }}>
-          <FilesTab root={worktree.path} leafId={leaf.id} />
+          <FilesTab root={worktree.path} leafId={leaf.id} visible={leaf.view === 'files'} />
         </div>
       )}
       {visited.has('git') && (

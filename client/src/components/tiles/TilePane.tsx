@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useT, type StringKey } from '../../i18n';
 import type { AgentStatus, TerminalSession } from '../../types';
+import { LEAD_SLOT_SUFFIX, useTileBarSlots } from '../../layout/tileBarSlots';
 import type { LeafNode, TileView } from '../../layout/tileTree';
 import type { TileActions } from '../../layout/useTileLayout';
 import { useConfirm } from '../ConfirmDialog';
@@ -51,6 +52,8 @@ export default function TilePane({
 }) {
   const t = useT();
   const { confirm: confirmDialog, dialog } = useConfirm();
+  const setSlot = useTileBarSlots((s) => s.setSlot);
+  const clearSlot = useTileBarSlots((s) => s.clearSlot);
   // A DOM move (host re-append after a split/close elsewhere) drops focus;
   // give it back to the focused terminal. Mount-only: focus changes from
   // clicks are handled by the browser itself.
@@ -92,35 +95,56 @@ export default function TilePane({
       className={`tile-pane ${focused ? 'focused' : ''}`}
       onMouseDownCapture={() => actions.focusLeaf(leaf.id)}
     >
-      <header className="tile-header">
-        {/* ビュー切替: アイコン + 小さな▼のみ (モックアップの .view-btn)。
-            旧タブ帯では 3 タブが常時見えていたため、セッション数とステータスは
-            トリガーの隣に常時出して情報量を保つ */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              className="tile-view-trigger"
-              title={`${t(current.labelKey)} — ${t('tile.switchViewTooltip')}`}
-            >
-              <CurrentIcon />
-              <ChevronDown className="tile-view-chevron" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
-            {VIEWS.map(({ view, labelKey, Icon }) => (
-              <DropdownMenuItem key={view} onSelect={() => actions.setView(leaf.id, view)}>
-                <Icon />
-                {t(labelKey)}
-                {view === 'term' && leaf.sessions.length > 0 && (
-                  <span className="tile-tab-count">{leaf.sessions.length}</span>
-                )}
-                {leaf.view === view && <Check className="ml-auto text-primary" />}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        {leaf.sessions.length > 0 && <span className="tile-tab-count">{leaf.sessions.length}</span>}
-        {termStatus && <StatusBadge status={termStatus} dot />}
+      <header className={`tile-header ${leaf.view === 'files' ? 'split' : ''}`}>
+        {/* 先頭ゾーン: ビュー切替 + (files ビュー時) ツリー列ヘッダーのポータル先。
+            files ビューではツリー列幅 (--files-tree-w) に固定し、下のペイン境界と
+            ヘッダーの区切りを揃える */}
+        <div className="tile-header-lead">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="tile-view-trigger"
+                title={`${t(current.labelKey)} — ${t('tile.switchViewTooltip')}`}
+              >
+                <CurrentIcon />
+                <ChevronDown className="tile-view-chevron" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
+              {VIEWS.map(({ view, labelKey, Icon }) => (
+                <DropdownMenuItem key={view} onSelect={() => actions.setView(leaf.id, view)}>
+                  <Icon />
+                  {t(labelKey)}
+                  {view === 'term' && leaf.sessions.length > 0 && (
+                    <span className="tile-tab-count">{leaf.sessions.length}</span>
+                  )}
+                  {leaf.view === view && <Check className="ml-auto text-primary" />}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {leaf.sessions.length > 0 && <span className="tile-tab-count">{leaf.sessions.length}</span>}
+          {termStatus && <StatusBadge status={termStatus} dot />}
+          <span
+            className="tile-bar-slot tile-bar-slot-lead"
+            ref={(el) => {
+              if (!el) return;
+              const key = leaf.id + LEAD_SLOT_SUFFIX;
+              setSlot(key, el);
+              return () => clearSlot(key, el);
+            }}
+          />
+        </div>
+        {/* メインゾーン: パネル側 (FilesTab 等) が createPortal でヘッダー UI を
+            差し込むスロット。TilePane は remount 自由なため、登録はストア経由 */}
+        <span
+          className="tile-bar-slot"
+          ref={(el) => {
+            if (!el) return;
+            setSlot(leaf.id, el);
+            return () => clearSlot(leaf.id, el);
+          }}
+        />
         <span className="tile-actions">
           <button
             className="icon-btn"

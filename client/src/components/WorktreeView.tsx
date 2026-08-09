@@ -1,192 +1,32 @@
-import { useState } from 'react';
-import { api } from '../api';
-import { useDeck } from '../store';
 import type { ActiveRepo, Worktree } from '../types';
 import { useTerminalSessions } from '../layout/useTerminalSessions';
 import { useTileLayout } from '../layout/useTileLayout';
 import { useConfirm } from './ConfirmDialog';
-import ContextMenu, { type ContextMenuItem } from './ContextMenu';
-import { usePrompt } from './PromptDialog';
 import StatusBadge from './StatusBadge';
 import TileGrid from './tiles/TileGrid';
 
 /**
  * Worktree のメインビュー: 分割・リサイズできるタイルグリッド。
- * 各タイルが自分のタブ (ファイル / Git / ターミナル) を持ち、タイル内で
- * 切り替える。ターミナルはタイルごとのタブとして複数持てる。
+ * ヘッダーはパンくず (repo / branch / 状態) のみ。fetch/pull/push は
+ * GitTab の同期バーへ、Claude 起動はターミナルパネルへ移設済み (P8-2)。
  */
 export default function WorktreeView({ repo, worktree }: { repo: ActiveRepo; worktree: Worktree }) {
-  const { refresh, setError } = useDeck();
-  const [syncing, setSyncing] = useState<string | null>(null);
-  const [syncMenu, setSyncMenu] = useState<{ x: number; y: number; kind: 'pull' | 'push' } | null>(
-    null,
-  );
   const { confirm: confirmDialog, dialog } = useConfirm();
-  const { prompt: promptDialog, dialog: promptDlg } = usePrompt();
   const { sessions, create, kill } = useTerminalSessions(worktree.path);
   const tiles = useTileLayout(worktree.path, sessions, create, kill);
-
-  const sync = async (
-    kind: 'fetch' | 'pull' | 'push',
-    opts?: { rebase?: boolean; forceWithLease?: boolean },
-  ) => {
-    setSyncing(kind);
-    setError(null);
-    try {
-      if (kind === 'fetch') await api.fetch(worktree.path);
-      else if (kind === 'pull') await api.pull(worktree.path, { rebase: opts?.rebase });
-      else await api.push(worktree.path, { forceWithLease: opts?.forceWithLease });
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSyncing(null);
-    }
-  };
-
-  // force-with-lease は履歴を書き換える破壊的操作 (fetch 済みの stale info と食い違えば
-  // git 自身が拒否するとはいえ、成功時はリモートの履歴が変わる) なので ConfirmDialog(danger) 必須。
-  // rebase でのプルは非破壊 (競合すれば操作バナー側で拾う) のため確認なしで即実行する。
-  const forcePush = async () => {
-    const ok = await confirmDialog({
-      title: 'force-with-lease でプッシュ',
-      message: 'リモートの履歴を書き換えます (--force-with-lease)。よろしいですか?',
-      confirmLabel: 'プッシュ',
-      severity: 'danger',
-    });
-    if (!ok) return;
-    void sync('push', { forceWithLease: true });
-  };
-
-  // 別名プッシュ (-u 相当) は常にカレントブランチ (worktree.branch) が対象。detached HEAD
-  // (branch === null) のときはメニュー項目自体を disabled にするので、ここに来る時点で非 null。
-  // sync() は kind を 'fetch'|'pull'|'push' に固定した既存 3 操作向けのため、任意のリモート名を
-  // 渡す必要があるこの操作は同じ setSyncing/setError/refresh の流儀で別関数として書く。
-  const pushAs = async () => {
-    if (!worktree.branch) return;
-    const branch = worktree.branch;
-    const name = await promptDialog({
-      title: '別名でプッシュ',
-      message: `'${branch}' をプッシュする先のリモートブランチ名を入力してください。`,
-      defaultValue: branch,
-      confirmLabel: 'プッシュ',
-    });
-    if (!name) return;
-    // -u は既存の upstream 設定を書き換えるため、既に upstream があるときは確認を挟む
-    // (GitTab の branchMenuItems「別名でプッシュ…」と対称。pj-git-route §3: 同型 UI を
-    // 別コンポーネントに作るときは既存の対称物と条件を突き合わせる)。
-    const currentUpstream = worktree.status?.upstream;
-    if (currentUpstream) {
-      const ok = await confirmDialog({
-        title: '別名でプッシュ',
-        message:
-          `'${branch}' をリモート側の '${name}' へプッシュします。\n` +
-          `upstream は '${currentUpstream}' から '${name}' を指すよう変わります。`,
-        confirmLabel: 'プッシュ',
-        severity: 'normal',
-      });
-      if (!ok) return;
-    }
-    setSyncing('push');
-    setError(null);
-    try {
-      await api.branchPush(worktree.path, branch, name);
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSyncing(null);
-    }
-  };
-
-  const syncMenuItems: ContextMenuItem[] =
-    syncMenu?.kind === 'pull'
-      ? [
-          {
-            label: 'rebase でプル',
-            icon: 'arrow-down',
-            disabled: syncing !== null,
-            onClick: () => void sync('pull', { rebase: true }),
-          },
-        ]
-      : syncMenu?.kind === 'push'
-        ? [
-            {
-              label: 'force-with-lease でプッシュ',
-              icon: 'arrow-up',
-              disabled: syncing !== null,
-              danger: true,
-              onClick: () => void forcePush(),
-            },
-            {
-              label: '別名でプッシュ…',
-              icon: 'cloud-upload',
-              disabled: syncing !== null || !worktree.branch,
-              onClick: () => void pushAs(),
-            },
-          ]
-        : [];
 
   return (
     <div className="wt-view">
       <div className="wt-header">
         <div className="wt-header-info">
           <span className="wt-header-repo">{repo.name}</span>
+          <span className="wt-crumb-sep">/</span>
           <span className="wt-header-branch">
             {repo.gitMode === 'none' ? '(Git なし)' : (worktree.branch ?? `(detached ${worktree.head})`)}
           </span>
           <StatusBadge status={worktree.agent.status} />
-          {repo.gitMode !== 'none' && (
-            <span className="wt-sync">
-              <button
-                className="icon-btn"
-                title="フェッチ (git fetch --all --prune)"
-                disabled={syncing !== null}
-                onClick={() => void sync('fetch')}
-              >
-                <span className={`codicon codicon-refresh ${syncing === 'fetch' ? 'spin' : ''}`} />
-              </button>
-              <button
-                className="icon-btn"
-                title={`プル${worktree.status?.behind ? ` (↓${worktree.status.behind})` : ''} (右クリック: rebase でプル)`}
-                disabled={syncing !== null}
-                onClick={() => void sync('pull')}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setSyncMenu({ x: e.clientX, y: e.clientY, kind: 'pull' });
-                }}
-              >
-                <span className={`codicon codicon-arrow-down ${syncing === 'pull' ? 'spin' : ''}`} />
-                {(worktree.status?.behind ?? 0) > 0 && (
-                  <span className="sync-count">{worktree.status?.behind}</span>
-                )}
-              </button>
-              <button
-                className="icon-btn"
-                title={`プッシュ${worktree.status?.ahead ? ` (↑${worktree.status.ahead})` : ''}${worktree.status?.upstream ? '' : ' — upstream 未設定のため -u origin で公開'} (右クリック: force-with-lease でプッシュ)`}
-                disabled={syncing !== null}
-                onClick={() => void sync('push')}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setSyncMenu({ x: e.clientX, y: e.clientY, kind: 'push' });
-                }}
-              >
-                <span className={`codicon codicon-arrow-up ${syncing === 'push' ? 'spin' : ''}`} />
-                {(worktree.status?.ahead ?? 0) > 0 && (
-                  <span className="sync-count">{worktree.status?.ahead}</span>
-                )}
-              </button>
-            </span>
-          )}
         </div>
-        <div className="wt-tabs">
-          <button
-            className="claude-launch"
-            title="このWorktreeでClaude Codeを起動 (フォーカス中のタイルに開く)"
-            onClick={() => void tiles.openTerminal('claude')}
-          >
-            ✦ Claude 起動
-          </button>
+        <div className="wt-header-actions">
           <button
             className="icon-btn layout-reset"
             title="レイアウトを初期化"
@@ -209,16 +49,7 @@ export default function WorktreeView({ repo, worktree }: { repo: ActiveRepo; wor
       <div className="wt-body">
         <TileGrid repo={repo} worktree={worktree} sessions={sessions} actions={tiles} />
       </div>
-      {syncMenu && (
-        <ContextMenu
-          x={syncMenu.x}
-          y={syncMenu.y}
-          items={syncMenuItems}
-          onClose={() => setSyncMenu(null)}
-        />
-      )}
       {dialog}
-      {promptDlg}
     </div>
   );
 }

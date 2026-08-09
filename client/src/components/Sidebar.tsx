@@ -370,8 +370,10 @@ export default function Sidebar() {
     </div>
   );
 
+  // ルートは <aside> ではなく <div>: P8-2 以降はランドマークとしての <aside> を
+  // Rail が持ち、Sidebar はその中のリポジトリーナビ部分になった。
   return (
-    <aside className="sidebar">
+    <div className="sidebar">
       <div className="sidebar-head">
         <span>リポジトリー</span>
         <button className="icon-btn" onClick={() => void addRepo()} title="リポジトリーを追加">
@@ -415,6 +417,6 @@ export default function Sidebar() {
       )}
       {dialog}
       {promptDlg}
-    </aside>
+    </div>
   );
 }

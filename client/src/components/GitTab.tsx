@@ -67,6 +67,12 @@ export default function GitTab({
   const [branchMenu, setBranchMenu] = useState<{ x: number; y: number; branch: BranchInfo } | null>(
     null,
   );
+  // リモート同期バー (fetch/pull/push)。P8-2 で WorktreeView ヘッダーから移設。
+  // busy は act() が持つので、これはスピナー表示用の「どのボタンか」だけを持つ。
+  const [syncing, setSyncing] = useState<'fetch' | 'pull' | 'push' | null>(null);
+  const [syncMenu, setSyncMenu] = useState<{ x: number; y: number; kind: 'pull' | 'push' } | null>(
+    null,
+  );
   // 変更リストで選択したファイルの diff/競合解決タブ。ChangesTab は reloadKey で
   // 再マウントされるので、タブはここ (GitTab) が持って生き残らせる。
   const [diffTabs, setDiffTabs] = useState<WorkTab[]>([]);
@@ -366,6 +372,92 @@ export default function GitTab({
     void act(() => api.branchPush(dir, b.name, name), `${b.name} を ${name} としてプッシュしました`);
   };
 
+  // ---- リモート同期 (fetch/pull/push)。act() 経由なので成功/失敗とも
+  // branches/stashes/operation・deck の worktree.status・変更/履歴ビューが即時更新される。
+  const sync = async (
+    kind: 'fetch' | 'pull' | 'push',
+    opts?: { rebase?: boolean; forceWithLease?: boolean },
+  ) => {
+    setSyncing(kind);
+    try {
+      if (kind === 'fetch') await act(() => api.fetch(dir), 'フェッチしました');
+      else if (kind === 'pull') await act(() => api.pull(dir, { rebase: opts?.rebase }), 'プルしました');
+      else await act(() => api.push(dir, { forceWithLease: opts?.forceWithLease }), 'プッシュしました');
+    } finally {
+      setSyncing(null);
+    }
+  };
+
+  // force-with-lease は履歴を書き換える破壊的操作なので ConfirmDialog(danger) 必須。
+  // rebase でのプルは非破壊 (競合すれば operation バナーが拾う) のため確認なしで即実行する。
+  const forcePush = async () => {
+    const ok = await confirmDialog({
+      title: 'force-with-lease でプッシュ',
+      message: 'リモートの履歴を書き換えます (--force-with-lease)。よろしいですか?',
+      confirmLabel: 'プッシュ',
+      severity: 'danger',
+    });
+    if (!ok) return;
+    void sync('push', { forceWithLease: true });
+  };
+
+  // カレントブランチの「別名でプッシュ…」。ブランチメニューの pushBranchAs と対称だが、
+  // upstream 情報は worktree.status (deck ポーリング由来) を使う (pj-git-route §3)。
+  const pushCurrentAs = async () => {
+    if (!currentBranch) return;
+    const name = await promptDialog({
+      title: '別名でプッシュ',
+      message: `'${currentBranch}' をプッシュする先のリモートブランチ名を入力してください。`,
+      defaultValue: currentBranch,
+      confirmLabel: 'プッシュ',
+    });
+    if (!name) return;
+    const currentUpstream = worktree.status?.upstream;
+    if (currentUpstream) {
+      const ok = await confirmDialog({
+        title: '別名でプッシュ',
+        message:
+          `'${currentBranch}' をリモート側の '${name}' へプッシュします。\n` +
+          `upstream は '${currentUpstream}' から '${name}' を指すよう変わります。`,
+        confirmLabel: 'プッシュ',
+        severity: 'normal',
+      });
+      if (!ok) return;
+    }
+    void act(
+      () => api.branchPush(dir, currentBranch, name),
+      `${currentBranch} を ${name} としてプッシュしました`,
+    );
+  };
+
+  const syncMenuItems: ContextMenuItem[] =
+    syncMenu?.kind === 'pull'
+      ? [
+          {
+            label: 'rebase でプル',
+            icon: 'arrow-down',
+            disabled: busy,
+            onClick: () => void sync('pull', { rebase: true }),
+          },
+        ]
+      : syncMenu?.kind === 'push'
+        ? [
+            {
+              label: 'force-with-lease でプッシュ',
+              icon: 'arrow-up',
+              disabled: busy,
+              danger: true,
+              onClick: () => void forcePush(),
+            },
+            {
+              label: '別名でプッシュ…',
+              icon: 'cloud-upload',
+              disabled: busy || !currentBranch,
+              onClick: () => void pushCurrentAs(),
+            },
+          ]
+        : [];
+
   // BranchTree はカレントブランチ行でも右クリックを許すので、ここで項目別に制御する:
   // 切り替え/マージ 2 種/削除は git 自身も拒否する自明な無効操作なので UI 上も disabled にし、
   // 「名前を変更…」だけはカレントブランチでも動作する (renameBranch 参照) ので有効のままにする。
@@ -643,6 +735,49 @@ export default function GitTab({
   return (
     <div className="git-tab">
       <div className="git-side">
+        <div className="git-sync-bar">
+          <button
+            className="icon-btn git-sync-btn"
+            title="フェッチ (git fetch --all --prune)"
+            disabled={busy}
+            onClick={() => void sync('fetch')}
+          >
+            <span className={`codicon codicon-refresh ${syncing === 'fetch' ? 'spin' : ''}`} />
+            フェッチ
+          </button>
+          <button
+            className="icon-btn git-sync-btn"
+            title={`プル${worktree.status?.behind ? ` (↓${worktree.status.behind})` : ''} (右クリック: rebase でプル)`}
+            disabled={busy}
+            onClick={() => void sync('pull')}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setSyncMenu({ x: e.clientX, y: e.clientY, kind: 'pull' });
+            }}
+          >
+            <span className={`codicon codicon-arrow-down ${syncing === 'pull' ? 'spin' : ''}`} />
+            プル
+            {(worktree.status?.behind ?? 0) > 0 && (
+              <span className="sync-count">{worktree.status?.behind}</span>
+            )}
+          </button>
+          <button
+            className="icon-btn git-sync-btn"
+            title={`プッシュ${worktree.status?.ahead ? ` (↑${worktree.status.ahead})` : ''}${worktree.status?.upstream ? '' : ' — upstream 未設定のため -u origin で公開'} (右クリック: force-with-lease でプッシュ)`}
+            disabled={busy}
+            onClick={() => void sync('push')}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setSyncMenu({ x: e.clientX, y: e.clientY, kind: 'push' });
+            }}
+          >
+            <span className={`codicon codicon-arrow-up ${syncing === 'push' ? 'spin' : ''}`} />
+            プッシュ
+            {(worktree.status?.ahead ?? 0) > 0 && (
+              <span className="sync-count">{worktree.status?.ahead}</span>
+            )}
+          </button>
+        </div>
         <div className="git-section-head git-section-title">ワークスペース</div>
         <div
           className={`git-nav-row ${view === 'status' ? 'active' : ''}`}
@@ -897,6 +1032,14 @@ export default function GitTab({
               : branchMenuItems(branchMenu.branch)
           }
           onClose={() => setBranchMenu(null)}
+        />
+      )}
+      {syncMenu && (
+        <ContextMenu
+          x={syncMenu.x}
+          y={syncMenu.y}
+          items={syncMenuItems}
+          onClose={() => setSyncMenu(null)}
         />
       )}
       {dialog}

@@ -456,41 +456,48 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* タイルは背景(カンバス)に浮かぶカード。外周の余白はここ、カード間の
+     余白はセパレーター幅(12px)が作る */
+  padding: 12px;
 }
 /* ---- resizable panes (react-resizable-panels) ---- */
 
-/* shadcn Resizable 風: 通常時は 4px のヒット領域の中央に 1px のヘアライン、
-   ホバー / ドラッグ中はリング色の面にする(コンポーネント置換はしない —
+/* カード間の 12px の余白そのものがリサイズハンドル。中央にグリップを置き、
+   ホバー / ドラッグ中はアクセント色にする(コンポーネント置換はしない —
    Portal 不変条件を持つ TileGrid に触れないための CSS のみの restyle) */
 .pane-separator {
+  position: relative;
+}
+.pane-separator::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: var(--border);
   transition: background 0.15s;
 }
-.pane-separator:hover,
-.pane-separator[data-separator='active'],
-.pane-separator[data-separator='focus'] {
-  background: var(--ring);
+.pane-separator:hover::after,
+.pane-separator[data-separator='active']::after,
+.pane-separator[data-separator='focus']::after {
+  background: var(--primary);
 }
 /* between vertically stacked panels */
 .pane-separator-v {
+  height: 12px;
+}
+.pane-separator-v::after {
+  width: 48px;
   height: 4px;
-  background: linear-gradient(
-    to bottom,
-    transparent calc(50% - 0.5px),
-    var(--border) calc(50% - 0.5px),
-    var(--border) calc(50% + 0.5px),
-    transparent calc(50% + 0.5px)
-  );
 }
 /* between side-by-side panels */
 .pane-separator-h {
+  width: 12px;
+}
+.pane-separator-h::after {
   width: 4px;
-  background: linear-gradient(
-    to right,
-    transparent calc(50% - 0.5px),
-    var(--border) calc(50% - 0.5px),
-    var(--border) calc(50% + 0.5px),
-    transparent calc(50% + 0.5px)
-  );
+  height: 48px;
 }
 
 /* ---- files tab ---- */
@@ -1370,14 +1377,23 @@ button.statusbar-item:hover:not(:disabled) {
   min-width: 0;
   min-height: 0;
 }
+/* タイル = カンバスに浮かぶカード。フォーカスは枠線の色で示す */
 .tile-pane {
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
   container: tile / inline-size;
+  transition: border-color 0.15s;
+}
+.tile-pane.focused {
+  border-color: color-mix(in srgb, var(--primary) 50%, var(--border));
 }
 .tile-header {
   display: flex;
@@ -1385,7 +1401,6 @@ button.statusbar-item:hover:not(:disabled) {
   gap: 8px;
   height: 36px;
   padding: 0 6px;
-  background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   font-size: 12px;
@@ -1394,7 +1409,6 @@ button.statusbar-item:hover:not(:disabled) {
 }
 .tile-pane.focused .tile-header {
   color: var(--fg);
-  box-shadow: inset 0 2px 0 0 var(--primary-dim);
 }
 .tile-tabs {
   display: flex;

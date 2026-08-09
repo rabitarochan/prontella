@@ -10,6 +10,9 @@
 body {
   margin: 0;
   font-family: "Segoe UI", "Hiragino Sans", "Noto Sans JP", Meiryo, sans-serif;
+  /* shadcn 標準の text-sm 相当。コード領域 (Monaco/xterm) は各自 13px 固定 */
+  font-size: 14px;
+  line-height: 1.5;
   background: var(--bg);
   color: var(--fg);
   overflow: hidden;
@@ -23,7 +26,7 @@ button {
   background: var(--secondary);
   border: 1px solid transparent;
   border-radius: calc(var(--radius) - 2px);
-  padding: 3px 10px;
+  padding: 5px 12px;
   cursor: pointer;
   transition:
     background-color 0.15s,
@@ -80,7 +83,7 @@ textarea:focus {
 .icon-btn {
   background: transparent;
   border: none;
-  padding: 1px 5px;
+  padding: 3px 6px;
   color: var(--fg-dim);
   border-radius: 3px;
 }
@@ -100,8 +103,8 @@ textarea:focus {
 .topbar {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 6px 14px;
+  gap: 16px;
+  padding: 10px 16px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
@@ -160,7 +163,7 @@ textarea:focus {
 /* ---- sidebar ---- */
 
 .sidebar {
-  width: 270px;
+  width: 288px;
   flex-shrink: 0;
   background: var(--bg-panel);
   border-right: 1px solid var(--border);
@@ -171,8 +174,8 @@ textarea:focus {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 12px;
-  font-size: 11px;
+  padding: 12px 14px 8px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--fg-dim);
@@ -188,8 +191,8 @@ textarea:focus {
   line-height: 1.8;
 }
 .sidebar-section-head {
-  padding: 6px 12px 2px;
-  font-size: 11px;
+  padding: 10px 14px 4px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--fg-dim);
@@ -243,7 +246,7 @@ textarea:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 12px;
+  padding: 7px 14px;
   font-weight: 600;
   cursor: grab;
 }
@@ -268,8 +271,8 @@ textarea:focus {
 .wt-row {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 4px 10px 4px 20px;
+  gap: 8px;
+  padding: 7px 12px 7px 22px;
   cursor: pointer;
   border-left: 2px solid transparent;
 }
@@ -314,25 +317,25 @@ textarea:focus {
 /* ---- deck ---- */
 
 .deck {
-  padding: 18px 22px;
+  padding: 28px 32px;
   overflow-y: auto;
 }
 .deck-title {
-  margin: 0 0 16px;
-  font-size: 15px;
+  margin: 0 0 20px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--fg-dim);
 }
 .deck-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
 }
 .card {
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 14px;
+  border-radius: var(--radius);
+  padding: 16px 18px;
   cursor: pointer;
   transition: border-color 0.15s;
 }
@@ -352,18 +355,18 @@ textarea:focus {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 .card-repo {
   font-weight: 600;
 }
 .card-branch {
   color: var(--orange);
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 .card-path {
   color: var(--fg-dim);
-  font-size: 11px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -632,8 +635,8 @@ textarea:focus {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 2px;
-  padding: 1px 10px;
+  gap: 4px;
+  padding: 4px 12px;
   border-top: 1px solid var(--border);
   font-size: 11px;
   color: var(--fg-dim);
@@ -662,8 +665,8 @@ button.statusbar-item:hover:not(:disabled) {
 .editor-tabs {
   display: flex;
   align-items: stretch;
-  gap: 2px;
-  padding: 4px 6px 0;
+  gap: 4px;
+  padding: 6px 8px 0;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
@@ -673,8 +676,8 @@ button.statusbar-item:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 6px;
-  max-width: 200px;
-  padding: 4px 6px 5px 10px;
+  max-width: 220px;
+  padding: 6px 8px 7px 12px;
   border: 1px solid transparent;
   border-bottom: none;
   border-radius: 4px 4px 0 0;
@@ -840,7 +843,7 @@ button.statusbar-item:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 10px;
+  padding: 5px 12px;
   cursor: pointer;
 }
 .change-row:hover {
@@ -890,7 +893,7 @@ button.statusbar-item:hover:not(:disabled) {
 }
 .commit-box {
   margin-top: auto;
-  padding: 10px;
+  padding: 12px;
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -1211,8 +1214,8 @@ button.statusbar-item:hover:not(:disabled) {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 10px 3px;
-  font-size: 11px;
+  padding: 10px 12px 4px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--fg-dim);
@@ -1225,8 +1228,8 @@ button.statusbar-item:hover:not(:disabled) {
 .git-nav-row {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 4px 10px 4px 16px;
+  gap: 8px;
+  padding: 6px 12px 6px 18px;
   cursor: pointer;
   border-left: 2px solid transparent;
 }
@@ -1240,9 +1243,9 @@ button.statusbar-item:hover:not(:disabled) {
 .git-branch-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 10px 3px 16px;
-  font-size: 12px;
+  gap: 7px;
+  padding: 5px 12px 5px 18px;
+  font-size: 13px;
 }
 .git-branch-row:hover {
   background: var(--bg-hover);
@@ -1379,9 +1382,9 @@ button.statusbar-item:hover:not(:disabled) {
 .tile-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 4px 0 4px;
+  gap: 8px;
+  height: 36px;
+  padding: 0 6px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
@@ -1403,14 +1406,14 @@ button.statusbar-item:hover:not(:disabled) {
 .tile-tab {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 0 9px;
+  gap: 6px;
+  padding: 0 12px;
   background: transparent;
   border: none;
   border-radius: 0;
   border-bottom: 2px solid transparent;
   color: var(--fg-dim);
-  font-size: 12px;
+  font-size: 13px;
   white-space: nowrap;
 }
 .tile-tab:hover {

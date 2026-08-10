@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
-import { Check, CodeXml, Hand, Scroll, Zap } from 'lucide-react';
+import { Check, CodeXml, Hand, Keyboard, Scroll, Zap } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { api } from '../api';
 import { useT, type StringKey } from '../i18n';
+import { useSubmitKey, type SubmitKeyMode } from '../layout/submitKeyStore';
 import { highlightInto } from '../markdown/highlight';
 import { renderMarkdownToFragment } from '../markdown/render';
 import type {
@@ -533,6 +534,9 @@ export default function ChatView({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // 末尾に張り付いているときだけ自動スクロールする (履歴を遡り中は動かさない)
   const stickRef = useRef(true);
+  // 送信キー方式 (グローバル設定): 'enter' = Enter 送信 / 'ctrlEnter' = Ctrl+Enter 送信
+  const submitKey = useSubmitKey((s) => s.mode);
+  const setSubmitKey = useSubmitKey((s) => s.setMode);
 
   useEffect(() => {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -1115,7 +1119,11 @@ export default function ChatView({
         <textarea
           className="chat-input"
           rows={2}
-          placeholder={ended ? t('chat.ended') : t('chat.inputPlaceholder')}
+          placeholder={
+            ended
+              ? t('chat.ended')
+              : t(submitKey === 'enter' ? 'chat.inputPlaceholder' : 'chat.inputPlaceholderCtrl')
+          }
           value={draft}
           disabled={ended}
           onPaste={onPaste}
@@ -1148,9 +1156,14 @@ export default function ChatView({
                 return;
               }
             }
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              submit();
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+              // 送信キー方式: 'enter' = Enter 送信 (Shift+Enter 改行) /
+              // 'ctrlEnter' = Ctrl+Enter 送信 (Enter 改行はブラウザー既定に任せる)
+              const shouldSubmit = submitKey === 'enter' ? !e.shiftKey : e.ctrlKey;
+              if (shouldSubmit) {
+                e.preventDefault();
+                submit();
+              }
             } else if (e.key === 'Tab' && e.shiftKey) {
               // TUI と同じ Shift+Tab でモード巡回
               e.preventDefault();
@@ -1160,6 +1173,21 @@ export default function ChatView({
             }
           }}
         />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button className="chat-inputkey" title={t('chat.submitKeyTooltip')}>
+              <Keyboard />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onCloseAutoFocus={(e) => e.preventDefault()}>
+            {(['enter', 'ctrlEnter'] as SubmitKeyMode[]).map((mode) => (
+              <DropdownMenuItem key={mode} onSelect={() => setSubmitKey(mode)}>
+                {t(mode === 'enter' ? 'chat.submitKeyEnter' : 'chat.submitKeyCtrlEnter')}
+                {submitKey === mode && <Check className="ml-auto text-primary" />}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <button
           className="chat-send"
           title={t('chat.send')}

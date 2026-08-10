@@ -2880,6 +2880,20 @@ button.statusbar-item:hover:not(:disabled) {
   outline: none;
   border-color: var(--primary-dim);
 }
+.chat-inputkey {
+  flex: none;
+  height: 32px;
+  width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--fg-dim);
+}
+.chat-inputkey svg {
+  width: 14px;
+  height: 14px;
+}
 .chat-send {
   flex: none;
   height: 32px;

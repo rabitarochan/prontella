@@ -112,6 +112,19 @@ export const FILES_STRINGS = {
     ja: '指示を入力… (Enter で送信 / Shift+Enter で改行 / Esc で停止)',
     en: 'Type instructions… (Enter to send / Shift+Enter for newline / Esc to stop)',
   },
+  'chat.inputPlaceholderCtrl': {
+    ja: '指示を入力… (Ctrl+Enter で送信 / Enter で改行 / Esc で停止)',
+    en: 'Type instructions… (Ctrl+Enter to send / Enter for newline / Esc to stop)',
+  },
+  'chat.submitKeyTooltip': { ja: '送信キーの設定', en: 'Submit key settings' },
+  'chat.submitKeyEnter': {
+    ja: 'Enter で送信 / Shift+Enter で改行',
+    en: 'Enter to send / Shift+Enter for newline',
+  },
+  'chat.submitKeyCtrlEnter': {
+    ja: 'Ctrl+Enter で送信 / Enter で改行',
+    en: 'Ctrl+Enter to send / Enter for newline',
+  },
   'chat.send': { ja: '送信', en: 'Send' },
   'chat.interrupt': { ja: '停止', en: 'Stop' },
   'chat.working': { ja: '実行中…', en: 'Working…' },

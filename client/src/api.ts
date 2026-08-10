@@ -268,5 +268,6 @@ export const api = {
   terminals: (cwd?: string) =>
     request<TerminalSession[]>(`/api/terminals${cwd ? `?cwd=${q(cwd)}` : ''}`),
   createTerminal: (cwd: string, run?: string) => post<TerminalSession>('/api/terminals', { cwd, run }),
+  createAgent: (cwd: string) => post<TerminalSession>('/api/agents', { cwd }),
   killTerminal: (id: string) => post<{ ok: boolean }>(`/api/terminals/${id}/kill`, {}),
 };

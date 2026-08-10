@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { useDeck } from '../store';
 import type { TerminalSession } from '../types';
+import { recordSessionKinds } from './sessionKinds';
 
 const POLL_MS = 3000;
 
@@ -16,7 +17,10 @@ export function useTerminalSessions(cwd: string) {
 
   const reload = useCallback(async () => {
     try {
-      setSessions(await api.terminals(cwd));
+      const list = await api.terminals(cwd);
+      // kind レジストリを先に更新してから公開する (終了後のタブ分類用)
+      recordSessionKinds(list);
+      setSessions(list);
     } catch {
       // server restart etc. — next poll will recover
     }
@@ -65,6 +69,20 @@ export function useTerminalSessions(cwd: string) {
     [cwd, reload, refreshDeck],
   );
 
+  const createAgent = useCallback(
+    async (place?: (session: TerminalSession) => void) => {
+      const session = await api.createAgent(cwd);
+      recordSessionKinds([session]);
+      // Let the caller claim the session (e.g. assign it to a tile) before the
+      // reload publishes it — otherwise the layout adoption rule could grab it.
+      place?.(session);
+      await reload();
+      await refreshDeck();
+      return session;
+    },
+    [cwd, reload, refreshDeck],
+  );
+
   const kill = useCallback(
     async (id: string) => {
       await api.killTerminal(id);
@@ -74,5 +92,5 @@ export function useTerminalSessions(cwd: string) {
     [reload, refreshDeck],
   );
 
-  return { sessions, reload, create, kill };
+  return { sessions, reload, create, createAgent, kill };
 }

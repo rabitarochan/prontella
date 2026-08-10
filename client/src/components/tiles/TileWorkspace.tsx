@@ -1,7 +1,9 @@
 import { useRef } from 'react';
 import type { ActiveRepo, TerminalSession, Worktree } from '../../types';
+import { sessionKind } from '../../layout/sessionKinds';
 import type { LeafNode, TileView } from '../../layout/tileTree';
 import type { TileActions } from '../../layout/useTileLayout';
+import ChatPanel from '../ChatPanel';
 import FilesTab from '../FilesTab';
 import GitTab from '../GitTab';
 import TermPanel from '../TermPanel';
@@ -56,12 +58,27 @@ export default function TileWorkspace({
           <TermPanel
             leafId={leaf.id}
             sessions={sessions}
-            ownedIds={leaf.sessions}
+            ownedIds={leaf.sessions.filter((id) => sessionKind(id) !== 'sdk')}
             activeId={leaf.activeSession}
             visible={leaf.view === 'term'}
             onActivate={(id) => actions.setActiveSession(leaf.id, id)}
             onCloseTab={(id) => actions.closeSessionTab(leaf.id, id)}
             create={(run) => actions.openTerminal(run, leaf.id)}
+          />
+        </div>
+      )}
+      {visited.has('chat') && (
+        <div className="tile-view" style={{ display: leaf.view === 'chat' ? undefined : 'none' }}>
+          <ChatPanel
+            leafId={leaf.id}
+            root={worktree.path}
+            sessions={sessions}
+            ownedIds={leaf.sessions.filter((id) => sessionKind(id) === 'sdk')}
+            activeId={leaf.activeSession}
+            visible={leaf.view === 'chat'}
+            onActivate={(id) => actions.setActiveSession(leaf.id, id)}
+            onCloseTab={(id) => actions.closeSessionTab(leaf.id, id)}
+            create={() => actions.openChat(leaf.id)}
           />
         </div>
       )}

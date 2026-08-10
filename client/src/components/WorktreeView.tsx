@@ -19,8 +19,8 @@ import TileGrid from './tiles/TileGrid';
 export default function WorktreeView({ repo, worktree }: { repo: ActiveRepo; worktree: Worktree }) {
   const t = useT();
   const { confirm: confirmDialog, dialog } = useConfirm();
-  const { sessions, create, kill } = useTerminalSessions(worktree.path);
-  const tiles = useTileLayout(worktree.path, sessions, create, kill);
+  const { sessions, create, createAgent, kill } = useTerminalSessions(worktree.path);
+  const tiles = useTileLayout(worktree.path, sessions, create, kill, createAgent);
 
   // コマンドパレット (Ctrl+K) に「Claude 起動」を提供する。tiles は毎レンダー
   // 新しいオブジェクトになり得るので ref 経由で最新を参照し、登録は path 単位。

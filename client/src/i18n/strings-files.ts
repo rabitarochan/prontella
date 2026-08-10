@@ -126,7 +126,14 @@ export const FILES_STRINGS = {
     ja: '許可モードを切り替え (入力欄で Shift+Tab)',
     en: 'Switch permission mode (Shift+Tab in input)',
   },
-  'chat.modelTooltip': { ja: 'モデルを切り替え', en: 'Switch model' },
+  'chat.modelTooltip': { ja: 'モデル / Effort / Thinking を切り替え', en: 'Switch model / effort / thinking' },
+  'chat.modelMenuModels': { ja: 'モデル', en: 'Model' },
+  'chat.modelMenuEffort': { ja: 'Effort', en: 'Effort' },
+  'chat.modelMenuThinking': { ja: 'Thinking (拡張思考)', en: 'Thinking (extended)' },
+  'chat.contextTooltip': {
+    ja: 'コンテキスト使用量 (直近の API 呼び出しの実測値)',
+    en: 'Context usage (measured from the latest API call)',
+  },
   'chat.planTitle': { ja: 'プランの承認', en: 'Approve plan' },
   'chat.planApprove': { ja: '承認 (手動確認)', en: 'Approve (manual)' },
   'chat.planApproveAccept': {

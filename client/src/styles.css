@@ -2591,6 +2591,95 @@ button.statusbar-item:hover:not(:disabled) {
   color: var(--fg);
   font-family: var(--font-mono, monospace);
 }
+.chat-model-effort {
+  margin-left: 6px;
+  color: var(--yellow);
+}
+/* モード配色: 手動 = 無彩色 / 編集自動承認 = 緑 / プラン = 黄 / 自動 = 青 */
+.chat-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.chat-mode-icon {
+  width: 12px;
+  height: 12px;
+}
+.chat-mode-btn.tone-acceptEdits {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+}
+.chat-mode-btn.tone-plan {
+  color: var(--yellow);
+  border-color: color-mix(in srgb, var(--yellow) 55%, var(--border));
+}
+.chat-mode-btn.tone-auto {
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 45%, var(--border));
+}
+/* モードが一目で分かるよう、パネル背景に各色を薄く敷く (プランは少し強め) */
+.chat-view.mode-acceptEdits .chat-scroll {
+  background: color-mix(in srgb, var(--green) 3%, var(--bg));
+}
+.chat-view.mode-plan .chat-scroll {
+  background: color-mix(in srgb, var(--yellow) 6%, var(--bg));
+}
+.chat-view.mode-plan .chat-statusbar {
+  background: color-mix(in srgb, var(--yellow) 8%, var(--bg-panel));
+}
+.chat-view.mode-auto .chat-scroll {
+  background: color-mix(in srgb, var(--blue) 3%, var(--bg));
+}
+/* コンテキスト使用量 */
+.chat-statusbar-context {
+  font-family: var(--font-mono, monospace);
+}
+/* サブエージェントチップ */
+.chat-statusbar-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 2px;
+  background: var(--border);
+}
+.chat-subagents {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.chat-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 8px;
+  line-height: 16px;
+  background: var(--card);
+}
+.chat-sub-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--yellow);
+  animation: chat-pulse 1.2s ease-in-out infinite;
+}
+.chat-sub-name {
+  font-weight: 600;
+  color: var(--fg);
+}
+.chat-sub-elapsed {
+  font-family: var(--font-mono, monospace);
+}
+.chat-sub-activity {
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .chat-model-item {
   display: flex;
   flex-direction: column;

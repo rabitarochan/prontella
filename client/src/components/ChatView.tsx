@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
-import { Check } from 'lucide-react';
+import { Check, CodeXml, Hand, Scroll, Zap } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { api } from '../api';
@@ -15,8 +17,10 @@ import type {
   AgentModelInfo,
   AgentPermissionRequest,
   AgentSessionMeta,
+  AgentSessionStats,
   AgentSlashCommand,
   AgentStatus,
+  AgentSubagent,
 } from '../types';
 import StatusBadge from './StatusBadge';
 
@@ -30,6 +34,33 @@ const MODE_LABEL_KEY: Record<UiMode, StringKey> = {
   plan: 'chat.modePlan',
   auto: 'chat.modeAuto',
 };
+// VS Code 拡張と同じアイコン語彙: 手 = 手動 / </> = 編集自動承認 / 巻物 = プラン / 稲妻 = 自動
+const MODE_ICON: Record<UiMode, typeof Hand> = {
+  default: Hand,
+  acceptEdits: CodeXml,
+  plan: Scroll,
+  auto: Zap,
+};
+
+const EFFORT_LEVELS_FALLBACK = ['low', 'medium', 'high'];
+
+function ModeIcon({ mode }: { mode: UiMode }) {
+  const Icon = MODE_ICON[mode];
+  return <Icon className="chat-mode-icon" />;
+}
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function fmtElapsed(startedAt: number): string {
+  const sec = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return m > 0 ? `${m}m${String(s).padStart(2, '0')}s` : `${s}s`;
+}
 
 /**
  * chat (Agent SDK) セッション 1 つ分のビュー。/ws/agent?id= に接続し、
@@ -476,7 +507,14 @@ export default function ChatView({
   const t = useT();
   const [events, setEvents] = useState<AgentChatEvent[]>([]);
   const [live, setLive] = useState({ text: '', thinking: '' });
-  const [meta, setMeta] = useState<AgentSessionMeta>({ model: null, permissionMode: null });
+  const [meta, setMeta] = useState<AgentSessionMeta>({
+    model: null,
+    permissionMode: null,
+    effort: null,
+    thinking: true,
+  });
+  const [stats, setStats] = useState<AgentSessionStats>({ contextTokens: null, contextWindow: null });
+  const [subagents, setSubagents] = useState<AgentSubagent[]>([]);
   const [status, setStatus] = useState<AgentStatus>('idle');
   const [requests, setRequests] = useState<AgentPermissionRequest[]>([]);
   const [ended, setEnded] = useState(false);
@@ -513,6 +551,8 @@ export default function ChatView({
         requests?: AgentPermissionRequest[];
         commands?: AgentSlashCommand[];
         models?: AgentModelInfo[];
+        stats?: AgentSessionStats;
+        subagents?: AgentSubagent[];
         requestId?: string;
         tool?: string;
         input?: unknown;
@@ -535,12 +575,20 @@ export default function ChatView({
           setRequests(msg.requests ?? []);
           if (Array.isArray(msg.commands)) setCommands(msg.commands);
           if (Array.isArray(msg.models)) setModels(msg.models);
+          if (msg.stats) setStats(msg.stats);
+          if (Array.isArray(msg.subagents)) setSubagents(msg.subagents);
           break;
         case 'commands':
           if (Array.isArray(msg.commands)) setCommands(msg.commands);
           break;
         case 'models':
           if (Array.isArray(msg.models)) setModels(msg.models);
+          break;
+        case 'stats':
+          if (msg.stats) setStats(msg.stats);
+          break;
+        case 'subagents':
+          if (Array.isArray(msg.subagents)) setSubagents(msg.subagents);
           break;
         case 'event':
           if (msg.event) {
@@ -614,6 +662,14 @@ export default function ChatView({
     const el = scrollRef.current;
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [events, live, requests]);
+
+  // サブエージェントの経過時間表示を 1 秒ごとに更新する
+  const [, setElapsedTick] = useState(0);
+  useEffect(() => {
+    if (subagents.length === 0) return;
+    const timer = setInterval(() => setElapsedTick((n) => n + 1), 1_000);
+    return () => clearInterval(timer);
+  }, [subagents.length]);
 
   const send = (obj: object) => {
     const ws = wsRef.current;
@@ -748,7 +804,10 @@ export default function ChatView({
   };
 
   return (
-    <div className="chat-view" style={{ display: visible ? undefined : 'none' }}>
+    <div
+      className={`chat-view mode-${currentMode}`}
+      style={{ display: visible ? undefined : 'none' }}
+    >
       <div
         className="chat-scroll"
         ref={scrollRef}
@@ -908,15 +967,39 @@ export default function ChatView({
         {ended && <div className="chat-ended">{t('chat.ended')}</div>}
       </div>
       <div className="chat-statusbar">
+        {/* [インジケーター] [Mode] [Model] [Context] [Price] | [サブエージェント...] */}
         <StatusBadge status={status} dot />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              className={`chat-mode-btn tone-${currentMode}`}
+              title={t('chat.modeTooltip')}
+              disabled={ended}
+            >
+              <ModeIcon mode={currentMode} />
+              {t(MODE_LABEL_KEY[currentMode])}
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
+            {MODES.map((mode) => (
+              <DropdownMenuItem key={mode} onSelect={() => setMode(mode)}>
+                <ModeIcon mode={mode} />
+                {t(MODE_LABEL_KEY[mode])}
+                {mode === currentMode && <Check className="ml-auto text-primary" />}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
         {models.length > 0 ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="chat-mode-btn chat-model-btn" title={t('chat.modelTooltip')} disabled={ended}>
                 {currentModel?.displayName ?? modelLabel ?? '…'}
+                {meta.effort && <span className="chat-model-effort">{meta.effort}</span>}
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
+              <DropdownMenuLabel>{t('chat.modelMenuModels')}</DropdownMenuLabel>
               {models.map((model) => (
                 <DropdownMenuItem key={model.value} onSelect={() => setModel(model.value)}>
                   <span className="chat-model-item">
@@ -928,34 +1011,62 @@ export default function ChatView({
                   {model === currentModel && <Check className="ml-auto text-primary" />}
                 </DropdownMenuItem>
               ))}
+              {(currentModel?.supportsEffort ?? false) && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel>{t('chat.modelMenuEffort')}</DropdownMenuLabel>
+                  {(currentModel?.supportedEffortLevels ?? EFFORT_LEVELS_FALLBACK).map((level) => (
+                    <DropdownMenuItem key={level} onSelect={() => send({ type: 'setEffort', effort: level })}>
+                      {level}
+                      {meta.effort === level && <Check className="ml-auto text-primary" />}
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => send({ type: 'setThinking', enabled: !meta.thinking })}>
+                {t('chat.modelMenuThinking')}
+                {meta.thinking && <Check className="ml-auto text-primary" />}
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         ) : (
           modelLabel && <span className="chat-statusbar-model">{modelLabel}</span>
         )}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              className={`chat-mode-btn ${currentMode !== 'default' ? 'active' : ''}`}
-              title={t('chat.modeTooltip')}
-              disabled={ended}
-            >
-              {t(MODE_LABEL_KEY[currentMode])}
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
-            {MODES.map((mode) => (
-              <DropdownMenuItem key={mode} onSelect={() => setMode(mode)}>
-                {t(MODE_LABEL_KEY[mode])}
-                {mode === currentMode && <Check className="ml-auto text-primary" />}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <span className="chat-statusbar-spacer" />
+        {stats.contextTokens !== null && (
+          <span
+            className="chat-statusbar-context"
+            title={t('chat.contextTooltip')}
+          >
+            {fmtTokens(stats.contextTokens)}
+            {stats.contextWindow !== null && (
+              <>
+                {' / '}
+                {fmtTokens(stats.contextWindow)}
+                {` (${Math.round((stats.contextTokens / stats.contextWindow) * 100)}%)`}
+              </>
+            )}
+          </span>
+        )}
         {sessionCost !== null && (
           <span className="chat-statusbar-cost">${sessionCost.toFixed(2)}</span>
         )}
+        {subagents.length > 0 && (
+          <>
+            <span className="chat-statusbar-sep" />
+            <span className="chat-subagents">
+              {subagents.map((sub) => (
+                <span key={sub.id} className="chat-sub" title={sub.description}>
+                  <span className="chat-sub-dot" />
+                  <span className="chat-sub-name">{sub.name}</span>
+                  <span className="chat-sub-elapsed">{fmtElapsed(sub.startedAt)}</span>
+                  {sub.activity && <span className="chat-sub-activity">{sub.activity}</span>}
+                </span>
+              ))}
+            </span>
+          </>
+        )}
+        <span className="chat-statusbar-spacer" />
         {status === 'busy' && (
           <button
             className="chat-stop"

@@ -151,6 +151,21 @@ function validAnswers(value: unknown): Record<string, string> | undefined {
   return answers;
 }
 
+/** subagent 内の assistant メッセージから「今なにをしているか」の 1 行を作る。 */
+function subagentActivity(content: unknown): string {
+  if (!Array.isArray(content)) return '';
+  for (let i = content.length - 1; i >= 0; i--) {
+    const block = content[i] as { type?: string; name?: string; input?: Record<string, unknown> };
+    if (block?.type === 'tool_use' && typeof block.name === 'string') {
+      const input = block.input ?? {};
+      const detail = [input.command, input.file_path, input.pattern, input.query, input.url, input.description]
+        .find((v) => typeof v === 'string' && v) as string | undefined;
+      return detail ? `${block.name}: ${detail.slice(0, 60)}` : block.name;
+    }
+  }
+  return '';
+}
+
 /** tool_result の content (string | blocks) からテキストを取り出す。 */
 function resultText(content: unknown): string {
   if (typeof content === 'string') return content;
@@ -207,11 +222,30 @@ interface AgentSession {
   /** 進行中ターンの途中経過 (attach 時の snapshot 用)。assistant 確定 / result で消える */
   live: { text: string; thinking: string };
   /** system/init から得たセッションメタ (snapshot と 'meta' で配布) */
-  meta: { model: string | null; permissionMode: string | null };
+  meta: {
+    model: string | null;
+    permissionMode: string | null;
+    effort: string | null;
+    thinking: boolean;
+  };
+  /** コンテキスト使用量 (assistant メッセージの usage から実測) */
+  stats: { contextTokens: number | null; contextWindow: number | null };
+  /** 稼働中のサブエージェント (Task/Agent tool_use 単位) */
+  subagents: Map<
+    string,
+    { id: string; name: string; description: string; startedAt: number; activity: string }
+  >;
   /** スラッシュコマンド一覧 (supportedCommands / commands_changed で更新) */
   commands: { name: string; description: string; argumentHint: string }[];
   /** 選択可能なモデル一覧 (supportedModels で取得) */
-  models: { value: string; resolvedModel?: string; displayName: string; description: string }[];
+  models: {
+    value: string;
+    resolvedModel?: string;
+    displayName: string;
+    description: string;
+    supportsEffort?: boolean;
+    supportedEffortLevels?: string[];
+  }[];
   sockets: Set<WebSocket>;
   input: AsyncQueue<SDKUserMessage>;
   q: Query;
@@ -263,7 +297,9 @@ export class AgentSessionManager {
       // resume 時は保存済みトランスクリプトを引き継いで表示を復元する
       events: resume ? [...resume.events] : [],
       live: { text: '', thinking: '' },
-      meta: { model: null, permissionMode: null },
+      meta: { model: null, permissionMode: null, effort: null, thinking: true },
+      stats: { contextTokens: null, contextWindow: null },
+      subagents: new Map(),
       commands: [],
       models: [],
       sockets: new Set(),
@@ -305,6 +341,8 @@ export class AgentSessionManager {
         events: session.events,
         live: session.live,
         meta: session.meta,
+        stats: session.stats,
+        subagents: [...session.subagents.values()],
         commands: session.commands,
         models: session.models,
         status: session.status,
@@ -322,6 +360,8 @@ export class AgentSessionManager {
         answers?: unknown;
         images?: unknown;
         model?: unknown;
+        effort?: unknown;
+        enabled?: unknown;
       };
       try {
         msg = JSON.parse(String(raw));
@@ -345,6 +385,14 @@ export class AgentSessionManager {
         this.setMode(session, msg.mode as PermissionMode);
       } else if (msg.type === 'setModel' && typeof msg.model === 'string') {
         this.setModel(session, msg.model);
+      } else if (
+        msg.type === 'setEffort' &&
+        (msg.effort === 'low' || msg.effort === 'medium' || msg.effort === 'high' ||
+          msg.effort === 'xhigh' || msg.effort === 'max')
+      ) {
+        this.setEffort(session, msg.effort);
+      } else if (msg.type === 'setThinking' && typeof msg.enabled === 'boolean') {
+        this.setThinking(session, msg.enabled);
       } else if (msg.type === 'interrupt') {
         session.q.interrupt().catch(() => {
           // interrupt はターン未実行時などに失敗しうる。無視してよい
@@ -477,6 +525,10 @@ export class AgentSessionManager {
         ...(m.resolvedModel ? { resolvedModel: m.resolvedModel } : {}),
         displayName: m.displayName,
         description: m.description ?? '',
+        ...(m.supportsEffort ? { supportsEffort: true } : {}),
+        ...(Array.isArray(m.supportedEffortLevels)
+          ? { supportedEffortLevels: m.supportedEffortLevels }
+          : {}),
       }));
       this.broadcast(session, { type: 'models', models: session.models });
     } catch {
@@ -497,6 +549,38 @@ export class AgentSessionManager {
         console.warn('[claude-deck3] setModel failed:', err);
         this.broadcast(session, { type: 'meta', meta: session.meta });
       });
+  }
+
+  /** effort レベルを実行中に切り替える (/effort 相当)。 */
+  private setEffort(session: AgentSession, effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'): void {
+    session.q
+      .applyFlagSettings({ effortLevel: effort })
+      .then(() => {
+        session.meta = { ...session.meta, effort };
+        this.broadcast(session, { type: 'meta', meta: session.meta });
+      })
+      .catch((err: unknown) => {
+        console.warn('[claude-deck3] setEffort failed:', err);
+        this.broadcast(session, { type: 'meta', meta: session.meta });
+      });
+  }
+
+  /** thinking の on/off (off = maxThinkingTokens 0、on = 既定に戻す)。 */
+  private setThinking(session: AgentSession, enabled: boolean): void {
+    session.q
+      .setMaxThinkingTokens(enabled ? null : 0)
+      .then(() => {
+        session.meta = { ...session.meta, thinking: enabled };
+        this.broadcast(session, { type: 'meta', meta: session.meta });
+      })
+      .catch((err: unknown) => {
+        console.warn('[claude-deck3] setThinking failed:', err);
+        this.broadcast(session, { type: 'meta', meta: session.meta });
+      });
+  }
+
+  private broadcastSubagents(session: AgentSession): void {
+    this.broadcast(session, { type: 'subagents', subagents: [...session.subagents.values()] });
   }
 
   /** permissionMode を実行中に切り替える (TUI の Shift+Tab 相当)。 */
@@ -684,13 +768,24 @@ export class AgentSessionManager {
   }
 
   private handleMessage(session: AgentSession, msg: SDKMessage): void {
-    // subagent 内部のメッセージ (parent_tool_use_id あり) は流さない。
-    // subagent の活動は Task の tool_use カードとしてだけ見える。
-    if ('parent_tool_use_id' in msg && msg.parent_tool_use_id) return;
+    // subagent 内部のメッセージ (parent_tool_use_id あり) はトランスクリプトには
+    // 流さないが、ステータスバーの「何をやっているか」表示のために活動だけ拾う
+    if ('parent_tool_use_id' in msg && msg.parent_tool_use_id) {
+      const sub = session.subagents.get(msg.parent_tool_use_id);
+      if (sub && msg.type === 'assistant') {
+        const activity = subagentActivity(msg.message.content);
+        if (activity && activity !== sub.activity) {
+          sub.activity = activity;
+          this.broadcastSubagents(session);
+        }
+      }
+      return;
+    }
     switch (msg.type) {
       case 'system': {
         if (msg.subtype === 'init') {
           session.meta = {
+            ...session.meta,
             model: typeof msg.model === 'string' ? msg.model : null,
             permissionMode: typeof msg.permissionMode === 'string' ? msg.permissionMode : null,
           };
@@ -735,6 +830,26 @@ export class AgentSessionManager {
           session.meta = { ...session.meta, model: responseModel };
           this.broadcast(session, { type: 'meta', meta: session.meta });
         }
+        // コンテキスト使用量 = この API 呼び出しのプロンプト全量 + 出力
+        const usage = (msg.message as {
+          usage?: {
+            input_tokens?: number;
+            cache_read_input_tokens?: number;
+            cache_creation_input_tokens?: number;
+            output_tokens?: number;
+          };
+        }).usage;
+        if (usage) {
+          const contextTokens =
+            (usage.input_tokens ?? 0) +
+            (usage.cache_read_input_tokens ?? 0) +
+            (usage.cache_creation_input_tokens ?? 0) +
+            (usage.output_tokens ?? 0);
+          if (contextTokens > 0 && contextTokens !== session.stats.contextTokens) {
+            session.stats = { ...session.stats, contextTokens };
+            this.broadcast(session, { type: 'stats', stats: session.stats });
+          }
+        }
         for (const block of msg.message.content) {
           if (block.type === 'text') {
             this.pushEvent(session, { kind: 'assistant', text: block.text, ts: Date.now() });
@@ -748,6 +863,20 @@ export class AgentSessionManager {
               input: capInput(block.input),
               ts: Date.now(),
             });
+            // サブエージェント起動 (Task / Agent) をステータスバー用に登録する
+            if (block.name === 'Task' || block.name === 'Agent') {
+              const input = block.input as { description?: unknown; subagent_type?: unknown };
+              session.subagents.set(block.id, {
+                id: block.id,
+                name: typeof input.subagent_type === 'string' && input.subagent_type
+                  ? input.subagent_type
+                  : block.name,
+                description: typeof input.description === 'string' ? input.description : '',
+                startedAt: Date.now(),
+                activity: '',
+              });
+              this.broadcastSubagents(session);
+            }
           }
         }
         session.live = { text: '', thinking: '' };
@@ -768,10 +897,24 @@ export class AgentSessionManager {
             isError: b.is_error === true,
             ts: Date.now(),
           });
+          if (session.subagents.delete(b.tool_use_id)) this.broadcastSubagents(session);
         }
         break;
       }
       case 'result': {
+        // contextWindow は modelUsage (モデル別集計) から現在モデルの値を拾う
+        const modelUsage = (msg as { modelUsage?: Record<string, { contextWindow?: number; canonicalModel?: string }> }).modelUsage;
+        if (modelUsage) {
+          const entries = Object.entries(modelUsage);
+          const match =
+            entries.find(([key, u]) => key === session.meta.model || u.canonicalModel === session.meta.model) ??
+            entries[0];
+          const window = match?.[1]?.contextWindow;
+          if (typeof window === 'number' && window > 0 && window !== session.stats.contextWindow) {
+            session.stats = { ...session.stats, contextWindow: window };
+            this.broadcast(session, { type: 'stats', stats: session.stats });
+          }
+        }
         this.pushEvent(session, {
           kind: 'result',
           subtype: msg.subtype,
@@ -780,6 +923,11 @@ export class AgentSessionManager {
           ts: Date.now(),
         });
         session.live = { text: '', thinking: '' };
+        // ターン終了 = サブエージェントも全員終了している (tool_result 取りこぼしの保険)
+        if (session.subagents.size > 0) {
+          session.subagents.clear();
+          this.broadcastSubagents(session);
+        }
         this.setStatus(session, 'idle');
         break;
       }

@@ -274,6 +274,23 @@ export interface AgentPermissionRequest {
 export interface AgentSessionMeta {
   model: string | null;
   permissionMode: string | null;
+  effort: string | null;
+  thinking: boolean;
+}
+
+/** コンテキスト使用量 (server/agentSession.ts stats と手動同期) */
+export interface AgentSessionStats {
+  contextTokens: number | null;
+  contextWindow: number | null;
+}
+
+/** 稼働中のサブエージェント (server/agentSession.ts subagents と手動同期) */
+export interface AgentSubagent {
+  id: string;
+  name: string;
+  description: string;
+  startedAt: number;
+  activity: string;
 }
 
 export interface AgentSlashCommand {
@@ -288,6 +305,8 @@ export interface AgentModelInfo {
   resolvedModel?: string;
   displayName: string;
   description: string;
+  supportsEffort?: boolean;
+  supportedEffortLevels?: string[];
 }
 
 /** 再開できる保存済みエージェントセッション (server/agentSession.ts resumable) */

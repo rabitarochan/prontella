@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { api } from '../api';
 import { useT } from '../i18n';
 import { useTileBarSlots } from '../layout/tileBarSlots';
-import type { TerminalSession } from '../types';
+import type { AgentResumableSession, TerminalSession } from '../types';
 import ChatView from './ChatView';
 import { useConfirm } from './ConfirmDialog';
 import { middleClickAutoscrollGuard, middleClickClose } from './editorTabs';
@@ -36,11 +37,30 @@ export default function ChatPanel({
   root: string;
   onActivate: (id: string) => void;
   onCloseTab: (id: string) => Promise<void>;
-  create: () => Promise<void>;
+  create: (resume?: string) => Promise<void>;
 }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
+  const [resumable, setResumable] = useState<AgentResumableSession[]>([]);
   const { confirm, dialog } = useConfirm();
+
+  // 空状態のときだけ再開候補を取りに行く (表示のたびに最新化)
+  const empty = ownedIds.length === 0;
+  useEffect(() => {
+    if (!visible || !empty) return;
+    let cancelled = false;
+    api
+      .agentResumable(root)
+      .then((list) => {
+        if (!cancelled) setResumable(list);
+      })
+      .catch(() => {
+        // サーバー未対応・一時エラー時はリストなしで良い
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, empty, root]);
   const liveMap = new Map((sessions ?? []).map((s) => [s.id, s]));
   // ツリー側の activeSession が別 kind でも描画は破綻させない
   const active = activeId && ownedIds.includes(activeId) ? activeId : (ownedIds[ownedIds.length - 1] ?? null);
@@ -125,6 +145,40 @@ export default function ChatPanel({
                     {t('chat.newSession')}
                   </button>
                 </div>
+                {resumable.length > 0 && (
+                  <div className="chat-resume-list">
+                    <div className="chat-resume-title">{t('chat.resumeListTitle')}</div>
+                    {resumable.map((record) => (
+                      <div key={record.deckId} className="chat-resume-item">
+                        <span className="chat-resume-name" title={record.cwd}>
+                          {record.title}
+                        </span>
+                        <span className="chat-resume-date">
+                          {new Date(record.savedAt).toLocaleString()}
+                        </span>
+                        <button
+                          className="chat-resume-go"
+                          disabled={busy}
+                          onClick={() => run(() => create(record.deckId))}
+                        >
+                          {t('chat.resume')}
+                        </button>
+                        <button
+                          className="chat-resume-discard"
+                          disabled={busy}
+                          onClick={() =>
+                            run(async () => {
+                              await api.discardAgentRecord(record.deckId);
+                              setResumable((prev) => prev.filter((r) => r.deckId !== record.deckId));
+                            })
+                          }
+                        >
+                          {t('chat.discardRecord')}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             )}
           </div>

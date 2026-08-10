@@ -2600,6 +2600,93 @@ button.statusbar-item:hover:not(:disabled) {
   padding: 1px 8px;
   font-size: 11px;
 }
+/* 貼り付け画像プレビュー */
+.chat-attachments {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.chat-attachment {
+  position: relative;
+  display: inline-flex;
+}
+.chat-attachment img {
+  height: 56px;
+  max-width: 96px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.chat-attachment-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  font-size: 10px;
+  cursor: pointer;
+}
+.chat-attachments + .chat-input-row {
+  border-top: none;
+}
+.chat-user-images {
+  color: var(--fg-dim);
+}
+/* 保存済みセッションの再開リスト (空状態) */
+.chat-resume-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 16px;
+  max-width: 480px;
+  width: 90%;
+}
+.chat-resume-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-dim);
+  margin-bottom: 2px;
+}
+.chat-resume-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.chat-resume-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+.chat-resume-date {
+  flex: none;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+.chat-resume-go {
+  color: var(--primary);
+  border-color: var(--primary-dim);
+}
+.chat-resume-discard {
+  color: var(--fg-dim);
+}
+
 /* ローカルコマンド出力 (/usage 等) */
 .chat-cmd-output {
   margin: 0;

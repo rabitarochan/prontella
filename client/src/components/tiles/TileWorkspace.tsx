@@ -78,7 +78,7 @@ export default function TileWorkspace({
             visible={leaf.view === 'chat'}
             onActivate={(id) => actions.setActiveSession(leaf.id, id)}
             onCloseTab={(id) => actions.closeSessionTab(leaf.id, id)}
-            create={() => actions.openChat(leaf.id)}
+            create={(resume) => actions.openChat(leaf.id, resume)}
           />
         </div>
       )}

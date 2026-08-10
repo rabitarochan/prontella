@@ -250,7 +250,7 @@ export interface TerminalSession {
 // chat (Agent SDK) セッションの構造化イベント。server/agentSession.ts と手動同期
 // (共有型機構がないため)。
 export type AgentChatEvent =
-  | { kind: 'user'; text: string; ts: number }
+  | { kind: 'user'; text: string; images?: number; ts: number }
   | { kind: 'assistant'; text: string; ts: number }
   | { kind: 'command_output'; text: string; ts: number }
   | { kind: 'thinking'; text: string; ts: number }
@@ -280,4 +280,12 @@ export interface AgentSlashCommand {
   name: string;
   description: string;
   argumentHint: string;
+}
+
+/** 再開できる保存済みエージェントセッション (server/agentSession.ts resumable) */
+export interface AgentResumableSession {
+  deckId: string;
+  title: string;
+  cwd: string;
+  savedAt: number;
 }

@@ -1182,11 +1182,26 @@ app.post('/api/terminals/:id/kill', asyncHandler(async (req, res) => {
   res.json({ ok: ptyManager.kill(req.params.id) || agentManager.kill(req.params.id) });
 }));
 
-// chat (Agent SDK) セッションの作成。一覧・kill は /api/terminals に相乗りする
+// chat (Agent SDK) セッションの作成 / 再開。一覧・kill は /api/terminals に相乗りする
 app.post('/api/agents', asyncHandler(async (req, res) => {
+  const resume = typeof req.body.resume === 'string' && req.body.resume ? req.body.resume : undefined;
+  if (resume) {
+    const session = agentManager.resume(resume);
+    if (!session) throw new Error('再開できるセッションが見つかりません');
+    res.json(session);
+    return;
+  }
   const cwd = String(req.body.cwd ?? '');
   if (!fs.existsSync(cwd)) throw new Error(`ディレクトリーが存在しません: ${cwd}`);
   res.json(agentManager.create(cwd));
+}));
+
+app.get('/api/agents/resumable', asyncHandler(async (req, res) => {
+  res.json(agentManager.resumable(typeof req.query.cwd === 'string' ? req.query.cwd : undefined));
+}));
+
+app.post('/api/agents/resumable/:id/discard', asyncHandler(async (req, res) => {
+  res.json({ ok: agentManager.discardRecord(req.params.id) });
 }));
 
 // Claude Code の hooks (deck-hook.mjs) からのイベント通知。127.0.0.1 バインドの

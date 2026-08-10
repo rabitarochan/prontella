@@ -74,11 +74,14 @@ function MarkdownBlock({ source, root }: { source: string; root: string }) {
   return <div className="md-preview-body chat-md" ref={mount} onClick={onClick} />;
 }
 
-function UserBlock({ text }: { text: string }) {
+function UserBlock({ text, images }: { text: string; images?: number }) {
   return (
     <div className="chat-user">
       <span className="chat-user-mark">❯</span>
-      <div className="chat-user-text">{text}</div>
+      <div className="chat-user-text">
+        {images ? <span className="chat-user-images">🖼 ×{images} </span> : null}
+        {text}
+      </div>
     </div>
   );
 }
@@ -478,6 +481,8 @@ export default function ChatView({
   const [ended, setEnded] = useState(false);
   const [draft, setDraft] = useState('');
   const [commands, setCommands] = useState<AgentSlashCommand[]>([]);
+  // 貼り付け画像 (base64、送信でクリア)
+  const [attachments, setAttachments] = useState<{ mediaType: string; data: string }[]>([]);
   // ファイル一覧は '@' が初めて入力されたときに 1 回だけ取得する
   const [files, setFiles] = useState<string[] | null>(null);
   const filesLoadingRef = useRef(false);
@@ -610,10 +615,37 @@ export default function ChatView({
 
   const submit = () => {
     const text = draft.trim();
-    if (!text || ended) return;
+    if ((!text && attachments.length === 0) || ended) return;
     stickRef.current = true;
-    send({ type: 'prompt', text });
+    send({
+      type: 'prompt',
+      text: draft,
+      ...(attachments.length > 0 ? { images: attachments } : {}),
+    });
     setDraft('');
+    setAttachments([]);
+  };
+
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const imageItems = [...e.clipboardData.items].filter(
+      (item) => item.kind === 'file' && item.type.startsWith('image/'),
+    );
+    if (imageItems.length === 0) return;
+    e.preventDefault();
+    for (const item of imageItems) {
+      const file = item.getAsFile();
+      if (!file) continue;
+      const reader = new FileReader();
+      reader.onload = () => {
+        // data:image/png;base64,xxxx → base64 部分だけを取り出す
+        const url = String(reader.result ?? '');
+        const comma = url.indexOf(',');
+        if (comma === -1) return;
+        const attachment = { mediaType: file.type, data: url.slice(comma + 1) };
+        setAttachments((prev) => (prev.length >= 4 ? prev : [...prev, attachment]));
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const answer = (
@@ -714,7 +746,7 @@ export default function ChatView({
         {events.map((event, i) => {
           switch (event.kind) {
             case 'user':
-              return <UserBlock key={i} text={event.text} />;
+              return <UserBlock key={i} text={event.text} images={event.images} />;
             case 'assistant':
               return <MarkdownBlock key={i} source={event.text} root={root} />;
             case 'command_output':
@@ -894,6 +926,22 @@ export default function ChatView({
           </button>
         )}
       </div>
+      {attachments.length > 0 && (
+        <div className="chat-attachments">
+          {attachments.map((img, i) => (
+            <span key={i} className="chat-attachment">
+              <img src={`data:${img.mediaType};base64,${img.data}`} alt="" />
+              <button
+                className="chat-attachment-remove"
+                title={t('chat.removeImage')}
+                onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+              >
+                <span className="codicon codicon-close" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <div className="chat-input-row">
         {completion && (
           <div className="chat-complete">
@@ -919,6 +967,7 @@ export default function ChatView({
           placeholder={ended ? t('chat.ended') : t('chat.inputPlaceholder')}
           value={draft}
           disabled={ended}
+          onPaste={onPaste}
           onChange={(e) => {
             setDraft(e.target.value);
             setCompletionDismissed(false);
@@ -963,7 +1012,7 @@ export default function ChatView({
         <button
           className="chat-send"
           title={t('chat.send')}
-          disabled={ended || !draft.trim()}
+          disabled={ended || (!draft.trim() && attachments.length === 0)}
           onClick={submit}
         >
           <span className="codicon codicon-send" />

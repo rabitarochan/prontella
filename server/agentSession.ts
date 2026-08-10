@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
@@ -10,6 +12,7 @@ import {
   type PermissionUpdate,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { WebSocket } from 'ws';
+import { writeJsonAtomic } from './config.js';
 import { normalizePath, type AgentStatus, type SessionInfo } from './pty.js';
 import { broadcastEvent, registerSnapshotProvider } from './sessionEvents.js';
 
@@ -31,7 +34,7 @@ import { broadcastEvent, registerSnapshotProvider } from './sessionEvents.js';
 // クライアントへ replay する構造化イベント。client/src/types.ts と手動同期
 // (共有型機構がないため)。
 export type AgentChatEvent =
-  | { kind: 'user'; text: string; ts: number }
+  | { kind: 'user'; text: string; images?: number; ts: number }
   | { kind: 'assistant'; text: string; ts: number }
   | { kind: 'command_output'; text: string; ts: number }
   | { kind: 'thinking'; text: string; ts: number }
@@ -60,6 +63,62 @@ const UI_MODES = new Set<PermissionMode>(['default', 'acceptEdits', 'plan', 'aut
 const MAX_EVENTS = 500; // transcript replay cap (PTY の MAX_SCROLLBACK に相当)
 const INPUT_JSON_MAX = 16_384; // tool_use input を構造のままクライアントへ渡す上限
 const RESULT_TEXT_MAX = 8_192; // tool_result テキストの上限
+const IMAGE_MAX_COUNT = 4;
+const IMAGE_MAX_BASE64 = 7_000_000; // 1 枚あたり base64 で約 5MB 相当
+const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const PERSIST_DEBOUNCE_MS = 500;
+
+// resume 用の永続化レコード (~/.claude-deck3/agent-sessions/<deckId>.json)。
+// サーバー再起動でメモリー上のセッションが消えても、SDK 側の session_id と
+// deck 側のトランスクリプトを保存しておけば query({resume}) で再開できる。
+const SESSIONS_DIR = path.join(os.homedir(), '.claude-deck3', 'agent-sessions');
+
+export interface AgentSessionRecord {
+  deckId: string;
+  sdkSessionId: string;
+  cwd: string;
+  title: string;
+  savedAt: number;
+  events: AgentChatEvent[];
+}
+
+function recordFile(deckId: string): string {
+  // deckId は自前生成の UUID 断片のみ受け付ける (パス組み立てに使うため)
+  if (!/^[0-9a-f-]{4,40}$/i.test(deckId)) throw new Error('不正なセッション ID です');
+  return path.join(SESSIONS_DIR, `${deckId}.json`);
+}
+
+function loadRecord(deckId: string): AgentSessionRecord | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(recordFile(deckId), 'utf8')) as AgentSessionRecord;
+    if (typeof raw.sdkSessionId !== 'string' || typeof raw.cwd !== 'string') return null;
+    return { ...raw, events: Array.isArray(raw.events) ? raw.events : [] };
+  } catch {
+    return null;
+  }
+}
+
+/** 貼り付け画像の形状検証 (信頼できない WS 入力)。 */
+function validImages(value: unknown): { mediaType: string; data: string }[] | undefined {
+  if (!Array.isArray(value) || value.length === 0 || value.length > IMAGE_MAX_COUNT) return undefined;
+  const images: { mediaType: string; data: string }[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') return undefined;
+    const img = item as { mediaType?: unknown; data?: unknown };
+    if (
+      typeof img.mediaType !== 'string' ||
+      !IMAGE_MEDIA_TYPES.has(img.mediaType) ||
+      typeof img.data !== 'string' ||
+      img.data.length === 0 ||
+      img.data.length > IMAGE_MAX_BASE64 ||
+      !/^[A-Za-z0-9+/=]+$/.test(img.data)
+    ) {
+      return undefined;
+    }
+    images.push({ mediaType: img.mediaType, data: img.data });
+  }
+  return images;
+}
 
 /** tool input を構造のまま返す。巨大なら文字列プレビューへ落とす。 */
 function capInput(input: unknown): unknown {
@@ -156,6 +215,11 @@ interface AgentSession {
   q: Query;
   pending: Map<string, PendingPermission>;
   exited: boolean;
+  /** SDK 側の session id (init で捕捉)。resume の鍵。null の間は永続化しない */
+  sdkSessionId: string | null;
+  /** 明示 kill = 記録も破棄。サーバー都合の終了では立てない */
+  discard: boolean;
+  persistTimer: NodeJS.Timeout | null;
 }
 
 export class AgentSessionManager {
@@ -171,7 +235,7 @@ export class AgentSessionManager {
     }
   }
 
-  create(cwd: string): SessionInfo {
+  create(cwd: string, resume?: AgentSessionRecord): SessionInfo {
     const id = randomUUID().slice(0, 8);
     const input = new AsyncQueue<SDKUserMessage>();
     const q = query({
@@ -180,6 +244,7 @@ export class AgentSessionManager {
         cwd: path.resolve(cwd),
         includePartialMessages: true,
         // settingSources は未指定 = CLI と同じ (user/project/local を読む)。
+        ...(resume ? { resume: resume.sdkSessionId } : {}),
         canUseTool: (toolName, toolInput, options) =>
           this.requestPermission(id, toolName, toolInput, options),
       },
@@ -188,12 +253,13 @@ export class AgentSessionManager {
       id,
       cwd: path.resolve(cwd),
       // ブランディング規約により「Claude Code」は名乗らない (SDK ベースの独自 UI のため)
-      title: 'Claude Agent',
+      title: resume?.title ?? 'Claude Agent',
       status: 'idle',
       createdAt: Date.now(),
       lastOutputAt: Date.now(),
       statusSince: Date.now(),
-      events: [],
+      // resume 時は保存済みトランスクリプトを引き継いで表示を復元する
+      events: resume ? [...resume.events] : [],
       live: { text: '', thinking: '' },
       meta: { model: null, permissionMode: null },
       commands: [],
@@ -202,7 +268,19 @@ export class AgentSessionManager {
       q,
       pending: new Map(),
       exited: false,
+      sdkSessionId: resume?.sdkSessionId ?? null,
+      discard: false,
+      persistTimer: null,
     };
+    if (resume) {
+      // 旧レコードは新しい deckId で保存し直すため破棄する
+      try {
+        fs.unlinkSync(recordFile(resume.deckId));
+      } catch {
+        // 既に無ければそれでよい
+      }
+      this.schedulePersist(session);
+    }
     this.sessions.set(id, session);
     void this.pump(session);
     // CLI は最初の入力メッセージまで起動を遅延するため、init を待たず
@@ -237,6 +315,7 @@ export class AgentSessionManager {
         decision?: unknown;
         mode?: unknown;
         answers?: unknown;
+        images?: unknown;
       };
       try {
         msg = JSON.parse(String(raw));
@@ -244,8 +323,9 @@ export class AgentSessionManager {
         return;
       }
       if (session.exited) return;
-      if (msg.type === 'prompt' && typeof msg.text === 'string' && msg.text.trim()) {
-        this.prompt(session, msg.text);
+      const images = validImages(msg.images);
+      if (msg.type === 'prompt' && typeof msg.text === 'string' && (msg.text.trim() || images)) {
+        this.prompt(session, msg.text, images);
       } else if (
         msg.type === 'permission' &&
         typeof msg.requestId === 'string' &&
@@ -270,6 +350,8 @@ export class AgentSessionManager {
   kill(id: string): boolean {
     const session = this.sessions.get(id);
     if (!session) return false;
+    // タブを閉じる = ユーザーの明示破棄。resume 用の記録も消す
+    session.discard = true;
     session.input.close();
     try {
       session.q.close();
@@ -285,6 +367,79 @@ export class AgentSessionManager {
     if (!cwd) return all;
     const target = normalizePath(cwd);
     return all.filter((s) => normalizePath(s.cwd) === target);
+  }
+
+  /** 再開できる保存済みセッション (稼働中のものは除く)。 */
+  resumable(cwd?: string): { deckId: string; title: string; cwd: string; savedAt: number }[] {
+    let files: string[] = [];
+    try {
+      files = fs.readdirSync(SESSIONS_DIR).filter((f) => f.endsWith('.json'));
+    } catch {
+      return [];
+    }
+    const liveSdkIds = new Set(
+      [...this.sessions.values()].map((s) => s.sdkSessionId).filter(Boolean),
+    );
+    const target = cwd ? normalizePath(cwd) : null;
+    const records: { deckId: string; title: string; cwd: string; savedAt: number }[] = [];
+    for (const file of files) {
+      const record = loadRecord(path.basename(file, '.json'));
+      if (!record) continue;
+      if (liveSdkIds.has(record.sdkSessionId)) continue;
+      if (target && normalizePath(record.cwd) !== target) continue;
+      records.push({
+        deckId: record.deckId,
+        title: record.title,
+        cwd: record.cwd,
+        savedAt: record.savedAt,
+      });
+    }
+    return records.sort((a, b) => b.savedAt - a.savedAt);
+  }
+
+  /** 保存済みセッションを再開する。レコードが無ければ null。 */
+  resume(deckId: string): SessionInfo | null {
+    const record = loadRecord(deckId);
+    if (!record) return null;
+    return this.create(record.cwd, record);
+  }
+
+  /** 保存済みセッションの記録を破棄する。 */
+  discardRecord(deckId: string): boolean {
+    try {
+      fs.unlinkSync(recordFile(deckId));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private schedulePersist(session: AgentSession): void {
+    if (!session.sdkSessionId || session.discard) return;
+    if (session.persistTimer) return;
+    session.persistTimer = setTimeout(() => {
+      session.persistTimer = null;
+      this.persistNow(session);
+    }, PERSIST_DEBOUNCE_MS);
+    session.persistTimer.unref();
+  }
+
+  private persistNow(session: AgentSession): void {
+    if (!session.sdkSessionId || session.discard) return;
+    try {
+      fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+      const record: AgentSessionRecord = {
+        deckId: session.id,
+        sdkSessionId: session.sdkSessionId,
+        cwd: session.cwd,
+        title: session.title,
+        savedAt: Date.now(),
+        events: session.events,
+      };
+      writeJsonAtomic(recordFile(session.id), record);
+    } catch (err) {
+      console.warn('[claude-deck3] agent session persist failed:', err);
+    }
   }
 
   private setCommands(
@@ -322,12 +477,32 @@ export class AgentSessionManager {
       });
   }
 
-  private prompt(session: AgentSession, text: string): void {
-    this.pushEvent(session, { kind: 'user', text, ts: Date.now() });
+  private prompt(
+    session: AgentSession,
+    text: string,
+    images?: { mediaType: string; data: string }[],
+  ): void {
+    this.pushEvent(session, {
+      kind: 'user',
+      text,
+      ...(images && images.length > 0 ? { images: images.length } : {}),
+      ts: Date.now(),
+    });
     this.setStatus(session, 'busy');
+    // 画像は base64 の image content block として本文の前に並べる
+    const content =
+      images && images.length > 0
+        ? [
+            ...images.map((img) => ({
+              type: 'image' as const,
+              source: { type: 'base64' as const, media_type: img.mediaType, data: img.data },
+            })),
+            ...(text.trim() ? [{ type: 'text' as const, text }] : []),
+          ]
+        : text;
     session.input.push({
       type: 'user',
-      message: { role: 'user', content: text },
+      message: { role: 'user', content },
       parent_tool_use_id: null,
     } as SDKUserMessage);
   }
@@ -449,6 +624,21 @@ export class AgentSessionManager {
         pending.resolve({ behavior: 'deny', message: 'セッションが終了しました' });
       }
       session.pending.clear();
+      if (session.persistTimer) {
+        clearTimeout(session.persistTimer);
+        session.persistTimer = null;
+      }
+      if (session.discard) {
+        // 明示 kill: resume 記録も破棄
+        try {
+          fs.unlinkSync(recordFile(session.id));
+        } catch {
+          // 未作成なら何もしない
+        }
+      } else {
+        // 予期しない終了 (エラー等): 記録を残して resume 可能にする
+        this.persistNow(session);
+      }
       this.broadcast(session, { type: 'exit' });
       for (const ws of session.sockets) ws.close();
       this.sessions.delete(session.id);
@@ -467,6 +657,10 @@ export class AgentSessionManager {
             model: typeof msg.model === 'string' ? msg.model : null,
             permissionMode: typeof msg.permissionMode === 'string' ? msg.permissionMode : null,
           };
+          if (typeof msg.session_id === 'string' && msg.session_id) {
+            session.sdkSessionId = msg.session_id;
+            this.schedulePersist(session);
+          }
           this.broadcast(session, { type: 'meta', meta: session.meta });
           // コマンド一覧は init の名前配列より説明付きの supportedCommands() を使う
           void this.loadCommands(session);
@@ -557,6 +751,7 @@ export class AgentSessionManager {
       session.events.splice(0, session.events.length - MAX_EVENTS);
     }
     this.broadcast(session, { type: 'event', event });
+    this.schedulePersist(session);
   }
 
   private setStatus(session: AgentSession, status: AgentStatus): void {

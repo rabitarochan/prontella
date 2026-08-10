@@ -70,8 +70,8 @@ export function useTerminalSessions(cwd: string) {
   );
 
   const createAgent = useCallback(
-    async (place?: (session: TerminalSession) => void) => {
-      const session = await api.createAgent(cwd);
+    async (place?: (session: TerminalSession) => void, resume?: string) => {
+      const session = await api.createAgent(cwd, resume);
       recordSessionKinds([session]);
       // Let the caller claim the session (e.g. assign it to a tile) before the
       // reload publishes it — otherwise the layout adoption rule could grab it.

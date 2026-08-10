@@ -63,9 +63,10 @@ export interface TileActions {
   /**
    * Create a chat (Agent SDK) session as a new tab. Target: explicit leaf,
    * else the focused leaf, else the first chat-view leaf. Switches the tile
-   * to the chat view and activates the new tab.
+   * to the chat view and activates the new tab. resume に保存済みセッションの
+   * deckId を渡すと再開になる。
    */
-  openChat: (leafId?: string) => Promise<void>;
+  openChat: (leafId?: string, resume?: string) => Promise<void>;
   /**
    * DnD でのレイアウト再構成: src タイルを target の上下左右へ分割挿入、
    * または center で位置交換。中身は leaf.id 追従の Portal なので remount しない。
@@ -82,7 +83,10 @@ export function useTileLayout(
   sessions: TerminalSession[] | null,
   createSession: (run?: string, place?: (s: TerminalSession) => void) => Promise<TerminalSession>,
   killSession: (id: string) => Promise<void>,
-  createAgentSession: (place?: (s: TerminalSession) => void) => Promise<TerminalSession>,
+  createAgentSession: (
+    place?: (s: TerminalSession) => void,
+    resume?: string,
+  ) => Promise<TerminalSession>,
 ): TileActions {
   const t = useT();
   const [layout, setLayout] = useState<WorktreeLayout>(() => loadLayout(worktreePath));
@@ -220,7 +224,7 @@ export function useTileLayout(
   );
 
   const openChat = useCallback(
-    async (leafId?: string) => {
+    async (leafId?: string, resume?: string) => {
       // Reserve the target leaf first so the chat lands where the user expects.
       let root = layoutRef.current.root;
       let targetId: string;
@@ -244,7 +248,7 @@ export function useTileLayout(
         // adoption rule could place it in another leaf.
         const current = layoutRef.current.root;
         if (current) update(appendSession(current, targetId, session.id));
-      });
+      }, resume);
     },
     [createAgentSession, update],
   );

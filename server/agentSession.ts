@@ -210,6 +210,8 @@ interface AgentSession {
   meta: { model: string | null; permissionMode: string | null };
   /** スラッシュコマンド一覧 (supportedCommands / commands_changed で更新) */
   commands: { name: string; description: string; argumentHint: string }[];
+  /** 選択可能なモデル一覧 (supportedModels で取得) */
+  models: { value: string; resolvedModel?: string; displayName: string; description: string }[];
   sockets: Set<WebSocket>;
   input: AsyncQueue<SDKUserMessage>;
   q: Query;
@@ -263,6 +265,7 @@ export class AgentSessionManager {
       live: { text: '', thinking: '' },
       meta: { model: null, permissionMode: null },
       commands: [],
+      models: [],
       sockets: new Set(),
       input,
       q,
@@ -284,9 +287,10 @@ export class AgentSessionManager {
     this.sessions.set(id, session);
     void this.pump(session);
     // CLI は最初の入力メッセージまで起動を遅延するため、init を待たず
-    // ここで control request を投げてコマンド一覧を先に取りに行く
+    // ここで control request を投げてコマンド/モデル一覧を先に取りに行く
     // (副次効果として CLI が先に温まり、初回ターンの体感も速くなる)
     void this.loadCommands(session);
+    void this.loadModels(session);
     broadcastEvent({ type: 'session', session: this.toInfo(session) });
     return this.toInfo(session);
   }
@@ -302,6 +306,7 @@ export class AgentSessionManager {
         live: session.live,
         meta: session.meta,
         commands: session.commands,
+        models: session.models,
         status: session.status,
         requests: [...session.pending.values()].map((p) => this.requestPayload(p)),
       }),
@@ -316,6 +321,7 @@ export class AgentSessionManager {
         mode?: unknown;
         answers?: unknown;
         images?: unknown;
+        model?: unknown;
       };
       try {
         msg = JSON.parse(String(raw));
@@ -337,6 +343,8 @@ export class AgentSessionManager {
         this.resolvePermission(session, msg.requestId, msg.decision, postMode, validAnswers(msg.answers));
       } else if (msg.type === 'setMode' && UI_MODES.has(msg.mode as PermissionMode)) {
         this.setMode(session, msg.mode as PermissionMode);
+      } else if (msg.type === 'setModel' && typeof msg.model === 'string') {
+        this.setModel(session, msg.model);
       } else if (msg.type === 'interrupt') {
         session.q.interrupt().catch(() => {
           // interrupt はターン未実行時などに失敗しうる。無視してよい
@@ -460,6 +468,35 @@ export class AgentSessionManager {
     } catch {
       // 未対応バージョン等。補完が出ないだけで動作には影響しない
     }
+  }
+
+  private async loadModels(session: AgentSession): Promise<void> {
+    try {
+      session.models = (await session.q.supportedModels()).map((m) => ({
+        value: m.value,
+        ...(m.resolvedModel ? { resolvedModel: m.resolvedModel } : {}),
+        displayName: m.displayName,
+        description: m.description ?? '',
+      }));
+      this.broadcast(session, { type: 'models', models: session.models });
+    } catch {
+      // 未対応バージョン等。セレクターが出ないだけで動作には影響しない
+    }
+  }
+
+  /** モデルを実行中に切り替える (/model 相当)。一覧に無い値は受け付けない。 */
+  private setModel(session: AgentSession, model: string): void {
+    if (!session.models.some((m) => m.value === model)) return;
+    session.q
+      .setModel(model)
+      .then(() => {
+        session.meta = { ...session.meta, model };
+        this.broadcast(session, { type: 'meta', meta: session.meta });
+      })
+      .catch((err: unknown) => {
+        console.warn('[claude-deck3] setModel failed:', err);
+        this.broadcast(session, { type: 'meta', meta: session.meta });
+      });
   }
 
   /** permissionMode を実行中に切り替える (TUI の Shift+Tab 相当)。 */
@@ -692,6 +729,12 @@ export class AgentSessionManager {
         break;
       }
       case 'assistant': {
+        // 実際に応答したモデルで表示を受動同期する (alias 切替後の正規 id 反映)
+        const responseModel = (msg.message as { model?: unknown }).model;
+        if (typeof responseModel === 'string' && responseModel !== session.meta.model) {
+          session.meta = { ...session.meta, model: responseModel };
+          this.broadcast(session, { type: 'meta', meta: session.meta });
+        }
         for (const block of msg.message.content) {
           if (block.type === 'text') {
             this.pushEvent(session, { kind: 'assistant', text: block.text, ts: Date.now() });

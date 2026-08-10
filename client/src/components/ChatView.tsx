@@ -12,6 +12,7 @@ import { highlightInto } from '../markdown/highlight';
 import { renderMarkdownToFragment } from '../markdown/render';
 import type {
   AgentChatEvent,
+  AgentModelInfo,
   AgentPermissionRequest,
   AgentSessionMeta,
   AgentSlashCommand,
@@ -481,6 +482,7 @@ export default function ChatView({
   const [ended, setEnded] = useState(false);
   const [draft, setDraft] = useState('');
   const [commands, setCommands] = useState<AgentSlashCommand[]>([]);
+  const [models, setModels] = useState<AgentModelInfo[]>([]);
   // 貼り付け画像 (base64、送信でクリア)
   const [attachments, setAttachments] = useState<{ mediaType: string; data: string }[]>([]);
   // ファイル一覧は '@' が初めて入力されたときに 1 回だけ取得する
@@ -510,6 +512,7 @@ export default function ChatView({
         status?: AgentStatus;
         requests?: AgentPermissionRequest[];
         commands?: AgentSlashCommand[];
+        models?: AgentModelInfo[];
         requestId?: string;
         tool?: string;
         input?: unknown;
@@ -531,9 +534,13 @@ export default function ChatView({
           if (msg.status) setStatus(msg.status);
           setRequests(msg.requests ?? []);
           if (Array.isArray(msg.commands)) setCommands(msg.commands);
+          if (Array.isArray(msg.models)) setModels(msg.models);
           break;
         case 'commands':
           if (Array.isArray(msg.commands)) setCommands(msg.commands);
+          break;
+        case 'models':
+          if (Array.isArray(msg.models)) setModels(msg.models);
           break;
         case 'event':
           if (msg.event) {
@@ -729,6 +736,16 @@ export default function ChatView({
   }, [events]);
 
   const modelLabel = meta.model?.replace(/^claude-/, '') ?? null;
+  // 現在のモデルに対応する一覧エントリー (alias の value / 正規 id の resolvedModel 両対応)
+  const currentModel =
+    models.find((m) => m.value === meta.model || m.resolvedModel === meta.model) ?? null;
+
+  const setModel = (value: string) => {
+    if (ended) return;
+    const target = models.find((m) => m.value === value);
+    if (!target || target === currentModel) return;
+    send({ type: 'setModel', model: value });
+  };
 
   return (
     <div className="chat-view" style={{ display: visible ? undefined : 'none' }}>
@@ -892,7 +909,30 @@ export default function ChatView({
       </div>
       <div className="chat-statusbar">
         <StatusBadge status={status} dot />
-        {modelLabel && <span className="chat-statusbar-model">{modelLabel}</span>}
+        {models.length > 0 ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="chat-mode-btn chat-model-btn" title={t('chat.modelTooltip')} disabled={ended}>
+                {currentModel?.displayName ?? modelLabel ?? '…'}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
+              {models.map((model) => (
+                <DropdownMenuItem key={model.value} onSelect={() => setModel(model.value)}>
+                  <span className="chat-model-item">
+                    <span className="chat-model-name">{model.displayName}</span>
+                    {model.description && (
+                      <span className="chat-model-desc">{model.description}</span>
+                    )}
+                  </span>
+                  {model === currentModel && <Check className="ml-auto text-primary" />}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          modelLabel && <span className="chat-statusbar-model">{modelLabel}</span>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button

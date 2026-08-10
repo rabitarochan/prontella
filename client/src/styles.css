@@ -2587,6 +2587,27 @@ button.statusbar-item:hover:not(:disabled) {
   opacity: 0.5;
   cursor: default;
 }
+.chat-model-btn {
+  color: var(--fg);
+  font-family: var(--font-mono, monospace);
+}
+.chat-model-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+.chat-model-name {
+  font-weight: 600;
+}
+.chat-model-desc {
+  font-size: 11px;
+  color: var(--fg-dim);
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .chat-statusbar-spacer {
   flex: 1;
 }

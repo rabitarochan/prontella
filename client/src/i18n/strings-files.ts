@@ -126,6 +126,7 @@ export const FILES_STRINGS = {
     ja: '許可モードを切り替え (入力欄で Shift+Tab)',
     en: 'Switch permission mode (Shift+Tab in input)',
   },
+  'chat.modelTooltip': { ja: 'モデルを切り替え', en: 'Switch model' },
   'chat.planTitle': { ja: 'プランの承認', en: 'Approve plan' },
   'chat.planApprove': { ja: '承認 (手動確認)', en: 'Approve (manual)' },
   'chat.planApproveAccept': {

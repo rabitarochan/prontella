@@ -282,6 +282,14 @@ export interface AgentSlashCommand {
   argumentHint: string;
 }
 
+/** 選択可能なモデル (server/agentSession.ts models — SDK supportedModels 由来) */
+export interface AgentModelInfo {
+  value: string;
+  resolvedModel?: string;
+  displayName: string;
+  description: string;
+}
+
 /** 再開できる保存済みエージェントセッション (server/agentSession.ts resumable) */
 export interface AgentResumableSession {
   deckId: string;

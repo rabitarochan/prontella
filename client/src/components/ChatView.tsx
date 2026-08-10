@@ -532,6 +532,7 @@ export default function ChatView({
   const [completionDismissed, setCompletionDismissed] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   // 末尾に張り付いているときだけ自動スクロールする (履歴を遡り中は動かさない)
   const stickRef = useRef(true);
   // 送信キー方式 (グローバル設定): 'enter' = Enter 送信 / 'ctrlEnter' = Ctrl+Enter 送信
@@ -666,6 +667,24 @@ export default function ChatView({
     const el = scrollRef.current;
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [events, live, requests]);
+
+  // 入力欄の高さを内容に応じて 3〜10 行の範囲で自動調整する。
+  // 明示的な改行だけでなく折り返し行にも追従させるため scrollHeight で測る。
+  // display:none 中は scrollHeight が 0 になるので visible のときだけ計算する
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el || !visible) return;
+    el.style.height = 'auto';
+    const cs = getComputedStyle(el);
+    const line = parseFloat(cs.lineHeight) || 20;
+    const pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    const border = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+    const minH = line * 3 + pad + border;
+    const maxH = line * 10 + pad + border;
+    const wanted = el.scrollHeight + border; // box-sizing: border-box
+    el.style.height = `${Math.min(Math.max(wanted, minH), maxH)}px`;
+    el.style.overflowY = wanted > maxH ? 'auto' : 'hidden';
+  }, [draft, visible]);
 
   // サブエージェントの経過時間表示を 1 秒ごとに更新する
   const [, setElapsedTick] = useState(0);
@@ -1118,7 +1137,8 @@ export default function ChatView({
         )}
         <textarea
           className="chat-input"
-          rows={2}
+          ref={inputRef}
+          rows={3}
           placeholder={
             ended
               ? t('chat.ended')

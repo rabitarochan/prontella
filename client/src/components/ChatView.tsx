@@ -135,6 +135,139 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
 }
 
+// ---- AskUserQuestion (質問カード) ----
+
+interface QuestionOption {
+  label: string;
+  description?: string;
+}
+interface Question {
+  question: string;
+  header?: string;
+  options: QuestionOption[];
+  multiSelect: boolean;
+}
+
+/** AskUserQuestion の入力 (信頼できない構造) を防御的にパースする。 */
+function parseQuestions(input: ToolInput): Question[] {
+  if (!Array.isArray(input.questions)) return [];
+  return (input.questions as unknown[]).flatMap((raw): Question[] => {
+    if (!raw || typeof raw !== 'object') return [];
+    const q = raw as { question?: unknown; header?: unknown; options?: unknown; multiSelect?: unknown };
+    if (typeof q.question !== 'string' || !Array.isArray(q.options)) return [];
+    const options = (q.options as unknown[]).flatMap((o): QuestionOption[] => {
+      if (!o || typeof o !== 'object') return [];
+      const opt = o as { label?: unknown; description?: unknown };
+      if (typeof opt.label !== 'string') return [];
+      return [{ label: opt.label, description: typeof opt.description === 'string' ? opt.description : undefined }];
+    });
+    if (options.length === 0) return [];
+    return [
+      {
+        question: q.question,
+        header: typeof q.header === 'string' ? q.header : undefined,
+        options,
+        multiSelect: q.multiSelect === true,
+      },
+    ];
+  });
+}
+
+/**
+ * AskUserQuestion の回答 UI。選択肢ボタン (multiSelect はトグル) + 自由入力。
+ * 回答は「質問文 → ラベル (複数はカンマ区切り)」で親へ返す (SDK の
+ * AskUserQuestionInput.answers の契約)。
+ */
+function QuestionCard({
+  req,
+  submitLabel,
+  skipLabel,
+  otherPlaceholder,
+  onSubmit,
+  onSkip,
+}: {
+  req: AgentPermissionRequest;
+  submitLabel: string;
+  skipLabel: string;
+  otherPlaceholder: string;
+  onSubmit: (answers: Record<string, string>) => void;
+  onSkip: () => void;
+}) {
+  const questions = useMemo(() => parseQuestions((req.input ?? {}) as ToolInput), [req]);
+  const [selected, setSelected] = useState<Record<number, string[]>>({});
+  const [other, setOther] = useState<Record<number, string>>({});
+
+  const toggle = (qi: number, label: string, multi: boolean) => {
+    setSelected((prev) => {
+      const cur = prev[qi] ?? [];
+      if (multi) {
+        return { ...prev, [qi]: cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label] };
+      }
+      return { ...prev, [qi]: cur.includes(label) ? [] : [label] };
+    });
+  };
+
+  const answered = questions.every(
+    (_, i) => (selected[i]?.length ?? 0) > 0 || (other[i] ?? '').trim() !== '',
+  );
+
+  const submit = () => {
+    const answers: Record<string, string> = {};
+    questions.forEach((q, i) => {
+      const parts = [...(selected[i] ?? [])];
+      const free = (other[i] ?? '').trim();
+      if (free) parts.push(free);
+      answers[q.question] = parts.join(', ');
+    });
+    onSubmit(answers);
+  };
+
+  if (questions.length === 0) {
+    // 想定外の形状: 生 JSON を出して手動判断してもらう
+    return <pre className="chat-tool-pre">{JSON.stringify(req.input, null, 2)}</pre>;
+  }
+
+  return (
+    <>
+      {questions.map((q, qi) => (
+        <div key={qi} className="chat-q">
+          <div className="chat-q-head">
+            {q.header && <span className="chat-q-chip">{q.header}</span>}
+            <span className="chat-q-text">{q.question}</span>
+          </div>
+          <div className="chat-q-opts">
+            {q.options.map((opt) => (
+              <button
+                key={opt.label}
+                className={`chat-q-opt ${(selected[qi] ?? []).includes(opt.label) ? 'selected' : ''}`}
+                onClick={() => toggle(qi, opt.label, q.multiSelect)}
+              >
+                <span className="chat-q-opt-label">{opt.label}</span>
+                {opt.description && <span className="chat-q-opt-desc">{opt.description}</span>}
+              </button>
+            ))}
+          </div>
+          <input
+            className="chat-q-other"
+            type="text"
+            placeholder={otherPlaceholder}
+            value={other[qi] ?? ''}
+            onChange={(e) => setOther((prev) => ({ ...prev, [qi]: e.target.value }))}
+          />
+        </div>
+      ))}
+      <div className="chat-perm-actions">
+        <button className="chat-perm-allow" disabled={!answered} onClick={submit}>
+          {submitLabel}
+        </button>
+        <button className="chat-perm-deny" onClick={onSkip}>
+          {skipLabel}
+        </button>
+      </div>
+    </>
+  );
+}
+
 /** ツール呼び出しの 1 行サマリー (VS Code 拡張の "⏺ Bash(ls -la)" 相当)。 */
 function toolSummary(tool: string, input: ToolInput): string {
   switch (tool) {
@@ -142,6 +275,10 @@ function toolSummary(tool: string, input: ToolInput): string {
       return str(input.command) || str(input.description);
     case 'ExitPlanMode':
       return str(input.plan).split('\n')[0] ?? '';
+    case 'AskUserQuestion': {
+      const first = Array.isArray(input.questions) ? (input.questions[0] as { question?: unknown }) : null;
+      return str(first?.question);
+    }
     case 'Read':
     case 'Write':
     case 'Edit':
@@ -394,9 +531,17 @@ export default function ChatView({
     decision: 'allow' | 'always' | 'deny',
     /** プラン承認 (ExitPlanMode) 専用: 承認後に適用するモード */
     mode?: 'acceptEdits' | 'auto',
+    /** AskUserQuestion 専用: 質問文 → 回答ラベル */
+    answers?: Record<string, string>,
   ) => {
     setRequests((prev) => prev.filter((r) => r.requestId !== requestId));
-    send({ type: 'permission', requestId, decision, ...(mode ? { mode } : {}) });
+    send({
+      type: 'permission',
+      requestId,
+      decision,
+      ...(mode ? { mode } : {}),
+      ...(answers ? { answers } : {}),
+    });
   };
 
   const currentMode: UiMode = (MODES as readonly string[]).includes(meta.permissionMode ?? '')
@@ -503,6 +648,25 @@ export default function ChatView({
           <div className="chat-working">✻ {t('chat.working')}</div>
         )}
         {requests.map((req) => {
+          // AskUserQuestion = 質問カード (許可ではなく回答を集める)
+          if (req.tool === 'AskUserQuestion') {
+            return (
+              <div key={req.requestId} className="chat-perm-card chat-q-card">
+                <div className="chat-perm-title">
+                  <span className="codicon codicon-question" />
+                  {t('chat.questionTitle')}
+                </div>
+                <QuestionCard
+                  req={req}
+                  submitLabel={t('chat.questionSubmit')}
+                  skipLabel={t('chat.questionSkip')}
+                  otherPlaceholder={t('chat.questionOtherPlaceholder')}
+                  onSubmit={(answers) => answer(req.requestId, 'allow', undefined, answers)}
+                  onSkip={() => answer(req.requestId, 'deny')}
+                />
+              </div>
+            );
+          }
           // ExitPlanMode = プラン承認 (TUI の plan mode 承認ダイアログ相当)。
           // プラン本文を markdown で描画し、選択肢の文言も専用にする
           const isPlan = req.tool === 'ExitPlanMode';

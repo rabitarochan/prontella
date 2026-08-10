@@ -137,6 +137,13 @@ export const FILES_STRINGS = {
     en: 'Approve & auto mode',
   },
   'chat.planKeep': { ja: 'プランを続ける', en: 'Keep planning' },
+  'chat.questionTitle': { ja: 'エージェントからの質問', en: 'Question from agent' },
+  'chat.questionSubmit': { ja: '回答を送信', en: 'Submit answers' },
+  'chat.questionSkip': { ja: '回答しない', en: 'Decline' },
+  'chat.questionOtherPlaceholder': {
+    ja: 'その他 (自由入力)',
+    en: 'Other (free text)',
+  },
   'chat.permissionTitle': { ja: 'ツール実行の許可: {tool}', en: 'Tool permission: {tool}' },
   'chat.allow': { ja: '許可', en: 'Allow' },
   'chat.alwaysAllow': { ja: '常に許可 (セッション)', en: 'Always allow (session)' },

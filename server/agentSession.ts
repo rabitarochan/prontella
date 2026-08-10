@@ -75,6 +75,22 @@ function capText(text: string): string {
   return text.length <= RESULT_TEXT_MAX ? text : text.slice(0, RESULT_TEXT_MAX) + '\n… (truncated)';
 }
 
+/**
+ * AskUserQuestion の回答 (質問文 → 選択ラベル) の形状検証。信頼できない WS 入力
+ * なので、プレーンオブジェクト・文字列のみ・件数と長さの上限を強制する。
+ */
+function validAnswers(value: unknown): Record<string, string> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0 || entries.length > 8) return undefined;
+  const answers: Record<string, string> = {};
+  for (const [key, val] of entries) {
+    if (typeof val !== 'string' || key.length > 500 || val.length > 4_000) return undefined;
+    answers[key] = val;
+  }
+  return answers;
+}
+
 /** tool_result の content (string | blocks) からテキストを取り出す。 */
 function resultText(content: unknown): string {
   if (typeof content === 'string') return content;
@@ -205,7 +221,14 @@ export class AgentSessionManager {
     );
     ws.on('message', (raw) => {
       // 信頼できない入力: JSON 形状と各フィールドの型を検証してから使う
-      let msg: { type?: unknown; text?: unknown; requestId?: unknown; decision?: unknown; mode?: unknown };
+      let msg: {
+        type?: unknown;
+        text?: unknown;
+        requestId?: unknown;
+        decision?: unknown;
+        mode?: unknown;
+        answers?: unknown;
+      };
       try {
         msg = JSON.parse(String(raw));
       } catch {
@@ -219,10 +242,10 @@ export class AgentSessionManager {
         typeof msg.requestId === 'string' &&
         (msg.decision === 'allow' || msg.decision === 'always' || msg.decision === 'deny')
       ) {
-        // mode はプラン承認 (ExitPlanMode) 専用の追加指定: 承認後に適用するモード
+        // mode はプラン承認 (ExitPlanMode) 専用、answers は AskUserQuestion 専用の追加指定
         const postMode =
           msg.mode === 'acceptEdits' || msg.mode === 'auto' ? msg.mode : undefined;
-        this.resolvePermission(session, msg.requestId, msg.decision, postMode);
+        this.resolvePermission(session, msg.requestId, msg.decision, postMode, validAnswers(msg.answers));
       } else if (msg.type === 'setMode' && UI_MODES.has(msg.mode as PermissionMode)) {
         this.setMode(session, msg.mode as PermissionMode);
       } else if (msg.type === 'interrupt') {
@@ -322,6 +345,8 @@ export class AgentSessionManager {
     decision: 'allow' | 'always' | 'deny',
     /** ExitPlanMode 承認時に適用するモード (「承認して編集を自動承認 / 自動モード」) */
     postMode?: 'acceptEdits' | 'auto',
+    /** AskUserQuestion の回答 (質問文 → 選択ラベル)。updatedInput.answers に注入する */
+    answers?: Record<string, string>,
   ): void {
     const pending = session.pending.get(requestId);
     if (!pending) return;
@@ -334,7 +359,12 @@ export class AgentSessionManager {
     } else {
       pending.resolve({
         behavior: 'allow',
-        updatedInput: pending.input,
+        // AskUserQuestion は「permission component が回答を collect して
+        // updatedInput.answers で返す」のが SDK の想定経路 (sdk-tools.d.ts)
+        updatedInput:
+          pending.tool === 'AskUserQuestion' && answers
+            ? { ...pending.input, answers }
+            : pending.input,
         // 「常に許可」= SDK が提案した permission 更新をそのまま適用する。
         // プラン承認でモード指定があれば setMode をこのセッション限定で積む
         ...(decision === 'always' && pending.suggestions.length > 0

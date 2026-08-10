@@ -2600,14 +2600,72 @@ button.statusbar-item:hover:not(:disabled) {
   padding: 1px 8px;
   font-size: 11px;
 }
+/* ローカルコマンド出力 (/usage 等) */
+.chat-cmd-output {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--fg-dim);
+  border-left: 3px solid var(--border);
+  padding: 2px 0 2px 10px;
+}
 .chat-input-row {
   flex: none;
+  position: relative;
   display: flex;
   align-items: flex-end;
   gap: 6px;
   padding: 8px 10px;
   border-top: 1px solid var(--border);
   background: var(--bg-panel);
+}
+/* 入力補完ポップアップ (スラッシュコマンド / @ファイル) */
+.chat-complete {
+  position: absolute;
+  bottom: 100%;
+  left: 10px;
+  right: 10px;
+  margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--card-shadow);
+  z-index: 20;
+}
+.chat-complete-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  text-align: left;
+  padding: 5px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  min-width: 0;
+}
+.chat-complete-item.active {
+  background: var(--bg-active);
+}
+.chat-complete-label {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-mono, monospace);
+}
+.chat-complete-detail {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .chat-input {
   flex: 1;

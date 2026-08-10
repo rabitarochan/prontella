@@ -33,6 +33,7 @@ import { broadcastEvent, registerSnapshotProvider } from './sessionEvents.js';
 export type AgentChatEvent =
   | { kind: 'user'; text: string; ts: number }
   | { kind: 'assistant'; text: string; ts: number }
+  | { kind: 'command_output'; text: string; ts: number }
   | { kind: 'thinking'; text: string; ts: number }
   | { kind: 'tool_use'; id: string; tool: string; input: unknown; ts: number }
   | { kind: 'tool_result'; toolUseId: string; text: string; isError: boolean; ts: number }
@@ -148,6 +149,8 @@ interface AgentSession {
   live: { text: string; thinking: string };
   /** system/init から得たセッションメタ (snapshot と 'meta' で配布) */
   meta: { model: string | null; permissionMode: string | null };
+  /** スラッシュコマンド一覧 (supportedCommands / commands_changed で更新) */
+  commands: { name: string; description: string; argumentHint: string }[];
   sockets: Set<WebSocket>;
   input: AsyncQueue<SDKUserMessage>;
   q: Query;
@@ -193,6 +196,7 @@ export class AgentSessionManager {
       events: [],
       live: { text: '', thinking: '' },
       meta: { model: null, permissionMode: null },
+      commands: [],
       sockets: new Set(),
       input,
       q,
@@ -201,6 +205,10 @@ export class AgentSessionManager {
     };
     this.sessions.set(id, session);
     void this.pump(session);
+    // CLI は最初の入力メッセージまで起動を遅延するため、init を待たず
+    // ここで control request を投げてコマンド一覧を先に取りに行く
+    // (副次効果として CLI が先に温まり、初回ターンの体感も速くなる)
+    void this.loadCommands(session);
     broadcastEvent({ type: 'session', session: this.toInfo(session) });
     return this.toInfo(session);
   }
@@ -215,6 +223,7 @@ export class AgentSessionManager {
         events: session.events,
         live: session.live,
         meta: session.meta,
+        commands: session.commands,
         status: session.status,
         requests: [...session.pending.values()].map((p) => this.requestPayload(p)),
       }),
@@ -276,6 +285,26 @@ export class AgentSessionManager {
     if (!cwd) return all;
     const target = normalizePath(cwd);
     return all.filter((s) => normalizePath(s.cwd) === target);
+  }
+
+  private setCommands(
+    session: AgentSession,
+    commands: { name: string; description: string; argumentHint: string }[],
+  ): void {
+    session.commands = commands.map((c) => ({
+      name: c.name,
+      description: c.description ?? '',
+      argumentHint: c.argumentHint ?? '',
+    }));
+    this.broadcast(session, { type: 'commands', commands: session.commands });
+  }
+
+  private async loadCommands(session: AgentSession): Promise<void> {
+    try {
+      this.setCommands(session, await session.q.supportedCommands());
+    } catch {
+      // 未対応バージョン等。補完が出ないだけで動作には影響しない
+    }
   }
 
   /** permissionMode を実行中に切り替える (TUI の Shift+Tab 相当)。 */
@@ -439,6 +468,17 @@ export class AgentSessionManager {
             permissionMode: typeof msg.permissionMode === 'string' ? msg.permissionMode : null,
           };
           this.broadcast(session, { type: 'meta', meta: session.meta });
+          // コマンド一覧は init の名前配列より説明付きの supportedCommands() を使う
+          void this.loadCommands(session);
+        } else if (msg.subtype === 'commands_changed') {
+          this.setCommands(session, msg.commands);
+        } else if (msg.subtype === 'local_command_output') {
+          // /usage 等のローカルコマンド出力はトランスクリプトへそのまま流す
+          this.pushEvent(session, {
+            kind: 'command_output',
+            text: capText(msg.content),
+            ts: Date.now(),
+          });
         }
         break;
       }

@@ -252,6 +252,7 @@ export interface TerminalSession {
 export type AgentChatEvent =
   | { kind: 'user'; text: string; ts: number }
   | { kind: 'assistant'; text: string; ts: number }
+  | { kind: 'command_output'; text: string; ts: number }
   | { kind: 'thinking'; text: string; ts: number }
   | { kind: 'tool_use'; id: string; tool: string; input: unknown; ts: number }
   | { kind: 'tool_result'; toolUseId: string; text: string; isError: boolean; ts: number }
@@ -273,4 +274,10 @@ export interface AgentPermissionRequest {
 export interface AgentSessionMeta {
   model: string | null;
   permissionMode: string | null;
+}
+
+export interface AgentSlashCommand {
+  name: string;
+  description: string;
+  argumentHint: string;
 }

@@ -6,6 +6,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { api } from '../api';
 import { useT, type StringKey } from '../i18n';
 import { highlightInto } from '../markdown/highlight';
 import { renderMarkdownToFragment } from '../markdown/render';
@@ -13,6 +14,7 @@ import type {
   AgentChatEvent,
   AgentPermissionRequest,
   AgentSessionMeta,
+  AgentSlashCommand,
   AgentStatus,
 } from '../types';
 import StatusBadge from './StatusBadge';
@@ -133,6 +135,82 @@ type ToolInput = Record<string, unknown>;
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
+}
+
+// ---- 入力補完 (スラッシュコマンド / @ファイルメンション) ----
+
+interface CompletionItem {
+  /** 置換対象トークン (draft 末尾のこの文字列を insert で置き換える) */
+  token: string;
+  insert: string;
+  label: string;
+  detail: string;
+}
+
+const COMPLETION_MAX = 8;
+
+function isSubsequence(needle: string, haystack: string): boolean {
+  let i = 0;
+  for (const ch of haystack) {
+    if (ch === needle[i]) i++;
+    if (i === needle.length) return true;
+  }
+  return needle.length === 0;
+}
+
+/** Ctrl+P と同系の軽量マッチ: 部分一致を優先し、残りをサブシーケンスで拾う。 */
+function matchFiles(files: string[], query: string): string[] {
+  if (!query) return files.slice(0, COMPLETION_MAX);
+  const q = query.toLowerCase();
+  const contains: string[] = [];
+  const subseq: string[] = [];
+  for (const file of files) {
+    const f = file.toLowerCase();
+    if (f.includes(q)) {
+      contains.push(file);
+      if (contains.length >= COMPLETION_MAX) break;
+    } else if (subseq.length < COMPLETION_MAX && isSubsequence(q, f)) {
+      subseq.push(file);
+    }
+  }
+  return [...contains, ...subseq].slice(0, COMPLETION_MAX);
+}
+
+/**
+ * draft の末尾トークンから補完候補を組み立てる。
+ * - 入力全体が "/..." の 1 トークン → スラッシュコマンド補完
+ * - 末尾トークンが "@..." → ファイルメンション補完
+ */
+function buildCompletion(
+  draft: string,
+  commands: AgentSlashCommand[],
+  files: string[] | null,
+): { kind: 'slash' | 'file'; items: CompletionItem[] } | null {
+  if (/^\/\S*$/.test(draft)) {
+    const q = draft.slice(1).toLowerCase();
+    const items = commands
+      .filter((c) => c.name.toLowerCase().includes(q))
+      .slice(0, COMPLETION_MAX)
+      .map((c) => ({
+        token: draft,
+        insert: `/${c.name} `,
+        label: `/${c.name}`,
+        detail: [c.argumentHint, c.description].filter(Boolean).join(' — '),
+      }));
+    return items.length > 0 ? { kind: 'slash', items } : null;
+  }
+  const mention = draft.match(/(?:^|\s)(@[^\s@]*)$/);
+  if (mention && files) {
+    const token = mention[1];
+    const items = matchFiles(files, token.slice(1)).map((file) => ({
+      token,
+      insert: `@${file} `,
+      label: file,
+      detail: '',
+    }));
+    return items.length > 0 ? { kind: 'file', items } : null;
+  }
+  return null;
 }
 
 // ---- AskUserQuestion (質問カード) ----
@@ -399,6 +477,13 @@ export default function ChatView({
   const [requests, setRequests] = useState<AgentPermissionRequest[]>([]);
   const [ended, setEnded] = useState(false);
   const [draft, setDraft] = useState('');
+  const [commands, setCommands] = useState<AgentSlashCommand[]>([]);
+  // ファイル一覧は '@' が初めて入力されたときに 1 回だけ取得する
+  const [files, setFiles] = useState<string[] | null>(null);
+  const filesLoadingRef = useRef(false);
+  const [completeIndex, setCompleteIndex] = useState(0);
+  // Esc で閉じたら同じ draft のままでは再表示しない (draft 変更で解除)
+  const [completionDismissed, setCompletionDismissed] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // 末尾に張り付いているときだけ自動スクロールする (履歴を遡り中は動かさない)
@@ -419,6 +504,7 @@ export default function ChatView({
         text?: string;
         status?: AgentStatus;
         requests?: AgentPermissionRequest[];
+        commands?: AgentSlashCommand[];
         requestId?: string;
         tool?: string;
         input?: unknown;
@@ -439,6 +525,10 @@ export default function ChatView({
           if (msg.meta) setMeta(msg.meta);
           if (msg.status) setStatus(msg.status);
           setRequests(msg.requests ?? []);
+          if (Array.isArray(msg.commands)) setCommands(msg.commands);
+          break;
+        case 'commands':
+          if (Array.isArray(msg.commands)) setCommands(msg.commands);
           break;
         case 'event':
           if (msg.event) {
@@ -544,6 +634,37 @@ export default function ChatView({
     });
   };
 
+  // ---- 入力補完 ----
+  const completion = useMemo(
+    () => (completionDismissed ? null : buildCompletion(draft, commands, files)),
+    [draft, commands, files, completionDismissed],
+  );
+
+  // '@' トークンが現れたらファイル一覧を遅延ロード (セッションごとに 1 回)
+  useEffect(() => {
+    if (files !== null || filesLoadingRef.current) return;
+    if (!/(?:^|\s)@[^\s@]*$/.test(draft)) return;
+    filesLoadingRef.current = true;
+    api
+      .searchFiles(root)
+      .then((res) => setFiles(res.files))
+      .catch(() => {
+        filesLoadingRef.current = false; // 失敗時は次の '@' で再試行
+      });
+  }, [draft, files, root]);
+
+  // 候補が変わったら選択位置を先頭へ戻す
+  const completionSig = completion?.items.map((i) => i.label).join('\n') ?? '';
+  useEffect(() => {
+    setCompleteIndex(0);
+  }, [completionSig]);
+
+  const applyCompletion = (item: CompletionItem) => {
+    setDraft((prev) =>
+      prev.endsWith(item.token) ? prev.slice(0, prev.length - item.token.length) + item.insert : prev,
+    );
+  };
+
   const currentMode: UiMode = (MODES as readonly string[]).includes(meta.permissionMode ?? '')
     ? (meta.permissionMode as UiMode)
     : 'default';
@@ -596,6 +717,12 @@ export default function ChatView({
               return <UserBlock key={i} text={event.text} />;
             case 'assistant':
               return <MarkdownBlock key={i} source={event.text} root={root} />;
+            case 'command_output':
+              return (
+                <pre key={i} className="chat-cmd-output">
+                  {event.text}
+                </pre>
+              );
             case 'thinking':
               return <ThinkingBlock key={i} text={event.text} label={t('chat.thinking')} />;
             case 'tool_use':
@@ -768,14 +895,59 @@ export default function ChatView({
         )}
       </div>
       <div className="chat-input-row">
+        {completion && (
+          <div className="chat-complete">
+            {completion.items.map((item, i) => (
+              <button
+                key={item.label}
+                className={`chat-complete-item ${i === completeIndex ? 'active' : ''}`}
+                // mousedown で textarea のフォーカスを奪わない
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  applyCompletion(item);
+                }}
+              >
+                <span className="chat-complete-label">{item.label}</span>
+                {item.detail && <span className="chat-complete-detail">{item.detail}</span>}
+              </button>
+            ))}
+          </div>
+        )}
         <textarea
           className="chat-input"
           rows={2}
           placeholder={ended ? t('chat.ended') : t('chat.inputPlaceholder')}
           value={draft}
           disabled={ended}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setCompletionDismissed(false);
+          }}
           onKeyDown={(e) => {
+            // 補完ポップアップが開いている間は Enter/Tab/矢印/Esc を補完操作に充てる
+            if (completion) {
+              const len = completion.items.length;
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setCompleteIndex((i) => (i + 1) % len);
+                return;
+              }
+              if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setCompleteIndex((i) => (i - 1 + len) % len);
+                return;
+              }
+              if ((e.key === 'Tab' && !e.shiftKey) || (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing)) {
+                e.preventDefault();
+                applyCompletion(completion.items[completeIndex] ?? completion.items[0]);
+                return;
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setCompletionDismissed(true);
+                return;
+              }
+            }
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               submit();

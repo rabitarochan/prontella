@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import * as pty from 'node-pty';
 import type { WebSocket } from 'ws';
 import { claudeCommand } from './hooks.js';
+import { broadcastEvent, registerSnapshotProvider } from './sessionEvents.js';
 
 export type AgentStatus = 'busy' | 'waiting' | 'idle' | 'shell';
 
@@ -58,11 +59,26 @@ export interface SessionInfo {
   id: string;
   cwd: string;
   title: string;
+  /** 'pty' = ターミナル (xterm)、'sdk' = Agent SDK チャットセッション */
+  kind: 'pty' | 'sdk';
   status: AgentStatus;
   claudeDetected: boolean;
   createdAt: number;
   lastOutputAt: number;
   statusSince: number;
+}
+
+/** Aggregate agent status for a set of sessions: most attention-needing wins. */
+export function aggregateStatus(
+  sessions: SessionInfo[],
+): { status: AgentStatus | 'none'; terminalId: string | null } {
+  if (sessions.length === 0) return { status: 'none', terminalId: null };
+  const order: AgentStatus[] = ['waiting', 'busy', 'idle', 'shell'];
+  for (const status of order) {
+    const hit = sessions.find((s) => s.status === status);
+    if (hit) return { status, terminalId: hit.id };
+  }
+  return { status: 'shell', terminalId: sessions[0].id };
 }
 
 interface Session {
@@ -95,12 +111,12 @@ function defaultShell(): { file: string; args: string[] } {
 
 export class PtyManager {
   private sessions = new Map<string, Session>();
-  private eventSockets = new Set<WebSocket>();
   private timer: NodeJS.Timeout;
 
   constructor(private port: number) {
     this.timer = setInterval(() => this.tick(), 1_000);
     this.timer.unref();
+    registerSnapshotProvider(() => this.list());
   }
 
   create(cwd: string, run?: 'claude' | string): SessionInfo {
@@ -148,7 +164,7 @@ export class PtyManager {
       this.broadcast(session, { type: 'exit' });
       for (const ws of session.sockets) ws.close();
       this.sessions.delete(session.id);
-      this.broadcastEvent({ type: 'removed', id: session.id });
+      broadcastEvent({ type: 'removed', id: session.id });
     });
 
     if (run) {
@@ -161,7 +177,7 @@ export class PtyManager {
         if (!session.exited) proc.write(command + eol);
       }, process.platform === 'win32' ? 1_200 : 400);
     }
-    this.broadcastEvent({ type: 'session', session: this.toInfo(session) });
+    broadcastEvent({ type: 'session', session: this.toInfo(session) });
     return this.toInfo(session);
   }
 
@@ -211,19 +227,6 @@ export class PtyManager {
     });
     ws.on('close', () => session.sockets.delete(ws));
     return true;
-  }
-
-  /** 全セッションのステータス変化を購読するグローバルソケット (/ws/events)。 */
-  attachEvents(ws: WebSocket): void {
-    this.eventSockets.add(ws);
-    ws.send(
-      JSON.stringify({
-        type: 'snapshot',
-        sessions: [...this.sessions.values()].map((s) => this.toInfo(s)),
-      }),
-    );
-    ws.on('close', () => this.eventSockets.delete(ws));
-    ws.on('error', () => this.eventSockets.delete(ws));
   }
 
   /**
@@ -293,14 +296,7 @@ export class PtyManager {
 
   /** Aggregate agent status for a worktree path: most attention-needing wins. */
   statusFor(cwd: string): { status: AgentStatus | 'none'; terminalId: string | null } {
-    const sessions = this.list(cwd);
-    if (sessions.length === 0) return { status: 'none', terminalId: null };
-    const order: AgentStatus[] = ['waiting', 'busy', 'idle', 'shell'];
-    for (const status of order) {
-      const hit = sessions.find((s) => s.status === status);
-      if (hit) return { status, terminalId: hit.id };
-    }
-    return { status: 'shell', terminalId: sessions[0].id };
+    return aggregateStatus(this.list(cwd));
   }
 
   private onData(session: Session, data: string): void {
@@ -379,7 +375,7 @@ export class PtyManager {
     session.status = status;
     session.statusSince = Date.now();
     this.broadcast(session, { type: 'status', status });
-    this.broadcastEvent({ type: 'session', session: this.toInfo(session) });
+    broadcastEvent({ type: 'session', session: this.toInfo(session) });
   }
 
   /** Flushes coalesced 'data' output for a session, cancelling any pending timer. */
@@ -401,18 +397,12 @@ export class PtyManager {
     }
   }
 
-  private broadcastEvent(msg: object): void {
-    const payload = JSON.stringify(msg);
-    for (const ws of this.eventSockets) {
-      if (ws.readyState === ws.OPEN) ws.send(payload);
-    }
-  }
-
   private toInfo(session: Session): SessionInfo {
     return {
       id: session.id,
       cwd: session.cwd,
       title: session.title,
+      kind: 'pty',
       status: session.status,
       claudeDetected: session.claudeDetected,
       createdAt: session.createdAt,

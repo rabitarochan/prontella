@@ -9,7 +9,9 @@ import * as git from './git.js';
 import * as files from './files.js';
 import * as search from './search.js';
 import { buildPartialPatchLines, checkApplyHunksRequest, hashHunk, splitDiffHunks, type ApplyDirection } from './diffPatch.js';
-import { PtyManager } from './pty.js';
+import { PtyManager, aggregateStatus } from './pty.js';
+import { AgentSessionManager } from './agentSession.js';
+import { attachEvents } from './sessionEvents.js';
 
 const PORT = Number(process.env.PORT) || 3711;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,6 +29,12 @@ const app = express();
 app.use(express.json({ limit: '10mb' }));
 
 const ptyManager = new PtyManager(PORT);
+const agentManager = new AgentSessionManager();
+
+// worktree の集約ステータスは PTY と chat (SDK) の両セッションを合算する
+function agentStatusFor(cwd: string) {
+  return aggregateStatus([...ptyManager.list(cwd), ...agentManager.list(cwd)]);
+}
 
 function asyncHandler(
   fn: (req: express.Request, res: express.Response) => Promise<void>,
@@ -98,7 +106,7 @@ app.get('/api/repos', asyncHandler(async (_req, res) => {
         // none: git リポジトリーではない
         const pseudo = {
           path: repo.path, head: '', branch: null, isMain: true, locked: false,
-          status: null, agent: ptyManager.statusFor(repo.path),
+          status: null, agent: agentStatusFor(repo.path),
         };
         worktreeCache.set(repo.id, [pseudo.path]);
         return { ...repo, pinned: repo.pinned === true, archived: false, gitMode: 'none', worktrees: [pseudo], error: null };
@@ -119,7 +127,7 @@ app.get('/api/repos', asyncHandler(async (_req, res) => {
           const entry = {
             path: repo.path, head: container?.head ?? '', branch: container?.branch ?? null,
             isMain: true /* 削除✕を出さない */, locked: container?.locked ?? false,
-            status, agent: ptyManager.statusFor(repo.path),
+            status, agent: agentStatusFor(repo.path),
           };
           worktreeCache.set(repo.id, [entry.path]);
           return { ...repo, pinned: repo.pinned === true, archived: false, gitMode: 'subdir', worktrees: [entry], error: null };
@@ -140,7 +148,7 @@ app.get('/api/repos', asyncHandler(async (_req, res) => {
             } catch {
               // worktree directory may be missing/prunable
             }
-            return { ...wt, status, agent: ptyManager.statusFor(wt.path) };
+            return { ...wt, status, agent: agentStatusFor(wt.path) };
           }),
         );
         worktreeCache.set(repo.id, detailed.map((wt) => wt.path));
@@ -1158,7 +1166,9 @@ app.get('/api/search/text', asyncHandler(async (req, res) => {
 // ---- terminals ---------------------------------------------------------------
 
 app.get('/api/terminals', asyncHandler(async (req, res) => {
-  res.json(ptyManager.list(typeof req.query.cwd === 'string' ? req.query.cwd : undefined));
+  const cwd = typeof req.query.cwd === 'string' ? req.query.cwd : undefined;
+  // PTY と chat (SDK) の両セッションを返す。kind フィールドで判別する
+  res.json([...ptyManager.list(cwd), ...agentManager.list(cwd)]);
 }));
 
 app.post('/api/terminals', asyncHandler(async (req, res) => {
@@ -1169,7 +1179,29 @@ app.post('/api/terminals', asyncHandler(async (req, res) => {
 }));
 
 app.post('/api/terminals/:id/kill', asyncHandler(async (req, res) => {
-  res.json({ ok: ptyManager.kill(req.params.id) });
+  res.json({ ok: ptyManager.kill(req.params.id) || agentManager.kill(req.params.id) });
+}));
+
+// chat (Agent SDK) セッションの作成 / 再開。一覧・kill は /api/terminals に相乗りする
+app.post('/api/agents', asyncHandler(async (req, res) => {
+  const resume = typeof req.body.resume === 'string' && req.body.resume ? req.body.resume : undefined;
+  if (resume) {
+    const session = agentManager.resume(resume);
+    if (!session) throw new Error('再開できるセッションが見つかりません');
+    res.json(session);
+    return;
+  }
+  const cwd = String(req.body.cwd ?? '');
+  if (!fs.existsSync(cwd)) throw new Error(`ディレクトリーが存在しません: ${cwd}`);
+  res.json(agentManager.create(cwd));
+}));
+
+app.get('/api/agents/resumable', asyncHandler(async (req, res) => {
+  res.json(agentManager.resumable(typeof req.query.cwd === 'string' ? req.query.cwd : undefined));
+}));
+
+app.post('/api/agents/resumable/:id/discard', asyncHandler(async (req, res) => {
+  res.json({ ok: agentManager.discardRecord(req.params.id) });
 }));
 
 // Claude Code の hooks (deck-hook.mjs) からのイベント通知。127.0.0.1 バインドの
@@ -1237,9 +1269,18 @@ server.on('upgrade', (req, socket, head) => {
         ws.close();
       }
     });
+  } else if (url.pathname === '/ws/agent') {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      const id = url.searchParams.get('id') ?? '';
+      if (!agentManager.attach(id, ws)) {
+        ws.send(JSON.stringify({ type: 'error', message: 'セッションが見つかりません' }));
+        ws.close();
+      }
+    });
   } else if (url.pathname === '/ws/events') {
-    // 全セッションのステータス変化を購読するグローバルチャンネル (通知・要対応キュー用)
-    wss.handleUpgrade(req, socket, head, (ws) => ptyManager.attachEvents(ws));
+    // 全セッションのステータス変化を購読するグローバルチャンネル (通知・要対応キュー用)。
+    // PTY と chat の両マネージャーが sessionEvents 経由で流す
+    wss.handleUpgrade(req, socket, head, (ws) => attachEvents(ws));
   } else {
     socket.destroy();
   }

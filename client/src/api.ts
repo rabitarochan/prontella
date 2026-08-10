@@ -19,6 +19,7 @@ import type {
   StashEntry,
   StatusFile,
   TagInfo,
+  AgentResumableSession,
   TerminalSession,
   TreeEntry,
   TreeStatusEntry,
@@ -268,5 +269,10 @@ export const api = {
   terminals: (cwd?: string) =>
     request<TerminalSession[]>(`/api/terminals${cwd ? `?cwd=${q(cwd)}` : ''}`),
   createTerminal: (cwd: string, run?: string) => post<TerminalSession>('/api/terminals', { cwd, run }),
+  createAgent: (cwd: string, resume?: string) => post<TerminalSession>('/api/agents', { cwd, resume }),
+  agentResumable: (cwd: string) =>
+    request<AgentResumableSession[]>(`/api/agents/resumable?cwd=${q(cwd)}`),
+  discardAgentRecord: (deckId: string) =>
+    post<{ ok: boolean }>(`/api/agents/resumable/${deckId}/discard`, {}),
   killTerminal: (id: string) => post<{ ok: boolean }>(`/api/terminals/${id}/kill`, {}),
 };

@@ -238,9 +238,81 @@ export interface TerminalSession {
   id: string;
   cwd: string;
   title: string;
+  /** 'pty' = ターミナル、'sdk' = Agent SDK チャット。server/pty.ts SessionInfo と手動同期 */
+  kind: 'pty' | 'sdk';
   status: AgentStatus;
   claudeDetected: boolean;
   createdAt: number;
   lastOutputAt: number;
   statusSince: number;
+}
+
+// chat (Agent SDK) セッションの構造化イベント。server/agentSession.ts と手動同期
+// (共有型機構がないため)。
+export type AgentChatEvent =
+  | { kind: 'user'; text: string; images?: number; ts: number }
+  | { kind: 'assistant'; text: string; ts: number }
+  | { kind: 'command_output'; text: string; ts: number }
+  | { kind: 'thinking'; text: string; ts: number }
+  | { kind: 'tool_use'; id: string; tool: string; input: unknown; ts: number }
+  | { kind: 'tool_result'; toolUseId: string; text: string; isError: boolean; ts: number }
+  | { kind: 'permission'; tool: string; decision: 'allow' | 'always' | 'deny'; ts: number }
+  | { kind: 'result'; subtype: string; costUsd: number | null; durationMs: number | null; ts: number }
+  | { kind: 'error'; message: string; ts: number };
+
+export interface AgentPermissionRequest {
+  requestId: string;
+  tool: string;
+  input: unknown;
+  /** SDK ブリッジが組み立てた許可プロンプト文 ("Claude wants to read foo.txt" 相当) */
+  title: string | null;
+  description: string | null;
+  /** true なら「常に許可 (このセッション)」を選べる */
+  canAlways: boolean;
+}
+
+export interface AgentSessionMeta {
+  model: string | null;
+  permissionMode: string | null;
+  effort: string | null;
+  thinking: boolean;
+}
+
+/** コンテキスト使用量 (server/agentSession.ts stats と手動同期) */
+export interface AgentSessionStats {
+  contextTokens: number | null;
+  contextWindow: number | null;
+}
+
+/** 稼働中のサブエージェント (server/agentSession.ts subagents と手動同期) */
+export interface AgentSubagent {
+  id: string;
+  name: string;
+  description: string;
+  startedAt: number;
+  activity: string;
+}
+
+export interface AgentSlashCommand {
+  name: string;
+  description: string;
+  argumentHint: string;
+}
+
+/** 選択可能なモデル (server/agentSession.ts models — SDK supportedModels 由来) */
+export interface AgentModelInfo {
+  value: string;
+  resolvedModel?: string;
+  displayName: string;
+  description: string;
+  supportsEffort?: boolean;
+  supportedEffortLevels?: string[];
+}
+
+/** 再開できる保存済みエージェントセッション (server/agentSession.ts resumable) */
+export interface AgentResumableSession {
+  deckId: string;
+  title: string;
+  cwd: string;
+  savedAt: number;
 }

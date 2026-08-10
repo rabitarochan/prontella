@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, ChevronDown, FileText, GitBranch, GripVertical, Terminal } from 'lucide-react';
+import { Check, ChevronDown, FileText, GitBranch, GripVertical, MessageSquare, Terminal } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useT, type StringKey } from '../../i18n';
 import type { AgentStatus, TerminalSession } from '../../types';
+import { sessionKind } from '../../layout/sessionKinds';
 import { LEAD_SLOT_SUFFIX, useTileBarSlots } from '../../layout/tileBarSlots';
 import { useTileDnd } from '../../layout/tileDnd';
 import type { LeafNode, TileView } from '../../layout/tileTree';
@@ -19,6 +20,7 @@ const VIEWS: { view: TileView; labelKey: StringKey; Icon: typeof FileText }[] = 
   { view: 'files', labelKey: 'tile.viewFiles', Icon: FileText },
   { view: 'git', labelKey: 'tile.viewGit', Icon: GitBranch },
   { view: 'term', labelKey: 'tile.viewTerm', Icon: Terminal },
+  { view: 'chat', labelKey: 'tile.viewChat', Icon: MessageSquare },
 ];
 
 /** タイル内セッションの「最も注意が必要な」ステータス (デッキのカードと同じ優先順)。 */
@@ -123,6 +125,12 @@ export default function TilePane({
   };
 
   const termStatus = aggregateStatus(leaf, sessions);
+  // ドロップダウンのセッション数は kind で振り分ける (term = pty / chat = sdk)
+  const ptyCount = leaf.sessions.filter((id) => sessionKind(id) !== 'sdk').length;
+  const chatCount = leaf.sessions.length - ptyCount;
+  // term / chat ビューではセッションタブ自体がバーに入る (ドット付き) ため、
+  // 先頭ゾーンの集約カウント / ステータスドットは他ビュー表示中のみ出す
+  const tabsInBar = leaf.view === 'term' || leaf.view === 'chat';
   const current = VIEWS.find((v) => v.view === leaf.view) ?? VIEWS[0];
   const CurrentIcon = current.Icon;
 
@@ -159,20 +167,21 @@ export default function TilePane({
                 <DropdownMenuItem key={view} onSelect={() => actions.setView(leaf.id, view)}>
                   <Icon />
                   {t(labelKey)}
-                  {view === 'term' && leaf.sessions.length > 0 && (
-                    <span className="tile-tab-count">{leaf.sessions.length}</span>
+                  {view === 'term' && ptyCount > 0 && (
+                    <span className="tile-tab-count">{ptyCount}</span>
+                  )}
+                  {view === 'chat' && chatCount > 0 && (
+                    <span className="tile-tab-count">{chatCount}</span>
                   )}
                   {leaf.view === view && <Check className="ml-auto text-primary" />}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
-          {/* term ビューではセッションタブ自体がバーに入る (ドット付き) ため、
-              集約カウント / ステータスドットは他ビュー表示中のみ出す */}
-          {leaf.view !== 'term' && leaf.sessions.length > 0 && (
+          {!tabsInBar && leaf.sessions.length > 0 && (
             <span className="tile-tab-count">{leaf.sessions.length}</span>
           )}
-          {leaf.view !== 'term' && termStatus && <StatusBadge status={termStatus} dot />}
+          {!tabsInBar && termStatus && <StatusBadge status={termStatus} dot />}
           <span
             className="tile-bar-slot tile-bar-slot-lead"
             ref={(el) => {

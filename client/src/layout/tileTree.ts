@@ -1,9 +1,9 @@
 // Tile layout tree: pure data + pure operations, no React.
 // A layout is a tree of splits (row = side by side, column = stacked).
-// v2: every leaf is a tabbed workspace — the view (files / git / term) is
-// switched INSIDE the tile, and terminal sessions belong to a leaf as tabs.
+// v2: every leaf is a tabbed workspace — the view (files / git / term / chat)
+// is switched INSIDE the tile, and terminal sessions belong to a leaf as tabs.
 
-export type TileView = 'files' | 'git' | 'term';
+export type TileView = 'files' | 'git' | 'term' | 'chat';
 
 export interface LeafNode {
   type: 'leaf';
@@ -267,32 +267,40 @@ export function normalize(node: TileNode | null): TileNode | null {
  * first term-view leaf, else the first leaf). Does NOT switch the target
  * leaf's view — adoption is a background event. Returns the same object when
  * nothing changed.
+ *
+ * kind ルーティング: chat (SDK) セッションは chat ビューの leaf にだけ
+ * 養子縁組する (term タイルに xterm として現れないように)。受け皿の chat
+ * leaf が無ければ据え置く — 作成元タブが place コールバックで明示的に引き取る。
  */
 export function adoptSessions(
   layout: WorktreeLayout,
-  sessionIds: string[],
+  sessions: { id: string; kind?: string }[],
   preferLeafId: string | null,
 ): WorktreeLayout {
   const all = leaves(layout.root);
   const owned = new Set(all.flatMap((l) => l.sessions));
-  const unplaced = sessionIds.filter((id) => !owned.has(id));
+  const unplaced = sessions.filter((s) => !owned.has(s.id));
   if (unplaced.length === 0) return layout;
 
-  let root = layout.root;
-  if (!root) root = makeLeaf('term');
-  const current = leaves(root);
-  const target =
-    current.find((l) => l.id === preferLeafId) ??
-    current.find((l) => l.view === 'term') ??
-    current[0];
-
-  for (const sessionId of unplaced) {
+  let root = layout.root ?? makeLeaf('term');
+  let changed = false;
+  for (const session of unplaced) {
+    const current = leaves(root);
+    const prefer = current.find((l) => l.id === preferLeafId);
+    const target =
+      session.kind === 'sdk'
+        ? ((prefer?.view === 'chat' ? prefer : undefined) ??
+          current.find((l) => l.view === 'chat'))
+        : (prefer ?? current.find((l) => l.view === 'term') ?? current[0]);
+    if (!target) continue;
+    changed = true;
     root = updateLeaf(root, target.id, (leaf) => ({
       ...leaf,
-      sessions: [...leaf.sessions, sessionId],
-      activeSession: leaf.activeSession ?? sessionId,
+      sessions: [...leaf.sessions, session.id],
+      activeSession: leaf.activeSession ?? session.id,
     }));
   }
+  if (!changed) return layout;
   return { ...layout, root };
 }
 
@@ -352,7 +360,7 @@ export function sanitize(value: unknown): WorktreeLayout | null {
     };
     if (node.type === 'leaf') {
       const view: TileView =
-        node.view === 'files' || node.view === 'git' || node.view === 'term'
+        node.view === 'files' || node.view === 'git' || node.view === 'term' || node.view === 'chat'
           ? node.view
           : 'term';
       const sessions = (Array.isArray(node.sessions) ? node.sessions : []).filter(

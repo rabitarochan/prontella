@@ -2160,6 +2160,754 @@ button.statusbar-item:hover:not(:disabled) {
   padding: 0 0 0 8px;
 }
 
+/* ---- agent panel (Agent SDK セッション — VS Code 拡張風トランスクリプト) ---- */
+
+.chat-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: var(--bg);
+}
+.chat-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+.chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.chat-hint {
+  color: var(--fg-dim);
+  font-size: 12px;
+  text-align: center;
+  margin-top: 24px;
+}
+/* ユーザープロンプト: 全幅・左アクセントの引用ブロック */
+.chat-user {
+  display: flex;
+  gap: 8px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--primary);
+  background: color-mix(in srgb, var(--primary) 6%, var(--bg));
+  border-radius: 0 6px 6px 0;
+}
+.chat-user-mark {
+  color: var(--primary);
+  flex: none;
+  font-weight: 700;
+}
+.chat-user-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* assistant 本文: md-preview-body のタイポグラフィを継承しつつ
+   コンテナー用のパディング/スクロールを打ち消す (specificity 0,2,0 で order 非依存) */
+.chat-view .md-preview-body {
+  flex: none;
+  overflow: visible;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.chat-view .md-preview-body h1 {
+  font-size: 1.35em;
+}
+.chat-view .md-preview-body h2 {
+  font-size: 1.2em;
+}
+.chat-view .md-preview-body h3 {
+  font-size: 1.05em;
+}
+/* 思考: 折りたたみ (確定分) / ストリーミング中 (live) */
+.chat-thinking summary,
+.chat-thinking-mark {
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-style: italic;
+  cursor: pointer;
+  user-select: none;
+}
+.chat-thinking-text {
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-style: italic;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 4px 0 0 14px;
+  border-left: 2px solid var(--border);
+  margin-left: 2px;
+}
+/* ツールカード: "⏺ Bash  <summary>  ✓" の 1 行、展開で入力と結果 */
+.chat-tool summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  min-width: 0;
+}
+.chat-tool summary::-webkit-details-marker {
+  display: none;
+}
+.chat-tool-bullet {
+  flex: none;
+  color: var(--green);
+}
+.chat-tool.running .chat-tool-bullet {
+  color: var(--yellow);
+  animation: chat-pulse 1.2s ease-in-out infinite;
+}
+.chat-tool.error .chat-tool-bullet {
+  color: var(--red);
+}
+@keyframes chat-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+.chat-tool-name {
+  flex: none;
+  font-weight: 600;
+}
+.chat-tool-summary {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg-dim);
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-tool-state {
+  flex: none;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+.chat-tool.error .chat-tool-state {
+  color: var(--red);
+}
+.chat-tool-detail {
+  margin: 6px 0 4px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.chat-tool-pre {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+.chat-tool-result.error {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 40%, var(--border));
+}
+/* Edit の -/+ diff */
+.chat-diff {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  background: var(--card);
+}
+.chat-diff-del {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+.chat-diff-add {
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 8%, transparent);
+}
+/* TodoWrite のチェックリスト */
+.chat-todo {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  padding: 8px 12px;
+  font-size: 12px;
+}
+.chat-todo-title {
+  font-weight: 600;
+  color: var(--fg-dim);
+  margin-bottom: 4px;
+}
+.chat-todo-item {
+  display: flex;
+  gap: 8px;
+  padding: 1px 0;
+}
+.chat-todo-item.completed {
+  color: var(--fg-dim);
+}
+.chat-todo-item.completed .chat-todo-mark {
+  color: var(--green);
+}
+.chat-todo-item.in_progress .chat-todo-mark {
+  color: var(--yellow);
+}
+.chat-todo-mark {
+  flex: none;
+  width: 14px;
+  text-align: center;
+}
+.chat-perm-note {
+  font-size: 11px;
+  color: var(--fg-dim);
+  padding-left: 18px;
+}
+.chat-perm-note.deny {
+  color: var(--orange);
+}
+/* ターン境界: 細い区切り + 右寄せの所要時間 */
+.chat-turn-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+.chat-turn-end::before {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+.chat-turn-error {
+  color: var(--orange);
+}
+.chat-error {
+  color: var(--red);
+  border: 1px solid color-mix(in srgb, var(--red) 40%, var(--border));
+  background: color-mix(in srgb, var(--red) 6%, var(--bg));
+  border-radius: 6px;
+  padding: 6px 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* ストリーミング中の本文 (確定後は MarkdownBlock に置き換わる) */
+.chat-live {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-live::after {
+  content: '▌';
+  color: var(--primary);
+  animation: chat-caret 1s steps(1) infinite;
+}
+@keyframes chat-caret {
+  50% {
+    opacity: 0;
+  }
+}
+.chat-working {
+  color: var(--fg-dim);
+  font-size: 12px;
+  animation: chat-pulse 1.2s ease-in-out infinite;
+}
+.chat-ended {
+  text-align: center;
+  font-size: 12px;
+  color: var(--fg-dim);
+  padding: 6px 0;
+}
+/* 許可ダイアログ (TUI の許可プロンプト相当) */
+.chat-perm-card {
+  border: 1px solid color-mix(in srgb, var(--yellow) 45%, var(--border));
+  background: color-mix(in srgb, var(--yellow) 7%, var(--card));
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat-perm-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.chat-perm-desc {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.chat-perm-body {
+  max-height: 220px;
+  overflow-y: auto;
+}
+.chat-perm-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.chat-perm-allow {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+}
+.chat-perm-always {
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 45%, var(--border));
+}
+.chat-perm-deny {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 45%, var(--border));
+}
+/* AskUserQuestion (質問カード) */
+.chat-q-card {
+  border-color: color-mix(in srgb, var(--blue) 45%, var(--border));
+  background: color-mix(in srgb, var(--blue) 6%, var(--card));
+}
+.chat-q {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.chat-q + .chat-q {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.chat-q-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.chat-q-chip {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--blue);
+  border: 1px solid color-mix(in srgb, var(--blue) 45%, var(--border));
+  border-radius: 999px;
+  padding: 0 8px;
+  line-height: 16px;
+}
+.chat-q-text {
+  font-size: 12px;
+  font-weight: 600;
+}
+.chat-q-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.chat-q-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.chat-q-opt.selected {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, var(--bg));
+}
+.chat-q-opt-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+.chat-q-opt-desc {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+.chat-q-other {
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+.chat-q-other:focus {
+  outline: none;
+  border-color: var(--primary-dim);
+}
+
+/* ステータスバー: モデル / permissionMode / コスト / 停止 */
+.chat-statusbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  font-size: 11px;
+  color: var(--fg-dim);
+  min-height: 24px;
+}
+.chat-statusbar-model,
+.chat-statusbar-cost {
+  font-family: var(--font-mono, monospace);
+}
+.chat-mode-btn {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--fg-dim);
+  background: transparent;
+  cursor: pointer;
+}
+.chat-mode-btn.active {
+  color: var(--yellow);
+  border-color: color-mix(in srgb, var(--yellow) 45%, var(--border));
+}
+.chat-mode-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.chat-model-btn {
+  color: var(--fg);
+  font-family: var(--font-mono, monospace);
+}
+.chat-model-effort {
+  margin-left: 6px;
+  color: var(--yellow);
+}
+/* モード配色: 手動 = 無彩色 / 編集自動承認 = 緑 / プラン = 黄 / 自動 = 青 */
+.chat-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.chat-mode-icon {
+  width: 12px;
+  height: 12px;
+}
+.chat-mode-btn.tone-acceptEdits {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+}
+.chat-mode-btn.tone-plan {
+  color: var(--yellow);
+  border-color: color-mix(in srgb, var(--yellow) 55%, var(--border));
+}
+.chat-mode-btn.tone-auto {
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 45%, var(--border));
+}
+/* モードが一目で分かるよう、パネル背景に各色を薄く敷く (プランは少し強め) */
+.chat-view.mode-acceptEdits .chat-scroll {
+  background: color-mix(in srgb, var(--green) 3%, var(--bg));
+}
+.chat-view.mode-plan .chat-scroll {
+  background: color-mix(in srgb, var(--yellow) 6%, var(--bg));
+}
+.chat-view.mode-plan .chat-statusbar {
+  background: color-mix(in srgb, var(--yellow) 8%, var(--bg-panel));
+}
+.chat-view.mode-auto .chat-scroll {
+  background: color-mix(in srgb, var(--blue) 3%, var(--bg));
+}
+/* コンテキスト使用量 */
+.chat-statusbar-context {
+  font-family: var(--font-mono, monospace);
+}
+/* サブエージェントチップ */
+.chat-statusbar-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 2px;
+  background: var(--border);
+}
+.chat-subagents {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.chat-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 8px;
+  line-height: 16px;
+  background: var(--card);
+}
+.chat-sub-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--yellow);
+  animation: chat-pulse 1.2s ease-in-out infinite;
+}
+.chat-sub-name {
+  font-weight: 600;
+  color: var(--fg);
+}
+.chat-sub-elapsed {
+  font-family: var(--font-mono, monospace);
+}
+.chat-sub-activity {
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-model-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+.chat-model-name {
+  font-weight: 600;
+}
+.chat-model-desc {
+  font-size: 11px;
+  color: var(--fg-dim);
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-statusbar-spacer {
+  flex: 1;
+}
+.chat-stop {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--red);
+  border: 1px solid color-mix(in srgb, var(--red) 45%, var(--border));
+  border-radius: 6px;
+  padding: 1px 8px;
+  font-size: 11px;
+}
+/* 貼り付け画像プレビュー */
+.chat-attachments {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.chat-attachment {
+  position: relative;
+  display: inline-flex;
+}
+.chat-attachment img {
+  height: 56px;
+  max-width: 96px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.chat-attachment-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  font-size: 10px;
+  cursor: pointer;
+}
+.chat-attachments + .chat-input-row {
+  border-top: none;
+}
+.chat-user-images {
+  color: var(--fg-dim);
+}
+/* 保存済みセッションの再開リスト (空状態) */
+.chat-resume-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 16px;
+  max-width: 480px;
+  width: 90%;
+}
+.chat-resume-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-dim);
+  margin-bottom: 2px;
+}
+.chat-resume-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.chat-resume-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+.chat-resume-date {
+  flex: none;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+.chat-resume-go {
+  color: var(--primary);
+  border-color: var(--primary-dim);
+}
+.chat-resume-discard {
+  color: var(--fg-dim);
+}
+
+/* ローカルコマンド出力 (/usage 等) */
+.chat-cmd-output {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--fg-dim);
+  border-left: 3px solid var(--border);
+  padding: 2px 0 2px 10px;
+}
+.chat-input-row {
+  flex: none;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+/* 入力補完ポップアップ (スラッシュコマンド / @ファイル) */
+.chat-complete {
+  position: absolute;
+  bottom: 100%;
+  left: 10px;
+  right: 10px;
+  margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--card-shadow);
+  z-index: 20;
+}
+.chat-complete-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  text-align: left;
+  padding: 5px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  min-width: 0;
+}
+.chat-complete-item.active {
+  background: var(--bg-active);
+}
+.chat-complete-label {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-mono, monospace);
+}
+.chat-complete-detail {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-input {
+  flex: 1;
+  resize: none;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.chat-input:focus {
+  outline: none;
+  border-color: var(--primary-dim);
+}
+.chat-inputkey {
+  flex: none;
+  height: 32px;
+  width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--fg-dim);
+}
+.chat-inputkey svg {
+  width: 14px;
+  height: 14px;
+}
+.chat-send {
+  flex: none;
+  height: 32px;
+  width: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--primary);
+}
+.chat-send:disabled {
+  color: var(--fg-dim);
+}
+
 /* modal 系は shadcn Dialog / AlertDialog へ移行済み
    (Prompt/Confirm/AddWorktree/Blame/FileHistory の各コンポーネント) */
 

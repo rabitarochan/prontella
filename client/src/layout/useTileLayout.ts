@@ -61,6 +61,13 @@ export interface TileActions {
    */
   openTerminal: (run?: string, leafId?: string) => Promise<void>;
   /**
+   * Create a chat (Agent SDK) session as a new tab. Target: explicit leaf,
+   * else the focused leaf, else the first chat-view leaf. Switches the tile
+   * to the chat view and activates the new tab. resume に保存済みセッションの
+   * deckId を渡すと再開になる。
+   */
+  openChat: (leafId?: string, resume?: string) => Promise<void>;
+  /**
    * DnD でのレイアウト再構成: src タイルを target の上下左右へ分割挿入、
    * または center で位置交換。中身は leaf.id 追従の Portal なので remount しない。
    */
@@ -76,6 +83,10 @@ export function useTileLayout(
   sessions: TerminalSession[] | null,
   createSession: (run?: string, place?: (s: TerminalSession) => void) => Promise<TerminalSession>,
   killSession: (id: string) => Promise<void>,
+  createAgentSession: (
+    place?: (s: TerminalSession) => void,
+    resume?: string,
+  ) => Promise<TerminalSession>,
 ): TileActions {
   const t = useT();
   const [layout, setLayout] = useState<WorktreeLayout>(() => loadLayout(worktreePath));
@@ -115,7 +126,7 @@ export function useTileLayout(
     setLayout((prev) => {
       const pruned = prunedRef.current ? prev : pruneSessions(prev, ids);
       prunedRef.current = true;
-      return adoptSessions(pruned, ids, focusedRef.current);
+      return adoptSessions(pruned, sessions, focusedRef.current);
     });
   }, [sessions]);
 
@@ -212,6 +223,36 @@ export function useTileLayout(
     [createSession, update],
   );
 
+  const openChat = useCallback(
+    async (leafId?: string, resume?: string) => {
+      // Reserve the target leaf first so the chat lands where the user expects.
+      let root = layoutRef.current.root;
+      let targetId: string;
+      if (!root) {
+        const leaf = makeLeaf('chat');
+        update(leaf);
+        targetId = leaf.id;
+      } else {
+        const all = leaves(root);
+        const target =
+          all.find((l) => l.id === leafId) ??
+          all.find((l) => l.id === focusedRef.current) ??
+          all.find((l) => l.view === 'chat') ??
+          all[0];
+        targetId = target.id;
+        update(updateLeaf(root, targetId, (leaf) => ({ ...leaf, view: 'chat' })));
+      }
+      setFocusedLeafId(targetId);
+      await createAgentSession((session) => {
+        // Claim the session before the reload publishes it — otherwise the
+        // adoption rule could place it in another leaf.
+        const current = layoutRef.current.root;
+        if (current) update(appendSession(current, targetId, session.id));
+      }, resume);
+    },
+    [createAgentSession, update],
+  );
+
   const move = useCallback(
     (srcId: string, targetId: string, zone: TileDropZone) => {
       const root = layoutRef.current.root;
@@ -237,8 +278,7 @@ export function useTileLayout(
   const reset = useCallback(() => {
     // Re-adopt live sessions immediately so terminals reappear without
     // waiting for the next poll tick.
-    const ids = (sessionsRef.current ?? []).map((s) => s.id);
-    setLayout(adoptSessions(createDefaultLayout(), ids, null));
+    setLayout(adoptSessions(createDefaultLayout(), sessionsRef.current ?? [], null));
     setFocusedLeafId(null);
   }, []);
 
@@ -252,6 +292,7 @@ export function useTileLayout(
     setActiveSession,
     closeSessionTab,
     openTerminal,
+    openChat,
     move,
     applySizes,
     reset,

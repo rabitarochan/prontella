@@ -2,13 +2,21 @@
 
 複数の Git リポジトリー × 複数の Worktree 上で動く Claude Code エージェントを一元管理するデッキ。
 
-Claude Code は **PTY (実ターミナル) 上で対話モードのまま起動**するため、サブスクリプション課金のまま利用できます (Agent SDK / API は使いません)。
+Claude Code の起動方法は 2 系統あり、どちらも**サブスクリプション課金のまま**利用できます (API キーは使いません):
+
+- **ターミナル (term ビュー)**: PTY (実ターミナル) 上で対話モードのまま起動。従来どおりの TUI
+- **チャット (chat ビュー)**: Claude Agent SDK で起動し、構造化された独自チャット UI (ストリーミング表示・ツールカード・許可ダイアログ) で操作。
+  認証は利用者自身の `claude /login` (サブスク OAuth) に委ねられ、deck は資格情報に一切触れません。
+  環境変数 `ANTHROPIC_API_KEY` があると SDK がそちらを優先して**従量課金になる**ため、サーバー起動時に警告を出します
 
 ## アーキテクチャ
 
 - **サーバー** (`server/`): Node.js + Express + ws + node-pty
   - Git 操作は `git` CLI を `execFile` で実行 (porcelain 形式をパース)
   - ターミナルは node-pty で生成し WebSocket (`/ws/term?id=`) で中継
+  - チャットセッションは Claude Agent SDK (`server/agentSession.ts`) で生成し WebSocket (`/ws/agent?id=`) で
+    構造化イベント (text delta / tool_use / 許可要求) を中継。ステータスは SDK メッセージストリームから直接生成
+    (ヒューリスティック不要)。許可プロンプトは `canUseTool` をクライアントの許可ダイアログへ中継して解決
   - エージェントステータスは 2 系統で検知 (hooks が優先、ヒューリスティックはフォールバック)
     - **Claude Code hooks**: 「✦ Claude 起動」時に `claude --settings ~/.claude-deck3/hook-settings.json` を注入。
       各フックイベント (SessionStart / UserPromptSubmit / PreToolUse / PostToolUse / Notification / Stop / SessionEnd) を

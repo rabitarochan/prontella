@@ -14,6 +14,15 @@ export const FILES_STRINGS = {
     ja: '切替中にディスク上のファイルが変更されました。保存すると上書きします',
     en: 'The file on disk changed while this tab was inactive. Saving will overwrite it.',
   },
+  'files.diskChangedConflict': {
+    ja: 'このファイルは外部で変更されました',
+    en: 'This file was changed outside the editor',
+  },
+  'files.loadLatestDiscardingEdits': {
+    ja: '破棄して最新を読み込む',
+    en: 'Discard edits and load latest',
+  },
+  'files.keepEditing': { ja: '編集を継続', en: 'Keep editing' },
   'files.discardChangesTitle': { ja: '変更を破棄', en: 'Discard changes' },
   'files.discardChangesMessage': {
     ja: '{name} の変更を破棄して閉じますか?',

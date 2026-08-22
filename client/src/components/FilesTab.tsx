@@ -77,14 +77,20 @@ import { isDirtyEntry, useFileEntries, type MonacoEditor } from './files/useFile
 // stays a StringKey end to end.
 const OVERSIZE_DRAFT_WARNING: StringKey = 'files.oversizeDraftWarning';
 
+// ウィンドウ復帰時のディスク突き合わせの最小間隔。focus と visibilitychange が
+// 続けて発火したときに 2 度走らせないためだけのもの (ポーリング間隔ではない)。
+const DISK_SYNC_MIN_INTERVAL_MS = 300;
+
 export default function FilesTab({
   root,
   leafId,
+  visible,
 }: {
   root: string;
   leafId: string;
   /** このタイルが現在ファイルビューを表示中か (TileWorkspace の display 切替)。
-   *  タブバーは常にグループ内インラインなので描画上は未使用。 */
+   *  タブバーは常にグループ内インラインなので描画には使わないが、ディスク突き合わせの
+   *  対象判定 (非表示タイルでは走らせない / 表示になった瞬間に走らせる) に使う。 */
   visible?: boolean;
 }) {
   const t = useT();
@@ -216,6 +222,68 @@ export default function FilesTab({
     [],
   );
 
+  // ---- ディスク突き合わせ (外部変更の取り込み) ------------------------------
+  //
+  // 監視もポーリングもしない。ウィンドウ / ファイルビュー / タブがアクティブになった
+  // ときだけ、そのとき見えているタブをディスクと突き合わせる。判定は diskSync.ts。
+
+  /** 1 グループのアクティブタブを突き合わせる。preview は従来どおり無条件で再取得。 */
+  const syncGroupActiveTab = useCallback((groupId: string, key: string) => {
+    const e = entriesApi.entriesRef.current[key];
+    if (!e) return;
+    if (e.kind === 'preview') {
+      entriesApi.refreshPreviewTab(key, e.path);
+      return;
+    }
+    void entriesApi.syncFromDisk(key, paneHandlesRef.current.get(groupId)?.getEditor() ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** 全グループのアクティブタブ。非アクティブタブはそのタブに切り替えた瞬間に拾う。 */
+  const syncAllActiveTabs = useCallback(() => {
+    for (const g of allGroups(groupsApi.stateRef.current.root)) {
+      if (g.activeKey) syncGroupActiveTab(g.id, g.activeKey);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncGroupActiveTab]);
+
+  const syncAllActiveTabsRef = useRef(syncAllActiveTabs);
+  syncAllActiveTabsRef.current = syncAllActiveTabs;
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  const lastSyncAtRef = useRef(0);
+
+  // focus と visibilitychange の両方を張る: alt-tab によるウィンドウ復帰では
+  // visibilitychange が発火しないブラウザーがあり、逆にブラウザーのタブ切替では
+  // focus が来ないことがある。両方来たときは短い間隔で 2 度走らないよう間引く。
+  useEffect(() => {
+    const onActivate = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (visibleRef.current === false) return; // このタイルはファイルビューを表示していない
+      const now = performance.now();
+      if (now - lastSyncAtRef.current < DISK_SYNC_MIN_INTERVAL_MS) return;
+      lastSyncAtRef.current = now;
+      syncAllActiveTabsRef.current();
+    };
+    window.addEventListener('focus', onActivate);
+    document.addEventListener('visibilitychange', onActivate);
+    return () => {
+      window.removeEventListener('focus', onActivate);
+      document.removeEventListener('visibilitychange', onActivate);
+    };
+  }, []);
+
+  // タイルの表示が他ビュー → ファイルビューへ切り替わったときも同じ突き合わせを行う。
+  const prevVisibleRef = useRef(visible);
+  useEffect(() => {
+    const was = prevVisibleRef.current;
+    prevVisibleRef.current = visible;
+    if (visible && !was) {
+      lastSyncAtRef.current = performance.now();
+      syncAllActiveTabs();
+    }
+  }, [visible, syncAllActiveTabs]);
+
   // ---- タブ操作 ------------------------------------------------------------
 
   // Open a tab in the active group: focus it if already open there, otherwise
@@ -252,13 +320,17 @@ export default function FilesTab({
         });
         if (evict) after = closeTabInGroup(after, evict.groupId, evict.key);
       }
-      const existedBefore = !!entriesApi.entriesRef.current[key];
+      // ロード済みのエントリーが既にある場合だけ「再アクティブ化」扱いにする。
+      // file === null (ロード中 / ロード失敗) は loadFile に任せる — 失敗したタブを
+      // 開き直したときの再試行経路がここで消えないようにするため。
+      const loadedBefore = (entriesApi.entriesRef.current[key]?.file ?? null) !== null;
       applyGroups(after, { activate: groupId });
       entriesApi.ensureEntries([{ kind, path }]);
-      if (existedBefore && kind === 'preview') {
-        // R-2: 既に開いているプレビューを「プレビューを開く」で再アクティブ化する
-        // ときも、タブバーの switchTo と同じく再取得する (保存直後の古い内容を防ぐ)。
-        entriesApi.refreshPreviewTab(key, path);
+      if (loadedBefore) {
+        // 既に開いているタブの再アクティブ化。プレビューは無条件に再取得し (R-2:
+        // 保存直後の古い内容を防ぐ)、エディターはディスクと突き合わせる。
+        // loadFile は loadedRef ガードで no-op になるためここでは呼ばない。
+        syncGroupActiveTab(groupId, key);
       } else {
         entriesApi.loadFile(key, path);
       }
@@ -274,8 +346,9 @@ export default function FilesTab({
       stashAll();
       entriesApi.setMessage('');
       applyGroups(activateTab(groupsApi.stateRef.current.root, groupId, key), { activate: groupId });
-      const e = entriesApi.entriesRef.current[key];
-      if (e?.kind === 'preview') entriesApi.refreshPreviewTab(key, e.path);
+      // プレビューは再取得、エディターはディスクと突き合わせる。非アクティブだった
+      // タブの外部変更はここで拾われる (フォーカス時はアクティブタブしか見ないため)。
+      syncGroupActiveTab(groupId, key);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [applyGroups, stashAll],
@@ -793,6 +866,8 @@ export default function FilesTab({
     openPreview,
     openFile,
     refreshPreview: entriesApi.refreshPreviewTab,
+    applyDiskVersion: entriesApi.applyDiskVersion,
+    dismissDiskChange: entriesApi.dismissDiskChange,
     splitGroup,
     focusGroup: groupsApi.setActiveGroup,
     dropOnTabStrip,

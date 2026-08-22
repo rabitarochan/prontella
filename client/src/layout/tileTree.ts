@@ -2,6 +2,25 @@
 // A layout is a tree of splits (row = side by side, column = stacked).
 // v2: every leaf is a tabbed workspace — the view (files / git / term / chat)
 // is switched INSIDE the tile, and terminal sessions belong to a leaf as tabs.
+//
+// The payload-independent structure ops (insert-beside / remove-with-collapse /
+// normalize / sizes) live in splitTree.ts, shared with the editor-group tree
+// inside a files panel. Everything session/view specific stays here.
+
+import {
+  equalSizes,
+  findLeafOf,
+  insertBesideLeaf,
+  leavesOf,
+  newId,
+  normalizeOf,
+  removeLeafOf,
+  renormalized,
+  setSizesOf,
+  updateLeafOf,
+} from './splitTree';
+
+export { newId } from './splitTree';
 
 export type TileView = 'files' | 'git' | 'term' | 'chat';
 
@@ -31,10 +50,6 @@ export interface WorktreeLayout {
   root: TileNode | null;
 }
 
-export function newId(): string {
-  return crypto.randomUUID().slice(0, 8);
-}
-
 export function makeLeaf(view: TileView): LeafNode {
   return { type: 'leaf', id: newId(), view, sessions: [], activeSession: null };
 }
@@ -55,23 +70,11 @@ export function createDefaultLayout(): WorktreeLayout {
 
 /** All leaves in stable tree order. */
 export function leaves(node: TileNode | null): LeafNode[] {
-  if (!node) return [];
-  if (node.type === 'leaf') return [node];
-  return node.children.flatMap(leaves);
+  return leavesOf<LeafNode>(node);
 }
 
 export function findLeaf(node: TileNode | null, leafId: string): LeafNode | null {
-  return leaves(node).find((l) => l.id === leafId) ?? null;
-}
-
-function equalSizes(n: number): number[] {
-  return Array.from({ length: n }, () => 100 / n);
-}
-
-function renormalized(sizes: number[]): number[] {
-  const total = sizes.reduce((a, b) => a + b, 0);
-  if (!(total > 0)) return equalSizes(sizes.length);
-  return sizes.map((s) => (s / total) * 100);
+  return findLeafOf<LeafNode>(node, leafId);
 }
 
 /**
@@ -87,46 +90,12 @@ export function splitLeaf(
   view: TileView = 'term',
 ): { root: TileNode; newLeafId: string } {
   const newLeaf = makeLeaf(view);
-
-  const rec = (node: TileNode): TileNode => {
-    if (node.type === 'leaf') {
-      if (node.id !== leafId) return node;
-      return { type: 'split', id: newId(), dir, sizes: [50, 50], children: [node, newLeaf] };
-    }
-    const idx = node.children.findIndex((c) => c.type === 'leaf' && c.id === leafId);
-    if (idx >= 0 && node.dir === dir) {
-      const children = [...node.children];
-      children.splice(idx + 1, 0, newLeaf);
-      const sizes = [...node.sizes];
-      const half = (sizes[idx] ?? 100 / node.children.length) / 2;
-      sizes[idx] = half;
-      sizes.splice(idx + 1, 0, half);
-      return { ...node, children, sizes };
-    }
-    return { ...node, children: node.children.map(rec) };
-  };
-
-  return { root: rec(root), newLeafId: newLeaf.id };
+  return { root: insertBesideLeaf<LeafNode>(root, leafId, dir, false, newLeaf), newLeafId: newLeaf.id };
 }
 
 /** Remove a leaf; collapses now-single-child splits. Returns null when empty. */
 export function removeLeaf(root: TileNode, leafId: string): TileNode | null {
-  const rec = (node: TileNode): TileNode | null => {
-    if (node.type === 'leaf') return node.id === leafId ? null : node;
-    const children: TileNode[] = [];
-    const sizes: number[] = [];
-    node.children.forEach((c, i) => {
-      const r = rec(c);
-      if (r) {
-        children.push(r);
-        sizes.push(node.sizes[i] ?? 100 / node.children.length);
-      }
-    });
-    if (children.length === 0) return null;
-    if (children.length === 1) return children[0];
-    return { ...node, children, sizes: renormalized(sizes) };
-  };
-  return rec(root);
+  return removeLeafOf<LeafNode>(root, leafId);
 }
 
 /**
@@ -147,29 +116,9 @@ export function moveLeaf(
   if (srcId === targetId) return root;
   const src = findLeaf(root, srcId);
   if (!src || !findLeaf(root, targetId)) return root;
-  const without = removeLeaf(root, srcId);
+  const without = removeLeafOf<LeafNode>(root, srcId);
   if (!without) return root; // src was the only leaf — nothing to attach to
-
-  const insert = (node: TileNode): TileNode => {
-    if (node.type === 'leaf') {
-      if (node.id !== targetId) return node;
-      const children = before ? [src, node] : [node, src];
-      return { type: 'split', id: newId(), dir, sizes: [50, 50], children };
-    }
-    const idx = node.children.findIndex((c) => c.type === 'leaf' && c.id === targetId);
-    if (idx >= 0 && node.dir === dir) {
-      const children = [...node.children];
-      const sizes = [...node.sizes];
-      const half = (sizes[idx] ?? 100 / node.children.length) / 2;
-      sizes[idx] = half;
-      const at = before ? idx : idx + 1;
-      children.splice(at, 0, src);
-      sizes.splice(at, 0, half);
-      return { ...node, children, sizes };
-    }
-    return { ...node, children: node.children.map(insert) };
-  };
-  return insert(without);
+  return insertBesideLeaf<LeafNode>(without, targetId, dir, before, src);
 }
 
 /**
@@ -197,11 +146,7 @@ export function updateLeaf(
   leafId: string,
   patch: (leaf: LeafNode) => LeafNode,
 ): TileNode {
-  const rec = (node: TileNode): TileNode => {
-    if (node.type === 'leaf') return node.id === leafId ? patch(node) : node;
-    return { ...node, children: node.children.map(rec) };
-  };
-  return rec(root);
+  return updateLeafOf<LeafNode>(root, leafId, patch);
 }
 
 /** Append a session as the leaf's last tab and make it active. */
@@ -228,38 +173,12 @@ export function removeSession(root: TileNode, leafId: string, sessionId: string)
 }
 
 export function setSizes(root: TileNode, splitId: string, sizes: number[]): TileNode {
-  const rec = (node: TileNode): TileNode => {
-    if (node.type === 'leaf') return node;
-    if (node.id === splitId && sizes.length === node.children.length) {
-      return { ...node, sizes: [...sizes] };
-    }
-    return { ...node, children: node.children.map(rec) };
-  };
-  return rec(root);
+  return setSizesOf<LeafNode>(root, splitId, sizes);
 }
 
 /** Collapse single-child splits and merge same-direction nesting. */
 export function normalize(node: TileNode | null): TileNode | null {
-  if (!node || node.type === 'leaf') return node;
-  const children: TileNode[] = [];
-  const sizes: number[] = [];
-  node.children.forEach((c, i) => {
-    const n = normalize(c);
-    if (!n) return;
-    const slot = node.sizes[i] ?? 100 / node.children.length;
-    if (n.type === 'split' && n.dir === node.dir) {
-      n.children.forEach((gc, j) => {
-        children.push(gc);
-        sizes.push(((n.sizes[j] ?? 100 / n.children.length) * slot) / 100);
-      });
-    } else {
-      children.push(n);
-      sizes.push(slot);
-    }
-  });
-  if (children.length === 0) return null;
-  if (children.length === 1) return children[0];
-  return { ...node, children, sizes: renormalized(sizes) };
+  return normalizeOf<LeafNode>(node);
 }
 
 /**

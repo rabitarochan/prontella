@@ -9,6 +9,7 @@ import {
 import { useT, type StringKey } from '../../i18n';
 import type { AgentStatus, TerminalSession } from '../../types';
 import { sessionKind } from '../../layout/sessionKinds';
+import { zoneFromPoint } from '../../layout/dropZones';
 import { LEAD_SLOT_SUFFIX, useTileBarSlots } from '../../layout/tileBarSlots';
 import { useTileDnd } from '../../layout/tileDnd';
 import type { LeafNode, TileView } from '../../layout/tileTree';
@@ -84,14 +85,8 @@ export default function TilePane({
     dndStart(leaf.id);
   };
 
-  const zoneFromEvent = (e: React.DragEvent): TileDropZone => {
-    const r = e.currentTarget.getBoundingClientRect();
-    const x = (e.clientX - r.left) / r.width;
-    const y = (e.clientY - r.top) / r.height;
-    if (x > 0.25 && x < 0.75 && y > 0.25 && y < 0.75) return 'center';
-    const m = Math.min(x, 1 - x, y, 1 - y);
-    return m === x ? 'left' : m === 1 - x ? 'right' : m === y ? 'top' : 'bottom';
-  };
+  const zoneFromEvent = (e: React.DragEvent): TileDropZone =>
+    zoneFromPoint(e.currentTarget.getBoundingClientRect(), e.clientX, e.clientY);
   // A DOM move (host re-append after a split/close elsewhere) drops focus;
   // give it back to the focused terminal. Mount-only: focus changes from
   // clicks are handled by the browser itself.
@@ -140,7 +135,7 @@ export default function TilePane({
       onMouseDownCapture={() => actions.focusLeaf(leaf.id)}
     >
       <header
-        className={`tile-header ${leaf.view === 'files' ? 'split' : ''}`}
+        className="tile-header"
         draggable
         onDragStart={onHeaderDragStart}
         onDragEnd={dndEnd}

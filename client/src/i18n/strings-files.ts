@@ -40,6 +40,7 @@ export const FILES_STRINGS = {
     en: 'File is too large ({size} KB)',
   },
   'files.saveHintCtrlS': { ja: 'Ctrl+S でも保存できます', en: 'You can also save with Ctrl+S' },
+  'files.splitEditorTooltip': { ja: 'エディターを右に分割', en: 'Split editor right' },
   'files.saving': { ja: '保存中...', en: 'Saving…' },
   'files.save': { ja: '保存', en: 'Save' },
 

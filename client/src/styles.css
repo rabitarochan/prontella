@@ -699,8 +699,7 @@ textarea:focus {
 
 /* ---- files tab ---- */
 
-/* ツリー列幅。タイルバー先頭ゾーン (.tile-header.split .tile-header-lead) と
-   共有し、ヘッダーの区切りとペイン境界を揃える */
+/* ツリー列幅 */
 .tile-pane {
   --files-tree-w: 260px;
 }
@@ -981,6 +980,71 @@ button.statusbar-item:hover:not(:disabled) {
 }
 .editor-tab:hover .editor-tab-dirty {
   opacity: 0;
+}
+
+/* ---- editor groups (ファイルパネル内の縦横分割) ---- */
+
+/* GroupSplitView のホスト。単一グループ時は .editor-group が直接入る */
+.editor-groups-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.editor-groups-host > * {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.editor-group-grid {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.editor-group-panel {
+  display: flex;
+}
+.editor-group-panel > * {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+/* 1 グループ = タブバー + 本文 */
+.editor-group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+/* 本文 (タブバーの下)。DnD ドロップオーバーレイの基準 */
+.editor-group-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* タブ DnD: 本文の 5 ゾーンオーバーレイ (インジケーターは .tile-drop-indicator を共用) */
+.editor-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+}
+/* タブ DnD: ストリップの挿入位置マーカー */
+.editor-tabs-strip {
+  position: relative;
+}
+.editor-tab-insert-marker {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--primary);
+  pointer-events: none;
+}
+.editor-tab.dragging {
+  opacity: 0.45;
 }
 
 /* ---- changes (ステージ済み|変更 リスト + 選択ファイルの diff タブ) ---- */
@@ -1719,12 +1783,6 @@ button.statusbar-item:hover:not(:disabled) {
 }
 .tile-drop-indicator.zone-center {
   inset: 4px;
-}
-/* files ビュー: 先頭ゾーンをツリー列幅に固定し、ペイン境界と区切りを揃える */
-.tile-header.split .tile-header-lead {
-  width: var(--files-tree-w);
-  flex-shrink: 0;
-  border-right: 1px solid var(--hairline);
 }
 .tile-pane.focused .tile-header {
   color: var(--fg);

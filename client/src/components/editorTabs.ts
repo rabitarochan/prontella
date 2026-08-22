@@ -1,5 +1,11 @@
 import type { MouseEvent } from 'react';
 
+/** タブラベル等に使うパス末尾のファイル名。 */
+export function basename(path: string): string {
+  const i = path.lastIndexOf('/');
+  return i === -1 ? path : path.slice(i + 1);
+}
+
 /**
  * `.editor-tabs` (overflow-x:auto なストリップ) に spread する。中ボタン押下の
  * 既定動作 (Chrome/Firefox のオートスクロール) を止める。タブとタブの隙間や

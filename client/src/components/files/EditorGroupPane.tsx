@@ -25,6 +25,23 @@ import EditorTabsBar from './EditorTabsBar';
 import { EDITOR_OPTIONS } from './monacoSave';
 import type { FileEntry, MonacoEditor } from './useFileEntries';
 
+/** ディスク突き合わせのオーバーレイを出すまでの猶予 (これ以下で終われば見せない)。 */
+const RELOAD_OVERLAY_DELAY_MS = 150;
+
+/** `on` が delayMs 以上続いたときだけ true を返す (短い処理でのチラつき防止)。 */
+function useDelayedFlag(on: boolean, delayMs: number): boolean {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (!on) {
+      setShown(false);
+      return;
+    }
+    const id = setTimeout(() => setShown(true), delayMs);
+    return () => clearTimeout(id);
+  }, [on, delayMs]);
+  return shown;
+}
+
 /** コーディネーター (FilesTab) がグループ横断操作に使うペインのハンドル。 */
 export interface PaneHandle {
   getEditor: () => MonacoEditor | null;
@@ -60,6 +77,10 @@ export interface PaneShared {
   openPreview: (path: string) => void;
   openFile: (path: string) => void;
   refreshPreview: (key: string, path: string) => void;
+  /** 外部変更バナーの「破棄して最新を読み込む」。 */
+  applyDiskVersion: (key: string, editor: MonacoEditor | null) => void;
+  /** 外部変更バナーの「編集を継続」。 */
+  dismissDiskChange: (key: string) => void;
   splitGroup: (groupId: string) => void;
   focusGroup: (groupId: string) => void;
   /** タブ DnD の解決 (同一 leaf: 並べ替え/移動/分割。別 leaf: 転送)。 */
@@ -282,6 +303,9 @@ export default function EditorGroupPane({
   const [dropZone, setDropZone] = useState<DropZone | null>(null);
 
   const active = group.activeKey ? (entries[group.activeKey] ?? null) : null;
+  // ディスク突き合わせは通常 10〜30ms で終わるので、そのままオーバーレイを出すと
+  // ウィンドウを切り替えるたびにチラつく。遅いときだけ見せる。
+  const showReloading = useDelayedFlag(!!active?.reloading, RELOAD_OVERLAY_DELAY_MS);
 
   return (
     <section
@@ -372,8 +396,30 @@ export default function EditorGroupPane({
         </div>
       ) : (
         <>
-          {active.warning && <div className="editor-warning">⚠ {t(active.warning)}</div>}
+          {active.conflict ? (
+            // 編集中に外部で変更された。どちらを採るかはユーザーにしか決められないので、
+            // 非モーダルのバナーで選ばせる (複数グループが同時に衝突しても邪魔にならない)。
+            <div className="editor-conflict">
+              <span>⚠ {t('files.diskChangedConflict')}</span>
+              <button
+                type="button"
+                onClick={() =>
+                  sharedRef.current.applyDiskVersion(active.key, editorRef.current)
+                }
+              >
+                {t('files.loadLatestDiscardingEdits')}
+              </button>
+              <button type="button" onClick={() => sharedRef.current.dismissDiskChange(active.key)}>
+                {t('files.keepEditing')}
+              </button>
+            </div>
+          ) : (
+            active.warning && <div className="editor-warning">⚠ {t(active.warning)}</div>
+          )}
           <div className="editor-host">
+            {showReloading && (
+              <div className="editor-reload-overlay">{t('common.loading')}</div>
+            )}
             {/* Uncontrolled on purpose: passing `value` makes the library rewrite the
                 whole model whenever a re-render (e.g. the 4s repo poll) races a
                 keystroke, which jumps the cursor and corrupts IME composition.

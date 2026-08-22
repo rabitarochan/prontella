@@ -819,9 +819,47 @@ textarea:focus {
   color: var(--yellow);
   border-bottom: 1px solid var(--border);
 }
+/* 外部変更バナー。編集中に外部で書き換えられたときだけ出る (非モーダル)。 */
+.editor-conflict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--yellow);
+  border-bottom: 1px solid var(--border);
+}
+.editor-conflict button {
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--fg);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.editor-conflict button:hover {
+  background: var(--bg-hover);
+}
+
 .editor-host {
   flex: 1;
   min-height: 0;
+  /* .editor-reload-overlay の基準 */
+  position: relative;
+}
+/* ディスク突き合わせが遅いときだけ出る。Monaco を差し替えず上に重ねる —
+   <Editor> をアンマウントすると viewState と undo 履歴が失われるため。 */
+.editor-reload-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--fg-dim);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
 }
 
 .editor-statusbar {

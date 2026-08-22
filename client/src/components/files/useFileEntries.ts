@@ -16,6 +16,7 @@ import { hashText, tabKey, type OpenTabRef, type TabKind } from '../../editorSta
 import { useT, type StringKey } from '../../i18n';
 import type { FileContent } from '../../types';
 import { basename } from '../editorTabs';
+import { decideDiskSync, diskHash, shouldCheckDisk } from './diskSync';
 import { charsetToEncoding, disposeModelsSoon, formatOnSave } from './monacoSave';
 
 // Tab identity is `{kind, path}` (see editorState.ts's OpenTabRef), not `path` alone — an
@@ -31,6 +32,10 @@ export interface FileEntry {
   error: string;
   /** Set when a restored draft was applied over disk content that changed while the tab was away. */
   warning: StringKey | '';
+  /** ディスク突き合わせ (syncFromDisk) が進行中。ペイン側が遅延させてオーバーレイを出す。 */
+  reloading: boolean;
+  /** 編集中に外部変更が見つかったときの、未回答のディスク内容。バナーで選ばせる。 */
+  conflict: FileContent | null;
 }
 
 export type MonacoEditor = Parameters<OnMount>[0];
@@ -50,6 +55,8 @@ function placeholderEntry(ref: OpenTabRef): FileEntry {
     draft: '',
     error: '',
     warning: '',
+    reloading: false,
+    conflict: null,
   };
 }
 
@@ -104,6 +111,18 @@ export function useFileEntries(root: string, leafId: string, init: FileEntriesIn
   // 削除)。ただし保存成功時にはクリアしない — 同じタブで保存を繰り返しても選択は維持される。
   // モデル共有のため path 単位が正しい (グループ単位ではない)。
   const eolOverrideRef = useRef(new Set<string>());
+
+  // 「編集を継続」で見送ったディスク内容の指紋 (path -> diskHash)。同じ内容では二度と
+  // 聞かないためのもので、ディスクがさらに別内容へ変われば指紋が変わって再度提示される。
+  // モデル同様パス単位が正しい — 同じファイルを複数グループで開いても判断は 1 つ。
+  // 寿命は disposeKeys / resetAll に加えて「その記録が無意味になったとき」= 保存・
+  // 再読み込み・最新の取り込み。eolOverrideRef (ユーザーの恒久的な選択なので保存では
+  // 解除しない) とは意図が違うので、そこだけ揃えない。
+  const ignoredDiskHashRef = useRef(new Map<string, string>());
+
+  // syncFromDisk の世代カウンター (key -> seq)。応答が返るまでにタブが閉じた・root が
+  // 変わった・より新しいチェックが走った場合に、古い応答を捨てるために使う。
+  const syncSeqRef = useRef(new Map<string, number>());
 
   const rootRef = useRef(root);
   rootRef.current = root;
@@ -204,6 +223,150 @@ export function useFileEntries(root: string, leafId: string, init: FileEntriesIn
     [loadFile],
   );
 
+  // ---- ディスク突き合わせ (外部変更の取り込み) --------------------------------
+  //
+  // 判定そのものは diskSync.ts の純関数 (真理値表を vitest で固定済み)。ここは
+  // 「fetch する / 結果をモデルへ反映する」という副作用だけを持つ。
+
+  /**
+   * ディスクの内容をエントリーとモデルへ反映する。reloadWithEncoding と同じ
+   * URI 一致ガード付き setValue。違いは viewState (カーソル/スクロール) を挟んで
+   * 復元すること — 外部変更の取り込みは「見ている位置を保ったまま」でないと使えない。
+   */
+  const applyDiskContent = useCallback(
+    (key: string, path: string, f: FileContent, editor: MonacoEditor | null) => {
+      // モデルは URI から直接引く。「編集中のタブから離れている間に応答が返る」経路が
+      // あるため、editor.getModel() 一致を条件にすると、そのタブのモデルだけ古い内容の
+      // まま entry だけ新しくなる (戻ってきたときに食い違う)。viewState の保存/復元は
+      // 実際にそのモデルを表示しているときだけ意味を持つので、そこだけ一致を見る。
+      const uri = monaco.Uri.parse(modelPath(path));
+      const model = monaco.editor.getModel(uri);
+      const attached = editor?.getModel()?.uri.toString() === uri.toString();
+      const viewState = attached ? (editor?.saveViewState() ?? null) : null;
+
+      setEntries((prev) =>
+        prev[key]
+          ? {
+              ...prev,
+              [key]: {
+                ...prev[key],
+                file: f,
+                draft: f.content ?? '',
+                error: '',
+                warning: '',
+                conflict: null,
+              },
+            }
+          : prev,
+      );
+
+      // 内容が変わったのでインデント/EOL の再検出を許す (reloadWithEncoding と同じ扱い)。
+      indentAppliedRef.current.delete(path);
+      eolOverrideRef.current.delete(path);
+      ignoredDiskHashRef.current.delete(path);
+
+      if (f.content === null) {
+        // 外部で binary / tooLarge になった。<Editor> はプレースホルダーに差し替わるので、
+        // 残ったモデルが後でテキストに戻ったときに古い内容として復活しないよう捨てる。
+        disposeModelsSoon([modelPath(path)]);
+        return;
+      }
+      if (model) {
+        model.setValue(f.content);
+        // 行が減っていれば Monaco 側が範囲内へ丸めてくれる。
+        if (attached && viewState) editor?.restoreViewState(viewState);
+      }
+      // モデルがまだ無い (一度も描画していないタブ) 場合は draft の更新だけで足りる —
+      // 初回マウント時に defaultValue={active.draft} から作られる。
+    },
+    [modelPath],
+  );
+
+  /**
+   * ウィンドウ/タブがアクティブになったときのディスク突き合わせ。
+   * 変化なし → 何もしない、未編集で変化あり → 最新化、編集中で変化あり → conflict を立てる。
+   */
+  const syncFromDisk = useCallback(
+    async (key: string, editor: MonacoEditor | null) => {
+      const entry = entriesRef.current[key];
+      if (!shouldCheckDisk(entry)) return;
+      const path = entry.path;
+      const rootAtStart = rootRef.current;
+      const seq = (syncSeqRef.current.get(key) ?? 0) + 1;
+      syncSeqRef.current.set(key, seq);
+
+      // 開いたときのエンコーディングを維持する。省略するとサーバーが再判定し、
+      // ユーザーの「エンコーディング指定で再読み込み」の選択を無言で覆す。
+      const encoding = entry.file?.encoding ?? undefined;
+
+      setEntries((prev) =>
+        prev[key] ? { ...prev, [key]: { ...prev[key], reloading: true } } : prev,
+      );
+      try {
+        const f = await api.file(rootAtStart, path, encoding);
+        // 応答が返るまでに状況が変わっていたら捨てる (タブが閉じた / root 切替 / 追い越し)。
+        if (syncSeqRef.current.get(key) !== seq) return;
+        if (rootRef.current !== rootAtStart) return;
+        const current = entriesRef.current[key];
+        if (!current) return;
+
+        const decision = decideDiskSync(current, f, ignoredDiskHashRef.current.get(path));
+        if (decision.kind === 'apply') {
+          applyDiskContent(key, path, f, editor);
+        } else if (decision.kind === 'conflict') {
+          // 未回答の conflict が既にあっても、常に最新のディスク内容で置き換える。
+          setEntries((prev) =>
+            prev[key] ? { ...prev, [key]: { ...prev[key], conflict: f } } : prev,
+          );
+        } else if (decision.kind === 'unchanged') {
+          // 内容は同じ。editorconfig スナップショットだけ無料で新鮮になる。
+          // draft / conflict / warning には触れない (未保存の編集を壊さないため)。
+          setEntries((prev) => (prev[key] ? { ...prev, [key]: { ...prev[key], file: f } } : prev));
+        }
+      } catch {
+        // 無言で握りつぶす。外部リネーム中の一瞬の 404 で、編集中の内容を
+        // error プレースホルダーに差し替えてしまう方が害が大きい。
+      } finally {
+        if (syncSeqRef.current.get(key) === seq) {
+          setEntries((prev) =>
+            prev[key] ? { ...prev, [key]: { ...prev[key], reloading: false } } : prev,
+          );
+        }
+      }
+    },
+    [applyDiskContent],
+  );
+
+  /** conflict バナーの「破棄して最新を読み込む」。 */
+  const applyDiskVersion = useCallback(
+    (key: string, editor: MonacoEditor | null) => {
+      const entry = entriesRef.current[key];
+      if (!entry?.conflict) return;
+      applyDiskContent(key, entry.path, entry.conflict, editor);
+    },
+    [applyDiskContent],
+  );
+
+  /** conflict バナーの「編集を継続」。同じディスク内容では二度と聞かないよう記録する。 */
+  const dismissDiskChange = useCallback((key: string) => {
+    const entry = entriesRef.current[key];
+    if (!entry?.conflict) return;
+    ignoredDiskHashRef.current.set(entry.path, diskHash(entry.conflict));
+    setEntries((prev) =>
+      prev[key]
+        ? {
+            ...prev,
+            [key]: {
+              ...prev[key],
+              conflict: null,
+              // 保存すると外部の変更を上書きする、という警告は出し続ける。
+              warning: 'files.diskChangedWhileAwayWarning',
+            },
+          }
+        : prev,
+    );
+  }, []);
+
   const setDraft = useCallback((key: string, value: string) => {
     setEntries((prev) => (prev[key] ? { ...prev, [key]: { ...prev[key], draft: value } } : prev));
   }, []);
@@ -220,12 +383,15 @@ export function useFileEntries(root: string, leafId: string, init: FileEntriesIn
       const modelPaths: string[] = [];
       for (const key of keys) {
         loadedRef.current.delete(key);
+        // 進行中の syncFromDisk の応答を無効化する (閉じたタブへ書き戻さない)。
+        syncSeqRef.current.delete(key);
         const sep = key.indexOf(':');
         const kind = key.slice(0, sep) as TabKind;
         const path = key.slice(sep + 1);
         if (kind === 'editor') {
           indentAppliedRef.current.delete(path);
           eolOverrideRef.current.delete(path);
+          ignoredDiskHashRef.current.delete(path);
           delete draftsRef.current[path];
           for (const states of Object.values(viewStatesRef.current)) delete states[path];
           modelPaths.push(modelPath(path));
@@ -277,6 +443,9 @@ export function useFileEntries(root: string, leafId: string, init: FileEntriesIn
           content = model.getValue();
         }
         await api.saveFile(rootRef.current, path, content, enc);
+        // 保存でディスクは自分の内容になったので、「見送り済み」の記録は無意味になる
+        // (eolOverrideRef と違い、これはユーザーの恒久的な選択ではない)。
+        ignoredDiskHashRef.current.delete(path);
         setEntries((prev) => {
           const e = prev[key];
           if (!e || !e.file) return prev;
@@ -287,6 +456,7 @@ export function useFileEntries(root: string, leafId: string, init: FileEntriesIn
               draft: content,
               file: { ...e.file, content, encoding: enc.encoding, hasBom: enc.bom },
               warning: '', // a successful save resolves any restore-time conflict
+              conflict: null, // 外部変更の未回答バナーも同様に解消する
             },
           };
         });
@@ -339,12 +509,20 @@ export function useFileEntries(root: string, leafId: string, init: FileEntriesIn
       const path = entry.path;
       try {
         const f = await api.file(rootRef.current, path, encoding);
+        ignoredDiskHashRef.current.delete(path);
         setEntries((prev) =>
           prev[key]
             ? {
                 ...prev,
                 // draft is discarded here, so any restore-time conflict no longer applies
-                [key]: { ...prev[key], file: f, draft: f.content ?? '', error: '', warning: '' },
+                [key]: {
+                  ...prev[key],
+                  file: f,
+                  draft: f.content ?? '',
+                  error: '',
+                  warning: '',
+                  conflict: null,
+                },
               }
             : prev,
         );
@@ -374,6 +552,8 @@ export function useFileEntries(root: string, leafId: string, init: FileEntriesIn
     loadedRef.current.clear();
     indentAppliedRef.current.clear();
     eolOverrideRef.current.clear();
+    ignoredDiskHashRef.current.clear();
+    syncSeqRef.current.clear();
     draftsRef.current = next.drafts;
     viewStatesRef.current = next.viewStates;
     setEntries(entriesFromRefs(next.refs));
@@ -396,6 +576,9 @@ export function useFileEntries(root: string, leafId: string, init: FileEntriesIn
     ensureEntries,
     loadFile,
     refreshPreviewTab,
+    syncFromDisk,
+    applyDiskVersion,
+    dismissDiskChange,
     setDraft,
     disposeKeys,
     save,

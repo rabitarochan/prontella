@@ -33,6 +33,17 @@ self.MonacoEnvironment = {
 
 loader.config({ monaco });
 
+// エディターグループの分割/畳み込みで <Editor> が再マウントされると、Monaco は
+// in-flight の非同期処理 (トークナイズ・ワードハイライト等) を dispose 時に
+// キャンセルし、CancellationError (name/message とも 'Canceled') が未処理の
+// Promise 拒否としてコンソールへ出る。VS Code 本体も cancellation はエラー扱い
+// しない (onUnexpectedError で無視する) ため、ここでその 1 形だけを狭く握る。
+// アプリ側のエラーを飲み込まないよう name と message の両方で判定する。
+window.addEventListener('unhandledrejection', (e) => {
+  const r: unknown = e.reason;
+  if (r instanceof Error && r.name === 'Canceled' && r.message === 'Canceled') e.preventDefault();
+});
+
 // Files are edited standalone (no tsconfig / node_modules resolution), so
 // TypeScript's semantic diagnostics (unresolved imports, missing types) are
 // all noise here — keep only genuine syntax errors.

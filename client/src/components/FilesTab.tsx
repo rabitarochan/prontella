@@ -1,215 +1,114 @@
+// ファイルパネルのコーディネーター。エディターグループ分割 (VS Code のエディター
+// グループ相当) の導入に伴い、実体は components/files/ 配下へ分離した:
+// - editorGroups.ts   … グループツリーの純関数 (vitest 対象)
+// - useEditorGroups   … ツリー + アクティブグループの状態
+// - useFileEntries    … ファイル実行時状態のプール (path/kind 単位、グループ横断共有)
+// - EditorGroupPane   … 1 グループの UI (タブバー + Monaco/プレビュー)
+// - GroupSplitView    … react-resizable-panels の再帰ジオメトリ
+// FilesTab 自身はサイドペイン (ツリー/検索)・モーダル・ホットキー registry・
+// 「操作 → 木の変換 → リソース破棄 → 永続化」のオーケストレーションだけを持つ。
+
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import Editor, { type OnMount } from '@monaco-editor/react';
-import * as monaco from 'monaco-editor';
-import { api } from '../api';
-import type { EditorConfigSettings, FileContent } from '../types';
 import {
   hashText,
   loadLeafEditorState,
   MAX_DRAFT_TEXT_LENGTH,
   MAX_OPEN_FILES,
+  refKey,
   saveLeafEditorState,
+  tabKey,
   type LeafEditorState,
   type TabKind,
 } from '../editorState';
 import { useT, type StringKey } from '../i18n';
 import { isMarkdownPath } from '../markdown/paths';
 import { registerFilesTab, touchFilesTab, unregisterFilesTab } from '../search/registry';
-import { monacoThemeName } from '../theme/monacoTheme';
-import { useTheme } from '../theme/themeStore';
 import BlameModal from './BlameModal';
 import { useConfirm } from './ConfirmDialog';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import EditorStatusBar from './EditorStatusBar';
-import { middleClickAutoscrollGuard, middleClickClose } from './editorTabs';
+import { basename } from './editorTabs';
 import FileHistoryModal from './FileHistoryModal';
-import { LEAD_SLOT_SUFFIX, useTileBarSlots } from '../layout/tileBarSlots';
 import FileTree, { type FileTreeHandle } from './FileTree';
-import MarkdownPreview from './MarkdownPreview';
 import SearchPanel from './SearchPanel';
-
-// Tab identity is `{kind, path}` (see editorState.ts's OpenTabRef), not `path` alone — an
-// editor tab and a preview tab for the same path are distinct tabs. `key` is the derived
-// identity string used for React keys / lookups; `path` stays on the tab too since most
-// code (api.file, modelPath, viewStates, ...) only ever needs the path.
-interface OpenTab {
-  kind: TabKind;
-  path: string;
-  key: string;
-  file: FileContent | null; // null while loading
-  draft: string;
-  error: string;
-  /** Set when a restored draft was applied over disk content that changed while the tab was away. */
-  warning: StringKey | '';
-}
-
-function tabKey(kind: TabKind, path: string): string {
-  return `${kind}:${path}`;
-}
-
-function basename(path: string): string {
-  const i = path.lastIndexOf('/');
-  return i === -1 ? path : path.slice(i + 1);
-}
-
-// Preview tabs have no draft/file-content notion of their own (they render the editor
-// tab's — or disk's — content read-only), so dirtiness is an editor-only concept.
-function isDirty(t: OpenTab): boolean {
-  return t.kind === 'editor' && !!t.file && t.file.content !== null && t.draft !== t.file.content;
-}
+import type { DropZone } from '../layout/dropZones';
+import type { EditorTabDrag } from '../layout/editorTabDnd';
+import {
+  activateTab,
+  allGroups,
+  closeTabInGroup,
+  distinctKeys,
+  distinctRefs,
+  findGroup,
+  groupsWithKey,
+  insertTabInGroup,
+  moveTabToGroup,
+  openTabInGroup,
+  orphanedKeysAfter,
+  pickEviction,
+  setGroupSizes,
+  splitWithTab,
+  type GroupNode,
+} from './files/editorGroups';
+import {
+  getTransferHandle,
+  registerTransferHandle,
+  sanitizeTransferPayload,
+  unregisterTransferHandle,
+  type TabTransferPayload,
+} from './files/transferRegistry';
+import EditorGroupPane, { type PaneHandle, type PaneShared } from './files/EditorGroupPane';
+import GroupSplitView from './files/GroupSplitView';
+import { disposeModelsSoon } from './files/monacoSave';
+import { useEditorGroups } from './files/useEditorGroups';
+import { isDirtyEntry, useFileEntries, type MonacoEditor } from './files/useFileEntries';
 
 // sanitizeEditorState (editorState.ts) silently drops any draft over
 // MAX_DRAFT_TEXT_LENGTH on restore, so a draft that big is invisible to the
 // user unless flagged explicitly here. Holds the StringKey (not the resolved
-// text) so translate() can resolve it at render time (see StatusBadge's
-// LABELS pattern) — this constant also doubles as the sentinel value compared
-// against below, so the field itself stays a StringKey end to end.
+// text) so translate() can resolve it at render time — this constant also
+// doubles as the sentinel value compared against below, so the field itself
+// stays a StringKey end to end.
 const OVERSIZE_DRAFT_WARNING: StringKey = 'files.oversizeDraftWarning';
-
-const EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOptions = {
-  fontSize: 13,
-  minimap: { enabled: true },
-  scrollBeyondLastLine: false,
-  automaticLayout: true,
-  renderWhitespace: 'selection',
-  // インデントは applyModelOptions がモデル単位で制御する(editorconfig 指定が
-  // なければ手動で detectIndentation を呼ぶ)ので、attach 時の自動検出は切る。
-  detectIndentation: false,
-};
-
-// editorconfig の charset → 保存時のエンコーディング指定。latin1 は iconv-lite 側の
-// ホワイトリストに合わせて上位互換の windows-1252 に寄せる。utf-16 系は BOM 付きで書く。
-function charsetToEncoding(charset: EditorConfigSettings['charset']): {
-  encoding: string;
-  bom: boolean;
-} {
-  switch (charset) {
-    case 'utf-8-bom':
-      return { encoding: 'utf-8', bom: true };
-    case 'utf-16le':
-      return { encoding: 'utf-16le', bom: true };
-    case 'utf-16be':
-      return { encoding: 'utf-16be', bom: true };
-    case 'latin1':
-      return { encoding: 'windows-1252', bom: false };
-    default:
-      return { encoding: 'utf-8', bom: false };
-  }
-}
-
-// .editorconfig の保存時整形。モデルに適用してから保存することで、エディタ表示と
-// 保存内容が常に一致し、Ctrl+Z で整形前に戻せる。トリムと最終行改行は 1 回の
-// pushEditOperations にまとめる(複数回に分けると undo の復元位置がずれる)。
-function formatOnSave(
-  model: monaco.editor.ITextModel,
-  ec: EditorConfigSettings | null,
-  beforeCursorState: monaco.Selection[] | null,
-  skipEol: boolean,
-): void {
-  if (!ec) return;
-  const edits: monaco.editor.IIdentifiedSingleEditOperation[] = [];
-  if (ec.trimTrailingWhitespace) {
-    for (let line = 1; line <= model.getLineCount(); line++) {
-      const text = model.getLineContent(line);
-      const m = /[ \t]+$/.exec(text);
-      if (m) edits.push({ range: new monaco.Range(line, m.index + 1, line, text.length + 1), text: '' });
-    }
-  }
-  if (ec.insertFinalNewline) {
-    const lastLine = model.getLineCount();
-    const text = model.getLineContent(lastLine);
-    // トリム適用後に最終行が空になるなら挿入不要。空ファイルにも挿入しない(editorconfig 仕様)。
-    // 挿入位置は行末(トリム範囲の後端)なのでトリムの削除範囲とは重ならない。
-    const trimmed = ec.trimTrailingWhitespace ? text.replace(/[ \t]+$/, '') : text;
-    if (trimmed.length > 0) {
-      edits.push({
-        range: new monaco.Range(lastLine, text.length + 1, lastLine, text.length + 1),
-        text: model.getEOL(),
-      });
-    }
-  }
-  model.pushStackElement();
-  if (edits.length > 0) model.pushEditOperations(beforeCursorState, edits, () => null);
-  // skipEol: ユーザーがステータスバーで EOL を明示選択したタブ(eolOverrideRef)では、
-  // ここでの editorconfig 強制を止める(修正 A)。トリム/最終行改行は対象外なので上のブロックは常に動く。
-  if (ec.endOfLine && !skipEol) {
-    const want = ec.endOfLine === 'crlf' ? '\r\n' : '\n';
-    if (model.getEOL() !== want) {
-      model.pushEOL(
-        ec.endOfLine === 'crlf'
-          ? monaco.editor.EndOfLineSequence.CRLF
-          : monaco.editor.EndOfLineSequence.LF,
-      );
-    }
-  }
-  model.pushStackElement();
-}
-
-// Monaco models are keyed by `path` and outlive both the editor and this
-// component, so a closed tab's draft would silently resurface on reopen (or in
-// another worktree, since paths are root-relative). Disposal is deferred a tick
-// so React re-renders first and the editor detaches the model before we drop it.
-function disposeModelsSoon(paths: string[]) {
-  setTimeout(() => {
-    for (const p of paths) monaco.editor.getModel(monaco.Uri.parse(p))?.dispose();
-  }, 0);
-}
 
 export default function FilesTab({
   root,
   leafId,
-  visible,
 }: {
   root: string;
   leafId: string;
-  /** このタイルが現在ファイルビューを表示中か。タイルバーへのポータルは表示中のみ。 */
-  visible: boolean;
+  /** このタイルが現在ファイルビューを表示中か (TileWorkspace の display 切替)。
+   *  タブバーは常にグループ内インラインなので描画上は未使用。 */
+  visible?: boolean;
 }) {
   const t = useT();
-  // theme prop が古い値のまま Editor が再マウントされるとグローバルテーマを
-  // 巻き戻してしまうため、常に現在の解決済みテーマを渡す
-  const resolvedTheme = useTheme((s) => s.resolved);
-  // Restored exactly once at mount (lazy initializer — NOT re-evaluated on
-  // re-render). Root changes after mount are handled explicitly by the root
-  // effect below, which re-reads storage itself, so this value is never
-  // consulted again after the first render.
-  const [initialState] = useState<LeafEditorState | null>(() => loadLeafEditorState(root, leafId));
-  const [tabs, setTabs] = useState<OpenTab[]>(() =>
-    (initialState?.openFiles ?? []).map((ref) => ({
-      kind: ref.kind,
-      path: ref.path,
-      key: tabKey(ref.kind, ref.path),
-      file: null,
-      draft: '',
-      error: '',
-      warning: '',
-    })),
-  );
-  const [activeKey, setActiveKey] = useState<string | null>(() =>
-    initialState?.activeTab ? tabKey(initialState.activeTab.kind, initialState.activeTab.path) : null,
-  );
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState('');
   // useConfirm 側は confirmDialog という別名にする (GitTab.tsx と同じ命名)。
   const { confirm: confirmDialog, dialog } = useConfirm();
-  const saveRef = useRef<() => void>(() => {});
-  const loadedRef = useRef(new Set<string>()); // tab keys whose load is in flight or done
-  // Monaco models are global and keyed by path; two FilesTab instances (one per tile)
-  // opening the same path would otherwise fight over one model and dispose each other's
-  // drafts. Namespace every model URI with `leafId` (stable per tile leaf, unique across
-  // leaves — a leaf id is never reused by another leaf) rather than a mount-random id.
-  // @monaco-editor/react keeps a module-scope path -> viewState Map with no delete path
-  // in the package, so a namespace that changes on every mount grows that Map without
-  // bound (mounts × files opened, over a browser session's lifetime). Keying on leafId
-  // instead bounds it to leaves × files ever opened, and as a side effect restores
-  // cursor/scroll position when a leaf's FilesTab remounts (e.g. leaving and returning
-  // to a worktree) since the model path is now stable across remounts.
-  const modelPath = (path: string) => `${leafId}/${path}`;
+
+  // Restored exactly once at mount (lazy initializer — NOT re-evaluated on
+  // re-render). Root changes after mount are handled explicitly by the root
+  // effect below, which re-reads storage itself.
+  const [initialState] = useState<LeafEditorState | null>(() => loadLeafEditorState(root, leafId));
+  const groupsApi = useEditorGroups(initialState);
+  const entriesApi = useFileEntries(root, leafId, {
+    refs: initialState ? distinctRefs(initialState.groups) : [],
+    drafts: initialState?.drafts ?? {},
+    viewStates: initialState?.viewStates ?? {},
+  });
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef(root);
+  rootRef.current = root;
+  const leafIdRef = useRef(leafId);
+  leafIdRef.current = leafId;
+
   // Per-mount id for the Ctrl+P/Ctrl+Shift+F hotkey registry (search/registry.ts) only.
-  // Unlike modelPath's namespace above, this one MAY be mount-random: the registry is a
-  // small Map explicitly cleared via unregisterFilesTab on unmount, so it can't leak.
+  // (モデル URI の名前空間は leafId — useFileEntries.modelPath を参照。)
   const instanceRef = useRef(crypto.randomUUID().slice(0, 8));
+
+  const paneHandlesRef = useRef(new Map<string, PaneHandle>());
+  const [editorInsts, setEditorInsts] = useState<Record<string, MonacoEditor | null>>({});
+  const pendingRevealRef = useRef<{ path: string; line: number; column: number } | null>(null);
 
   // Left pane: file tree or the Ctrl+Shift+F search panel. The panel stays
   // mounted after first visit (display:none) so query and results survive
@@ -219,512 +118,449 @@ export default function FilesTab({
   const searchVisitedRef = useRef(false);
   if (side === 'search') searchVisitedRef.current = true;
 
-  // ファイルツリーの右クリックメニュー(6.3: 「ファイルの履歴...」)。読み取り専用機能なので
+  // ファイルツリーの右クリックメニュー(「ファイルの履歴...」等)。読み取り専用機能なので
   // ConfirmDialog は不要 — pj-git-route の「操作系でない機能は確認不要」の原則どおり。
   const [fileMenu, setFileMenu] = useState<{ x: number; y: number; path: string } | null>(null);
   const [historyPath, setHistoryPath] = useState<string | null>(null);
   const [blamePath, setBlamePath] = useState<string | null>(null);
-  const fileMenuItems = (path: string): ContextMenuItem[] => [
-    {
-      label: t('files.historyMenuItem'),
-      icon: 'history',
-      onClick: () => setHistoryPath(path),
-    },
-    {
-      label: 'blame...',
-      icon: 'account',
-      onClick: () => setBlamePath(path),
-    },
-    // Markdown 以外のファイルには出さない(disabled ではなく非表示 — 読み取り専用機能なので
-    // 「押せるが意味がない」項目を並べない)。
-    ...(isMarkdownPath(path)
-      ? [
-          {
-            label: t('files.openPreview'),
-            icon: 'preview',
-            onClick: () => openPreview(path),
-          },
-        ]
-      : []),
-  ];
+  const treeCtl = useRef<FileTreeHandle | null>(null);
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
-  // ステータスバー用。ref と違い state にすることで、マウント後に子コンポーネントの
-  // 購読 effect が再実行される。バイナリタブ表示中などは Editor ごと破棄されるので
-  // onDidDispose で null に戻し、破棄済みインスタンスを子へ渡さない。
-  const [editorInst, setEditorInst] = useState<Parameters<OnMount>[0] | null>(null);
-  const pendingRevealRef = useRef<{ path: string; line: number; column: number } | null>(null);
-  const tabsRef = useRef(tabs);
-  tabsRef.current = tabs;
-  const activeKeyRef = useRef(activeKey);
-  activeKeyRef.current = activeKey;
-  // The Monaco onMount callback fires once per editor instance and its
-  // closure keeps whatever `root`/`leafId` were current at that moment —
-  // read these through refs wherever a long-lived Monaco callback needs the
-  // CURRENT value (debounced cursor/scroll flush below).
-  const rootRef = useRef(root);
-  rootRef.current = root;
-  const leafIdRef = useRef(leafId);
-  leafIdRef.current = leafId;
+  // ---- 永続化 --------------------------------------------------------------
 
-  // インデント設定を適用済みのモデル(のタブパス)。モデルは閉じると破棄されるので、
-  // closeTab / root 切替で該当エントリも消して再適用させる。
-  const indentAppliedRef = useRef(new Set<string>());
+  /** 全ペインのアクティブタブの viewState を退避する。木の構造変更・flush の直前に呼ぶ。 */
+  const stashAll = useCallback(() => {
+    for (const h of paneHandlesRef.current.values()) h.stash();
+  }, []);
 
-  // ステータスバーで EOL を明示選択したタブパスの集合。保存時にこの集合に含まれる
-  // タブは formatOnSave の editorconfig 由来 EOL 強制をスキップする(ユーザーの意思が
-  // .editorconfig より優先)。indentAppliedRef と同じ寿命管理(closeTab / root 切替で削除)。
-  // ただし保存成功時にはクリアしない — 同じタブで保存を繰り返しても選択は維持される。
-  const eolOverrideRef = useRef(new Set<string>());
+  // drafts are computed fresh from the live entries on every flush (not read
+  // back out of draftsRef, which only ever holds RESTORED entries not yet
+  // reconciled by loadFile):
+  //   - loaded, editable, dirty entries → the live draft text + a hash of the
+  //     disk content it was based on (baseHash). Skipped over MAX_DRAFT_TEXT_LENGTH
+  //     (sanitizeEditorState would drop it on restore anyway — symmetric by
+  //     construction, both reference the same constant).
+  //   - still-loading entries (file === null) → whatever restored draft
+  //     draftsRef still has pending, carried through as-is.
+  //   - loaded binary/tooLarge/clean entries → omitted entirely.
+  const computeDrafts = useCallback((): Record<string, { text: string; baseHash: string }> => {
+    const drafts: Record<string, { text: string; baseHash: string }> = {};
+    for (const key of distinctKeys(groupsApi.stateRef.current.root)) {
+      const e = entriesApi.entriesRef.current[key];
+      if (!e || e.kind !== 'editor') continue;
+      if (e.file === null) {
+        const pending = entriesApi.draftsRef.current[e.path];
+        if (pending) drafts[e.path] = pending;
+      } else if (e.file.content !== null && isDirtyEntry(e) && e.draft.length <= MAX_DRAFT_TEXT_LENGTH) {
+        drafts[e.path] = { text: e.draft, baseHash: hashText(e.file.content) };
+      }
+    }
+    return drafts;
+    // groupsApi.stateRef / entriesApi refs are stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // R-3 (2026-07-27 レビュー指摘): プレビュー本文のスクロール位置 (path → scrollTop)。
-  // メモリのみ (localStorage へは永続化しない)。MarkdownPreview 自身の state に
-  // 持たせていたが、`active.kind === 'preview'` の分岐によりアクティブタブがエディター
-  // に切り替わった瞬間 MarkdownPreview は unmount され、その state ごと失われていた
-  // (プレビュー同士の切替では同一インスタンスが使い回されるため気づきにくかった)。
-  // FilesTab (MarkdownPreview の親、プレビュー/エディター間の切替でも unmount しない)
-  // 側の ref に引き上げ、MarkdownPreview には Map をそのまま渡して直接読み書きさせる。
-  const previewScrollPositionsRef = useRef(new Map<string, number>());
-
-  // viewState (カーソル位置・スクロール位置) は stashActiveViewState /
-  // tryRestoreViewState でライブ管理する。
-  const viewStatesRef = useRef<Record<string, unknown>>(initialState?.viewStates ?? {});
-  // draftsRef holds only RESTORED drafts that loadFile hasn't reconciled yet
-  // (see loadFile below) — once a tab finishes loading, its entry here is
-  // deleted and flush() computes what to persist straight from the live tab
-  // state instead. So this ref is a "pending restore" queue, not the
-  // authoritative draft store.
-  const draftsRef = useRef<Record<string, { text: string; baseHash: string }>>(
-    initialState?.drafts ?? {},
-  );
-
-  // Snapshot the active tab's cursor/scroll position into viewStatesRef
-  // before the editor moves away from it. The URI-match guard is required:
-  // without it, a stash racing a model swap could overwrite the WRONG tab's
-  // entry with the just-departed model's state.
-  const stashActiveViewState = () => {
-    const editor = editorRef.current;
-    const key = activeKeyRef.current;
-    if (!editor || !key) return;
-    const tab = tabsRef.current.find((t) => t.key === key);
-    if (!tab || tab.kind !== 'editor') return; // viewStatesRef is editor-only (keyed by path)
-    const model = editor.getModel();
-    if (!model || model.uri.toString() !== monaco.Uri.parse(modelPath(tab.path)).toString()) return;
-    const vs = editor.saveViewState();
-    if (vs) viewStatesRef.current[tab.path] = vs;
-  };
-
-  // Write the current tab set to localStorage under (flushRoot, flushLeafId).
+  // Write the current state to localStorage under (flushRoot, flushLeafId).
   // Root/leafId are passed as arguments (not read from the closure) so callers
   // — the root-change/unmount cleanup in particular — always target the
   // worktree the flushed state actually belongs to.
-  //
-  // drafts are computed fresh from the live tabs on every flush (not read
-  // back out of draftsRef, which only ever holds RESTORED entries not yet
-  // reconciled by loadFile — see loadFile below):
-  //   - loaded, editable (non-binary/tooLarge), dirty tabs → the live draft
-  //     text + a hash of the disk content it was based on (baseHash), so a
-  //     later restore can tell whether the file changed underneath it.
-  //     Skipped when the draft is over MAX_DRAFT_TEXT_LENGTH: sanitizeEditorState
-  //     (editorState.ts) would silently drop it on restore anyway, so writing
-  //     it here would just be dead weight in localStorage. Symmetric with the
-  //     read side by construction — both reference the same constant.
-  //   - still-loading tabs (file === null) → whatever restored draft
-  //     draftsRef still has pending for that path, carried through as-is so
-  //     leaving before the load completes doesn't drop it.
-  //   - loaded binary/tooLarge/clean tabs → omitted entirely.
-  const flush = useCallback((flushRoot: string, flushLeafId: string) => {
-    stashActiveViewState(); // capture the latest cursor/scroll before writing
-    const drafts: Record<string, { text: string; baseHash: string }> = {};
-    for (const t of tabsRef.current) {
-      if (t.kind !== 'editor') continue; // drafts are editor-only, keyed by path
-      if (t.file === null) {
-        const pending = draftsRef.current[t.path];
-        if (pending) drafts[t.path] = pending;
-      } else if (t.file.content !== null && isDirty(t) && t.draft.length <= MAX_DRAFT_TEXT_LENGTH) {
-        drafts[t.path] = { text: t.draft, baseHash: hashText(t.file.content) };
+  const flush = useCallback(
+    (flushRoot: string, flushLeafId: string) => {
+      stashAll();
+      const { root: groupRoot, activeGroupId } = groupsApi.stateRef.current;
+      saveLeafEditorState(flushRoot, flushLeafId, {
+        groups: groupRoot,
+        activeGroupId,
+        viewStates: entriesApi.viewStatesRef.current,
+        drafts: computeDrafts(),
+      });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [stashAll, computeDrafts],
+  );
+
+  // ---- 木の変換 + リソースライフサイクル -----------------------------------
+
+  // Apply a group-tree transition: set the new tree, dispose resources whose
+  // LAST reference disappeared (orphanedKeysAfter — derived ref counting), and
+  // clean group-scoped state (viewStates / editor instances) of removed groups.
+  const applyGroups = useCallback(
+    (after: GroupNode, opts?: { activate?: string }) => {
+      const before = groupsApi.stateRef.current.root;
+      if (after === before) {
+        if (opts?.activate) groupsApi.setActiveGroup(opts.activate);
+        return;
       }
-    }
-    const activeTab = tabsRef.current.find((t) => t.key === activeKeyRef.current) ?? null;
-    saveLeafEditorState(flushRoot, flushLeafId, {
-      openFiles: tabsRef.current.map((t) => ({ kind: t.kind, path: t.path })),
-      activeTab: activeTab ? { kind: activeTab.kind, path: activeTab.path } : null,
-      viewStates: viewStatesRef.current,
-      drafts,
-    });
-  }, []);
-
-  // Load a file's content into its tab. Shared by openFile (user-initiated)
-  // and the mount / root-change restore paths (tabs whose `file` starts null).
-  const loadFile = useCallback(
-    (key: string, path: string) => {
-      if (loadedRef.current.has(key)) return;
-      loadedRef.current.add(key);
-      api
-        .file(root, path)
-        .then((f) => {
-          // Reconcile a restored (persisted) draft against the just-loaded disk
-          // content. draftsRef is editor-only (keyed by path), so only the editor
-          // tab for this path consults it — a preview tab loading the same path
-          // must not steal or drop the editor tab's pending restore. Resolved
-          // either way below, so drop it from the pending bucket now — flush()'s
-          // live computation takes over from here for this path.
-          const isEditorLoad = key === tabKey('editor', path);
-          const pending = isEditorLoad ? draftsRef.current[path] : undefined;
-          if (isEditorLoad) delete draftsRef.current[path];
-
-          setTabs((prev) =>
-            prev.map((t) => {
-              if (t.key !== key) return t;
-              // R-1 (2026-07-27 レビュー指摘): 成功したロードは必ず前回のエラー表示を
-              // クリアする。以前はここで t.error を引き継いでいたため、一度エラーに
-              // なったタブ (プレビューの「更新」・エディターの再読み込み共通) は disk
-              // 側が復旧して 200 が返ってきても永久にエラー表示のままだった。
-              const base = { ...t, file: f, error: '' };
-              if (!pending || f.content === null) {
-                // No persisted draft to reconcile, or the file can't be
-                // edited here (binary/too large) — normal load.
-                return { ...base, draft: f.content ?? '' };
-              }
-              if (f.content === pending.text) {
-                // Disk already matches the draft — nothing to restore.
-                return { ...base, draft: f.content };
-              }
-              if (hashText(f.content) === pending.baseHash) {
-                // Disk is unchanged from the content the draft was based on
-                // — safe to reapply.
-                return { ...base, draft: pending.text };
-              }
-              // Disk changed underneath the draft while the tab was away.
-              // Apply the draft anyway (never silently discard it) but warn,
-              // since saving now would overwrite the newer disk content.
-              return {
-                ...base,
-                draft: pending.text,
-                warning: 'files.diskChangedWhileAwayWarning',
-              };
-            }),
-          );
-        })
-        .catch((e: Error) => {
-          loadedRef.current.delete(key); // allow retry on reopen
-          setTabs((prev) => prev.map((t) => (t.key === key ? { ...t, error: e.message } : t)));
+      groupsApi.set(after, opts);
+      const orphans = orphanedKeysAfter(before, after);
+      if (orphans.length > 0) entriesApi.disposeKeys(orphans);
+      const goneIds = new Set(allGroups(before).map((g) => g.id));
+      for (const g of allGroups(after)) goneIds.delete(g.id);
+      for (const gone of goneIds) {
+        delete entriesApi.viewStatesRef.current[gone];
+        paneHandlesRef.current.delete(gone);
+        setEditorInsts((prev) => {
+          if (!(gone in prev)) return prev;
+          const next = { ...prev };
+          delete next[gone];
+          return next;
         });
+      }
     },
-    [root],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
   );
 
-  // Preview tabs render disk content directly (no draft of their own), so a save made
-  // through the editor tab isn't visible until the preview's content is refetched. Used
-  // by openTab (reactivating an already-open preview tab), switchTo (switching TO a
-  // preview tab via the tab strip), and MarkdownPreview's own refresh button.
-  // Editor tabs never call this — they have their own reload path (reloadWithEncoding).
-  const refreshPreviewTab = useCallback(
-    (key: string, path: string) => {
-      loadedRef.current.delete(key);
-      loadFile(key, path);
-    },
-    [loadFile],
-  );
+  // ---- タブ操作 ------------------------------------------------------------
 
-  // Path/kind-keyed cleanup for one tab being removed — shared by closeTab (below) and
-  // openTab's auto-eviction (below it). Does NOT touch `tabs` state itself; callers
-  // remove the tab. indentAppliedRef / eolOverrideRef / viewStatesRef / draftsRef / the
-  // Monaco model are keyed by path, not by tab key. Removing a preview tab must NOT
-  // clear the editor tab's resources for the same path (nor vice versa) — this is the
-  // biggest accident point for silently destroying unsaved edits, so it's gated on kind
-  // here. Preview tabs have no draft/viewState/model of their own but DO own an entry in
-  // previewScrollPositionsRef (path-keyed, written by MarkdownPreview) that nothing else
-  // ever clears.
-  const disposeTabResources = (target: OpenTab) => {
-    loadedRef.current.delete(target.key);
-    if (target.kind === 'editor') {
-      indentAppliedRef.current.delete(target.path);
-      eolOverrideRef.current.delete(target.path);
-      delete viewStatesRef.current[target.path];
-      delete draftsRef.current[target.path];
-      disposeModelsSoon([modelPath(target.path)]);
-    } else {
-      previewScrollPositionsRef.current.delete(target.path);
-    }
-  };
-
-  // Open a tab: focus it if already open, otherwise add it and load it.
-  // `openFile` (below) is the public, editor-only entry point every existing
-  // caller uses; `openTab` itself stays kind-general so a future preview caller
-  // can reuse the same focus/add/load logic.
+  // Open a tab in the active group: focus it if already open there, otherwise
+  // add it and load it. A key already open in ANOTHER group still opens here
+  // too (VS Code 同様) — the pool entry and Monaco model are shared.
   const openTab = useCallback(
     (kind: TabKind, path: string) => {
-      stashActiveViewState(); // leaving the current tab (if any) for a different one
-      setMessage('');
+      stashAll();
+      entriesApi.setMessage('');
       const key = tabKey(kind, path);
-      // R-2 (2026-07-27 レビュー指摘): 既に開いているプレビュータブを「プレビューを
-      // 開く」(ツールバー/右クリックメニュー/プレビュー内の .md リンク、いずれも
-      // openPreview → openTab 経由) で再度アクティブにするとき、loadFile は
-      // loadedRef に阻まれて no-op になり、保存直後でも古い内容のままだった。
-      // タブバーを直接クリックする switchTo と同じ「既存プレビューは再取得する」
-      // という規則に揃える。
-      const alreadyOpen = tabsRef.current.some((t) => t.key === key);
-      const prevActiveKey = activeKeyRef.current; // before the switch below — used by eviction
-      setActiveKey(key);
-      if (!alreadyOpen) {
-        const appended: OpenTab[] = [
-          ...tabsRef.current,
-          { kind, path, key, file: null, draft: '', error: '', warning: '' },
-        ];
-        // MAX_OPEN_FILES was previously enforced only on restore (sanitizeOpenFiles in
-        // editorState.ts); nothing capped how many tabs could pile up during a live
-        // session. Auto-close the single oldest tab that's safe to lose: not dirty (an
-        // unsaved edit must never be silently discarded), not the tab the user was just
-        // on, and not the tab being opened right now. `t.file !== null` is required too —
-        // isDirty() reads `t.file`, so a still-loading OR load-FAILED tab (file === null)
-        // always looks non-dirty even though it may be carrying a restored draft that
-        // loadFile hasn't reconciled yet (draftsRef; see loadFile's comment) or that will
-        // never load to reconcile it; evicting it would silently drop that draft the
-        // instant flush() next runs. If every open tab is dirty or still unresolved, the
-        // cap is exceeded rather than discarding anything.
-        if (appended.length > MAX_OPEN_FILES) {
-          const evictIdx = appended.findIndex(
-            (t) => t.key !== key && t.key !== prevActiveKey && t.file !== null && !isDirty(t),
-          );
-          if (evictIdx !== -1) {
-            disposeTabResources(appended[evictIdx]);
-            appended.splice(evictIdx, 1);
-          }
-        }
-        setTabs(appended);
+      const st = groupsApi.stateRef.current;
+      const groupId = st.activeGroupId;
+      const before = st.root;
+      let after = openTabInGroup(before, groupId, { kind, path });
+      // Auto-close the single oldest entry that's safe to lose once the pool
+      // would exceed MAX_OPEN_FILES: not dirty (an unsaved edit must never be
+      // silently discarded), not any group's current active tab, not the tab
+      // being opened, and never a key open in 2+ groups (closing one reference
+      // frees nothing). `file !== null` is required too — a still-loading OR
+      // load-FAILED entry always looks non-dirty even though it may be carrying
+      // a restored draft that loadFile hasn't reconciled yet; evicting it would
+      // silently drop that draft on the next flush. If every entry is dirty or
+      // unresolved, the cap is exceeded rather than discarding anything.
+      if (distinctKeys(after).length > MAX_OPEN_FILES) {
+        const activeKeys = allGroups(before)
+          .map((g) => g.activeKey)
+          .filter((k): k is string => k !== null);
+        const evict = pickEviction(after, {
+          excludeKeys: [key, ...activeKeys],
+          isEvictable: (k) => {
+            const e = entriesApi.entriesRef.current[k];
+            return !!e && e.file !== null && !isDirtyEntry(e);
+          },
+        });
+        if (evict) after = closeTabInGroup(after, evict.groupId, evict.key);
       }
-      if (alreadyOpen && kind === 'preview') {
-        refreshPreviewTab(key, path);
+      const existedBefore = !!entriesApi.entriesRef.current[key];
+      applyGroups(after, { activate: groupId });
+      entriesApi.ensureEntries([{ kind, path }]);
+      if (existedBefore && kind === 'preview') {
+        // R-2: 既に開いているプレビューを「プレビューを開く」で再アクティブ化する
+        // ときも、タブバーの switchTo と同じく再取得する (保存直後の古い内容を防ぐ)。
+        entriesApi.refreshPreviewTab(key, path);
       } else {
-        loadFile(key, path);
+        entriesApi.loadFile(key, path);
       }
     },
-    [loadFile, refreshPreviewTab],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [applyGroups, stashAll],
   );
   const openFile = useCallback((path: string) => openTab('editor', path), [openTab]);
   const openPreview = useCallback((path: string) => openTab('preview', path), [openTab]);
 
-  // Mount-only: fires the load for tabs restored from localStorage (`file`
-  // starts null for every restored tab). Later opens go through openFile,
-  // which calls loadFile itself.
-  useEffect(() => {
-    for (const t of tabs) {
-      if (t.file === null) loadFile(t.key, t.path);
-    }
-  }, []);
+  const switchTab = useCallback(
+    (groupId: string, key: string) => {
+      stashAll();
+      entriesApi.setMessage('');
+      applyGroups(activateTab(groupsApi.stateRef.current.root, groupId, key), { activate: groupId });
+      const e = entriesApi.entriesRef.current[key];
+      if (e?.kind === 'preview') entriesApi.refreshPreviewTab(key, e.path);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [applyGroups, stashAll],
+  );
 
-  // Worktree switched — open tabs are root-relative, so start fresh. This
-  // effect also fires once at mount (React runs every effect on first
-  // commit); that first run must NOT clear the tabs the lazy initializers
-  // above already restored, so it only registers the flush/dispose cleanup
-  // the first time through.
-  const rootEffectRanRef = useRef(false);
-  useEffect(() => {
-    const flushRoot = root;
-    const flushLeafId = leafId;
+  const closeTab = useCallback(
+    async (groupId: string, key: string) => {
+      const st = groupsApi.stateRef.current;
+      const entry = entriesApi.entriesRef.current[key];
+      // dirty 確認は「leaf 内の最後の参照を閉じるとき」だけ。他グループに同じ
+      // ファイルが残るなら draft は失われない (プールとモデルは共有) ので確認しない。
+      if (isDirtyEntry(entry) && groupsWithKey(st.root, key).length === 1) {
+        const ok = await confirmDialog({
+          title: t('files.discardChangesTitle'),
+          message: t('files.discardChangesMessage', { name: basename(entry!.path) }),
+          confirmLabel: t('files.discardAndClose'),
+          severity: 'danger',
+        });
+        if (!ok) return;
+      }
+      const cur = groupsApi.stateRef.current;
+      const g = findGroup(cur.root, groupId);
+      if (cur.activeGroupId === groupId && g?.activeKey === key) entriesApi.setMessage('');
+      applyGroups(closeTabInGroup(cur.root, groupId, key));
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [applyGroups, confirmDialog, t],
+  );
 
-    if (!rootEffectRanRef.current) {
-      rootEffectRanRef.current = true;
-    } else {
-      // root actually changed (defensive — WorktreeView normally remounts
-      // this component via `key` on worktree switch, so this branch isn't
-      // reached in practice).
-      setTabs([]);
-      setActiveKey(null);
-      setMessage('');
-      setSide('tree');
-      pendingRevealRef.current = null;
-      indentAppliedRef.current.clear();
-      eolOverrideRef.current.clear();
-      previewScrollPositionsRef.current.clear();
-      loadedRef.current.clear();
-
-      const state = loadLeafEditorState(root, leafId);
-      viewStatesRef.current = state?.viewStates ?? {};
-      draftsRef.current = state?.drafts ?? {};
-      const restoredTabs = (state?.openFiles ?? []).map(
-        (ref): OpenTab => ({
-          kind: ref.kind,
-          path: ref.path,
-          key: tabKey(ref.kind, ref.path),
-          file: null,
-          draft: '',
-          error: '',
-          warning: '',
-        }),
-      );
-      setTabs(restoredTabs);
-      setActiveKey(state?.activeTab ? tabKey(state.activeTab.kind, state.activeTab.path) : null);
-      for (const t of restoredTabs) loadFile(t.key, t.path);
-    }
-
-    // On root change or unmount: persist the tabs open under the outgoing
-    // root/leafId, then drop every model this tab set created. Models are
-    // keyed by path only (not kind), so the dispose list is derived from the
-    // outgoing tabs' `kind === 'editor'` paths (tabsRef still holds the
-    // pre-change tabs here — cleanup runs before the new root's effect body).
-    return () => {
-      flush(flushRoot, flushLeafId);
-      disposeModelsSoon(
-        tabsRef.current.filter((t) => t.kind === 'editor').map((t) => modelPath(t.path)),
-      );
-    };
-  }, [root, leafId, flush, loadFile]);
-
-  // Persist open tabs + active tab whenever the tab SET or the active tab
-  // changes. Keyed on the tab key list (not `tabs` itself, whose `draft` field
-  // changes on every keystroke) so typing never triggers a localStorage write.
-  const tabKeysKey = tabs.map((t) => t.key).join('\n');
-  useEffect(() => {
-    flush(root, leafId);
-  }, [tabKeysKey, activeKey, root, leafId, flush]);
-
-  // Debounced draft persistence: unlike tabKeysKey above, this effect
-  // deliberately depends on `tabs` itself, so it re-runs on every keystroke
-  // (the `draft` field changes each time onChange fires). Only the cheap
-  // clearTimeout/setTimeout pair runs on every keystroke — flush() (and the
-  // localStorage write inside it) only actually fires once 1s has passed
-  // since the last `tabs` change. root/leafId are read via rootRef/leafIdRef
-  // rather than added to the deps array, so a reschedule never needs to wait
-  // on them specifically.
-  useEffect(() => {
-    const timer = setTimeout(() => flush(rootRef.current, leafIdRef.current), 1000);
-
-    // Same-effect, same trigger: flush() above silently skips oversize drafts
-    // (see flush()'s comment), so tell the user right here instead of leaving
-    // them to discover it on the next reload. Set/clear only ever touch OUR
-    // OVERSIZE_DRAFT_WARNING slot: setting requires warning to currently be
-    // empty (never steals the slot from an unrelated, e.g. restore-conflict,
-    // warning), and clearing requires it to currently BE our own text (never
-    // clears someone else's warning). `prev` is returned as-is when no tab
-    // actually needs a change, so this doesn't itself retrigger the effect
-    // (tabs stays referentially the same → the [tabs, flush] deps see no change).
-    setTabs((prev) => {
-      let changed = false;
-      const next = prev.map((t): OpenTab => {
-        const oversize = isDirty(t) && t.draft.length > MAX_DRAFT_TEXT_LENGTH;
-        if (oversize && t.warning === '') {
-          changed = true;
-          return { ...t, warning: OVERSIZE_DRAFT_WARNING };
-        }
-        if (!oversize && t.warning === OVERSIZE_DRAFT_WARNING) {
-          changed = true;
-          return { ...t, warning: '' };
-        }
-        return t;
-      });
-      return changed ? next : prev;
-    });
-
-    return () => clearTimeout(timer);
-  }, [tabs, flush]);
-
-  // Flush on tab close / reload, where cleanup functions don't get to run.
-  useEffect(() => {
-    const onPageHide = () => flush(root, leafId);
-    window.addEventListener('pagehide', onPageHide);
-    return () => window.removeEventListener('pagehide', onPageHide);
-  }, [root, leafId, flush]);
-
-  const active = tabs.find((t) => t.key === activeKey) ?? null;
-  const modified = active ? isDirty(active) : false;
-
-  // Jump to a search match once the target file is loaded AND the editor has
-  // switched to its model. Reads only refs, so it can be called from any
-  // timing (onMount, the effect below, openAtLine) without stale closures.
-  // Never rewrites model content — the uncontrolled-editor invariant holds.
-  // Search jumps always target the editor tab for a path (openAtLine → openFile).
-  const tryReveal = () => {
+  /** DnD 中のタブが reveal 待ちなら破棄する (移動先で誤ジャンプしないように)。 */
+  const cancelPendingRevealFor = (drag: EditorTabDrag) => {
     const p = pendingRevealRef.current;
-    const editor = editorRef.current;
-    if (!p || !editor) return;
-    const key = tabKey('editor', p.path);
-    if (activeKeyRef.current !== key) return;
-    const tab = tabsRef.current.find((t) => t.key === key);
-    if (!tab?.file || tab.file.content === null) return; // loading / binary / tooLarge
-    const model = editor.getModel();
-    if (!model || model.uri.toString() !== monaco.Uri.parse(modelPath(p.path)).toString()) return;
-    const line = Math.min(p.line, model.getLineCount()); // file may have changed since the search
-    editor.revealLineInCenter(line);
-    editor.setPosition({ lineNumber: line, column: p.column });
-    editor.focus();
-    pendingRevealRef.current = null;
+    if (p && tabKey('editor', p.path) === drag.key) pendingRevealRef.current = null;
   };
+
+  // ---- クロス leaf 転送 (transferRegistry) ----------------------------------
+
+  /** source 側: タブの転送データを読み取る。draft が上限超過の dirty タブは
+   *  null (転送拒否) — 削って運ぶと未保存編集が失われるため。 */
+  const exportTab = useCallback(
+    (key: string): TabTransferPayload | null => {
+      const e = entriesApi.entriesRef.current[key];
+      if (!e) return null;
+      if (e.kind === 'preview') return { kind: 'preview', path: e.path };
+      if (e.file === null) {
+        // 未ロード: 復元待ち draft をそのまま運ぶ (落とさない — loadFile 前の
+        // 復元 draft は draftsRef にしか無い)
+        const pending = entriesApi.draftsRef.current[e.path];
+        return { kind: 'editor', path: e.path, draft: pending ? { ...pending } : undefined };
+      }
+      if (e.file.content !== null && isDirtyEntry(e)) {
+        if (e.draft.length > MAX_DRAFT_TEXT_LENGTH) return null;
+        return {
+          kind: 'editor',
+          path: e.path,
+          draft: { text: e.draft, baseHash: hashText(e.file.content) },
+        };
+      }
+      return { kind: 'editor', path: e.path };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  /** source 側: 転送成立後のタブ除去。確認なし (内容は引っ越し済み)。
+   *  最後の参照だった場合は applyGroups → disposeKeys が資源を回収する。 */
+  const removeTabAfterTransfer = useCallback(
+    (groupId: string, key: string) => {
+      const p = pendingRevealRef.current;
+      if (p && tabKey('editor', p.path) === key) pendingRevealRef.current = null;
+      applyGroups(closeTabInGroup(groupsApi.stateRef.current.root, groupId, key));
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [applyGroups],
+  );
+
+  type ImportTarget =
+    | { groupId: string; index?: number }
+    | { splitOf: string; zone: Exclude<DropZone, 'center'> };
+
+  /** target 側: 転送タブの受け入れ。true を返したときだけ source が除去する。 */
+  const importTransferredTab = useCallback(
+    (payload: TabTransferPayload, target: ImportTarget): boolean => {
+      const sanitized = sanitizeTransferPayload(payload);
+      if (!sanitized) return false;
+      const key = tabKey(sanitized.kind, sanitized.path);
+      const st = groupsApi.stateRef.current;
+      // 重複ルール: この leaf に同じ {kind, path} が既に開いていたら転送中止 +
+      // 既存タブをアクティブ化 (source は残る)。draft のマージは絶対にしない。
+      const holders = groupsWithKey(st.root, key);
+      if (holders.length > 0) {
+        applyGroups(activateTab(st.root, holders[0], key), { activate: holders[0] });
+        return false;
+      }
+      const ref = { kind: sanitized.kind, path: sanitized.path };
+      let after: GroupNode;
+      let activateId: string;
+      if ('splitOf' in target) {
+        const dir = target.zone === 'left' || target.zone === 'right' ? 'row' : 'column';
+        const before = target.zone === 'left' || target.zone === 'top';
+        const res = splitWithTab(st.root, target.splitOf, dir, before, ref);
+        if (res.newGroupId === null) return false;
+        after = res.root;
+        activateId = res.newGroupId;
+      } else {
+        if (!findGroup(st.root, target.groupId)) return false;
+        after = insertTabInGroup(st.root, target.groupId, ref, target.index);
+        activateId = target.groupId;
+      }
+      stashAll();
+      entriesApi.setMessage('');
+      // openTab と同じ eviction (プールが上限を超えるなら安全に失えるタブを閉じる)
+      if (distinctKeys(after).length > MAX_OPEN_FILES) {
+        const activeKeys = allGroups(st.root)
+          .map((g) => g.activeKey)
+          .filter((k): k is string => k !== null);
+        const evict = pickEviction(after, {
+          excludeKeys: [key, ...activeKeys],
+          isEvictable: (k) => {
+            const e = entriesApi.entriesRef.current[k];
+            return !!e && e.file !== null && !isDirtyEntry(e);
+          },
+        });
+        if (evict) after = closeTabInGroup(after, evict.groupId, evict.key);
+      }
+      // draft は pending として先に積む → 既存 loadFile の reconcile 経路が
+      // baseHash 照合・disk 変更警告まで面倒を見る (モデルは当 leaf の名前空間で新規)
+      if (sanitized.kind === 'editor' && sanitized.draft) {
+        entriesApi.draftsRef.current[sanitized.path] = sanitized.draft;
+      }
+      applyGroups(after, { activate: activateId });
+      entriesApi.ensureEntries([ref]);
+      entriesApi.loadFile(key, sanitized.path);
+      return true;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [applyGroups, stashAll],
+  );
+
+  /** target 側から source を駆動する共通フロー。 */
+  const acceptCrossLeafDrop = useCallback(
+    (drag: EditorTabDrag, target: ImportTarget) => {
+      const src = getTransferHandle(drag.sourceLeafId);
+      if (!src) return;
+      const payload = src.exportTab(drag.key);
+      if (!payload) return;
+      if (importTransferredTab(payload, target)) {
+        src.removeTabAfterTransfer(drag.sourceGroupId, drag.key);
+      }
+    },
+    [importTransferredTab],
+  );
+
+  // このパネルを転送レジストリへ公開 (leafId がアドレス)。
+  useEffect(() => {
+    registerTransferHandle(leafId, { exportTab, removeTabAfterTransfer });
+    return () => unregisterTransferHandle(leafId);
+  }, [leafId, exportTab, removeTabAfterTransfer]);
+
+  /** タブストリップへのドロップ: 同一グループ = 並べ替え、別グループ = 移動。
+   *  index はドラッグ元タブ込みの並びに対する挿入位置 (同一グループ内で元位置より
+   *  右へ挿すときは 1 詰める)。ドロップしたタブは VS Code 同様アクティブになる。 */
+  const dropOnTabStrip = useCallback(
+    (dstGroupId: string, index: number, drag: EditorTabDrag) => {
+      if (drag.sourceLeafId !== leafIdRef.current) {
+        acceptCrossLeafDrop(drag, { groupId: dstGroupId, index });
+        return;
+      }
+      const st = groupsApi.stateRef.current;
+      let at = index;
+      if (drag.sourceGroupId === dstGroupId) {
+        const g = findGroup(st.root, dstGroupId);
+        const from = g?.tabs.findIndex((r) => refKey(r) === drag.key) ?? -1;
+        if (from === -1) return;
+        if (from < at) at -= 1;
+        if (from === at) {
+          groupsApi.setActiveGroup(dstGroupId);
+          return;
+        }
+      }
+      stashAll();
+      cancelPendingRevealFor(drag);
+      let after = moveTabToGroup(st.root, drag.sourceGroupId, drag.key, dstGroupId, at);
+      after = activateTab(after, dstGroupId, drag.key);
+      applyGroups(after, { activate: dstGroupId });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [applyGroups, stashAll],
+  );
+
+  /** 本文 5 ゾーンへのドロップ: 中央 = グループへ移動、上下左右 = その方向へ分割作成。 */
+  const dropOnEditorZone = useCallback(
+    (dstGroupId: string, zone: DropZone, drag: EditorTabDrag) => {
+      if (drag.sourceLeafId !== leafIdRef.current) {
+        acceptCrossLeafDrop(
+          drag,
+          zone === 'center' ? { groupId: dstGroupId } : { splitOf: dstGroupId, zone },
+        );
+        return;
+      }
+      const st = groupsApi.stateRef.current;
+      const srcGroup = findGroup(st.root, drag.sourceGroupId);
+      const ref = srcGroup?.tabs.find((r) => refKey(r) === drag.key);
+      if (!srcGroup || !ref) return;
+      if (zone === 'center') {
+        if (drag.sourceGroupId === dstGroupId) return;
+        stashAll();
+        cancelPendingRevealFor(drag);
+        applyGroups(moveTabToGroup(st.root, drag.sourceGroupId, drag.key, dstGroupId), {
+          activate: dstGroupId,
+        });
+        return;
+      }
+      // 単独タブの自グループ端ドロップは no-op (分割しても片方が空になり即畳まれるだけ)
+      if (drag.sourceGroupId === dstGroupId && srcGroup.tabs.length === 1) return;
+      stashAll();
+      cancelPendingRevealFor(drag);
+      const dir = zone === 'left' || zone === 'right' ? 'row' : 'column';
+      const before = zone === 'left' || zone === 'top';
+      const { root: after, newGroupId } = splitWithTab(st.root, dstGroupId, dir, before, ref, {
+        groupId: drag.sourceGroupId,
+      });
+      applyGroups(after, { activate: newGroupId ?? undefined });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [applyGroups, stashAll],
+  );
+
+  /** タブバーの分割ボタン: アクティブタブを右隣の新グループへ複製 (VS Code 流)。 */
+  const splitGroup = useCallback(
+    (groupId: string) => {
+      const st = groupsApi.stateRef.current;
+      const g = findGroup(st.root, groupId);
+      const key = g?.activeKey;
+      if (!g || !key) return;
+      const ref = g.tabs.find((r) => refKey(r) === key);
+      if (!ref) return;
+      stashAll();
+      const { root: after, newGroupId } = splitWithTab(st.root, groupId, 'row', false, ref);
+      applyGroups(after, { activate: newGroupId ?? undefined });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [applyGroups, stashAll],
+  );
+
+  // ---- 保存 / リロード (アクティブグループへのルーティング) ------------------
+
+  const saveGroup = useCallback(
+    (groupId: string) => {
+      const g = findGroup(groupsApi.stateRef.current.root, groupId);
+      if (!g?.activeKey) return;
+      void entriesApi.save(g.activeKey, paneHandlesRef.current.get(groupId)?.getEditor() ?? null);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  const activeGroupEditorKey = (): { key: string; editor: MonacoEditor | null } | null => {
+    const st = groupsApi.stateRef.current;
+    const g = findGroup(st.root, st.activeGroupId);
+    if (!g?.activeKey) return null;
+    return { key: g.activeKey, editor: paneHandlesRef.current.get(g.id)?.getEditor() ?? null };
+  };
+
+  // 「エンコーディング指定で再読み込み」。dirty なら確認してから破棄する。
+  const reloadWithEncoding = async (encoding: string) => {
+    const target = activeGroupEditorKey();
+    if (!target) return;
+    const entry = entriesApi.entriesRef.current[target.key];
+    if (!entry || entry.kind !== 'editor') return;
+    if (entry.file && entry.file.content !== null && entry.draft !== entry.file.content) {
+      const ok = await confirmDialog({
+        title: t('files.reloadTitle'),
+        message: t('files.reloadDiscardMessage', { name: basename(entry.path) }),
+        confirmLabel: t('files.discardAndReload'),
+        severity: 'danger',
+      });
+      if (!ok) return;
+    }
+    await entriesApi.reloadWithEncoding(target.key, target.editor, encoding);
+  };
+
+  // ---- ジャンプ / ホットキー registry --------------------------------------
 
   const openAtLine = (path: string, line: number, column = 1) => {
     pendingRevealRef.current = { path, line, column };
     openFile(path);
-    tryReveal(); // already open and loaded → jump immediately
+    // already open and loaded in the active group → jump immediately (state が
+    // 変わらず再レンダーされないケースを拾う。それ以外はペインの effect が消化する)
+    paneHandlesRef.current.get(groupsApi.stateRef.current.activeGroupId)?.tryReveal();
   };
-
-  // editorconfig のインデント設定をアクティブなモデルへ 1 回だけ適用する。
-  // tryReveal と同じく ref のみを読むので、onMount / onDidChangeModel /
-  // 毎レンダー effect のどこから呼んでも stale にならない。
-  const applyModelOptions = () => {
-    const editor = editorRef.current;
-    const key = activeKeyRef.current;
-    if (!editor || !key) return;
-    const tab = tabsRef.current.find((t) => t.key === key);
-    // indentAppliedRef is editor-only, keyed by path.
-    if (!tab || tab.kind !== 'editor' || indentAppliedRef.current.has(tab.path)) return;
-    if (!tab.file || tab.file.content === null) return;
-    const path = tab.path;
-    const model = editor.getModel();
-    if (!model || model.uri.toString() !== monaco.Uri.parse(modelPath(path)).toString()) return;
-    indentAppliedRef.current.add(path);
-    const ec = tab.file.editorconfig;
-    // 明示されていない項目は自動検出結果を残したいので、まず検出してから上書きする
-    model.detectIndentation(true, 4);
-    const opts: monaco.editor.ITextModelUpdateOptions = {};
-    if (ec?.indentStyle) opts.insertSpaces = ec.indentStyle === 'space';
-    const size = ec?.indentSize ?? ec?.tabWidth;
-    if (size) {
-      opts.indentSize = size;
-      opts.tabSize = ec?.tabWidth ?? size;
-    }
-    if (Object.keys(opts).length > 0) model.updateOptions(opts);
-    // 新規(空)ファイルは end_of_line をデフォルト EOL にする(空なので dirty にならない)
-    if (ec?.endOfLine && model.getValueLength() === 0) {
-      model.setEOL(
-        ec.endOfLine === 'crlf'
-          ? monaco.editor.EndOfLineSequence.CRLF
-          : monaco.editor.EndOfLineSequence.LF,
-      );
-    }
-  };
-
-  // Re-apply the cursor/scroll position stashed for the active tab whenever
-  // its model becomes current again. Ref-only and timing-agnostic like
-  // tryReveal, so it's safe from onMount / onDidChangeModel. NOT consume-once
-  // — switching back to a tab always re-restores its last stashed position.
-  // pendingReveal (an explicit search jump) takes priority when both target
-  // the same tab; tryReveal runs after this and overwrites the cursor itself.
-  const tryRestoreViewState = () => {
-    const editor = editorRef.current;
-    const key = activeKeyRef.current;
-    if (!editor || !key) return;
-    const tab = tabsRef.current.find((t) => t.key === key);
-    if (!tab || tab.kind !== 'editor') return; // viewStatesRef is editor-only (keyed by path)
-    const path = tab.path;
-    const vs = viewStatesRef.current[path];
-    if (vs === undefined) return;
-    const model = editor.getModel();
-    if (!model || model.uri.toString() !== monaco.Uri.parse(modelPath(path)).toString()) return;
-    if (pendingRevealRef.current?.path === path) return; // explicit navigation wins
-    try {
-      editor.restoreViewState(vs as monaco.editor.ICodeEditorViewState);
-    } catch {
-      delete viewStatesRef.current[path]; // corrupt/incompatible persisted value — drop it
-    }
-  };
-
-  // Covers the async paths: file load completing, tab/model switches.
-  useEffect(() => {
-    applyModelOptions();
-    tryReveal();
-  });
 
   const showSearchPanel = () => {
     setSide('search');
@@ -753,229 +589,206 @@ export default function FilesTab({
       openAtLine: (path, line, column) => openAtLineRef.current(path, line, column),
       // Ctrl+P should only surface files with an editor tab open — a preview tab isn't
       // "a file open for editing" in the sense that registry's callers care about.
-      getOpenTabPaths: () => tabsRef.current.filter((t) => t.kind === 'editor').map((t) => t.path),
+      // グループ横断で重複排除する。
+      getOpenTabPaths: () => {
+        const seen = new Set<string>();
+        const out: string[] = [];
+        for (const g of allGroups(groupsApi.stateRef.current.root)) {
+          for (const ref of g.tabs) {
+            if (ref.kind === 'editor' && !seen.has(ref.path)) {
+              seen.add(ref.path);
+              out.push(ref.path);
+            }
+          }
+        }
+        return out;
+      },
       showSearchPanel: () => showSearchPanelRef.current(),
     });
     return () => unregisterFilesTab(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [root]);
 
-  const switchTo = (key: string) => {
-    stashActiveViewState(); // leaving the current tab for `key`
-    setActiveKey(key);
-    setMessage('');
-    const target = tabs.find((t) => t.key === key);
-    if (target?.kind === 'preview') refreshPreviewTab(key, target.path);
-  };
+  // ---- ロード / root 切替 / 永続化 effect 群 --------------------------------
 
-  const closeTab = async (key: string) => {
-    const target = tabs.find((t) => t.key === key);
-    if (!target) return;
-    if (isDirty(target)) {
-      const ok = await confirmDialog({
-        title: t('files.discardChangesTitle'),
-        message: t('files.discardChangesMessage', { name: basename(target.path) }),
-        confirmLabel: t('files.discardAndClose'),
-        severity: 'danger',
+  // Mount-only: fires the load for entries restored from localStorage (`file`
+  // starts null for every restored entry). Later opens go through openTab.
+  useEffect(() => {
+    for (const e of Object.values(entriesApi.entriesRef.current)) {
+      if (e.file === null) entriesApi.loadFile(e.key, e.path);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Worktree switched — open tabs are root-relative, so start fresh. This
+  // effect also fires once at mount; that first run must NOT clear the state
+  // the lazy initializers above already restored, so it only registers the
+  // flush/dispose cleanup the first time through.
+  const rootEffectRanRef = useRef(false);
+  useEffect(() => {
+    const flushRoot = root;
+    const flushLeafId = leafId;
+
+    if (!rootEffectRanRef.current) {
+      rootEffectRanRef.current = true;
+    } else {
+      // root actually changed (defensive — WorktreeView normally remounts
+      // this component via `key` on worktree switch, so this branch isn't
+      // reached in practice).
+      setSide('tree');
+      pendingRevealRef.current = null;
+      const state = loadLeafEditorState(root, leafId);
+      groupsApi.reset(state);
+      const refs = state ? distinctRefs(state.groups) : [];
+      entriesApi.resetAll({
+        refs,
+        drafts: state?.drafts ?? {},
+        viewStates: state?.viewStates ?? {},
       });
-      if (!ok) return;
+      for (const ref of refs) entriesApi.loadFile(tabKey(ref.kind, ref.path), ref.path);
     }
-    const idx = tabs.findIndex((t) => t.key === key);
-    const next = tabs.filter((t) => t.key !== key);
-    setTabs(next);
-    disposeTabResources(target);
-    if (activeKey === key) {
-      const neighbor = next[idx] ?? next[idx - 1] ?? null; // right neighbor, else left
-      setActiveKey(neighbor?.key ?? null);
-      setMessage('');
-    }
-  };
 
-  // encOverride は「指定エンコーディングで保存」用。非 dirty でも encOverride 付き
-  // なら保存する(エンコーディング変換だけの保存を許す)。ref 経由で読むので
-  // ステータスバーのハンドラーからも stale なく呼べる。
-  const save = async (encOverride?: { encoding: string; bom: boolean }) => {
-    const key = activeKeyRef.current;
-    const tab = key ? tabsRef.current.find((t) => t.key === key) : null;
-    if (!tab || tab.kind !== 'editor' || !tab.file || tab.file.content === null) return;
-    const path = tab.path;
-    if (tab.draft === tab.file.content && !encOverride) return;
-    const ec = tab.file.editorconfig;
-    // 新規(空)ファイルに限り editorconfig の charset を保存エンコーディングの
-    // デフォルトにする(既存ファイルを勝手に文字コード変換しない)
-    const isEmptyFile = tab.file.content === '' && tab.file.size === 0;
-    const enc =
-      encOverride ??
-      (isEmptyFile && ec?.charset
-        ? charsetToEncoding(ec.charset)
-        : { encoding: tab.file.encoding ?? 'utf-8', bom: tab.file.hasBom });
-    setSaving(true);
-    try {
-      // 保存時整形をモデルに適用してから getValue() を送る。アクティブなモデルが
-      // 取れない特殊ケースでは整形をスキップして draft をそのまま送る(安全側)。
-      const model = editorRef.current?.getModel();
-      let content = tab.draft;
-      if (model && model.uri.toString() === monaco.Uri.parse(modelPath(path)).toString()) {
-        formatOnSave(model, ec, editorRef.current?.getSelections() ?? null, eolOverrideRef.current.has(path));
-        content = model.getValue();
-      }
-      await api.saveFile(root, path, content, enc);
-      setTabs((prev) =>
-        prev.map((t) =>
-          t.key === key && t.file
-            ? {
-                ...t,
-                draft: content,
-                file: { ...t.file, content, encoding: enc.encoding, hasBom: enc.bom },
-                warning: '', // a successful save resolves any restore-time conflict
-              }
-            : t,
-        ),
+    // On root change or unmount: persist the state open under the outgoing
+    // root/leafId, then drop every model this leaf created. The model namespace
+    // is the OUTGOING leafId (captured here — leafIdRef would already hold the
+    // new value when this cleanup runs).
+    return () => {
+      flush(flushRoot, flushLeafId);
+      disposeModelsSoon(
+        Object.values(entriesApi.entriesRef.current)
+          .filter((e) => e.kind === 'editor')
+          .map((e) => `${flushLeafId}/${e.path}`),
       );
-      // .editorconfig を保存したら、開いている全「エディター」タブの editorconfig
-      // スナップショットを再取得して反映する(修正 C — 開いた時点のスナップショットの
-      // ままだと保存直後の変更が反映されない)。プレビュータブには適用対象の
-      // editorconfig スナップショットがない(将来 T6 で導入)ので対象外。
-      // draft/content/encoding/hasBom には触れない(専用エンドポイントを使うのはこの
-      // 未保存編集の破壊を避けるため)。個別のタブの再取得失敗は無視して旧値を保持し、
-      // 保存自体の成功扱いは変えない。
-      if (basename(path) === '.editorconfig') {
-        const updates = await Promise.all(
-          tabsRef.current
-            .filter((t) => t.kind === 'editor' && t.file !== null)
-            .map(async (t) => {
-              try {
-                return { path: t.path, editorconfig: await api.editorConfig(root, t.path) };
-              } catch {
-                return null;
-              }
-            }),
-        );
-        setTabs((prev) =>
-          prev.map((t) => {
-            if (t.kind !== 'editor') return t;
-            const u = updates.find((x) => x?.path === t.path);
-            return u && t.file ? { ...t, file: { ...t.file, editorconfig: u.editorconfig } } : t;
-          }),
-        );
-      }
-      setMessage(t('files.savedMessage'));
-      setTimeout(() => setMessage(''), 2500);
-    } catch (e) {
-      setMessage(`⚠ ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setSaving(false);
-    }
-  };
-  saveRef.current = () => void save();
-
-  // 「エンコーディング指定で再読み込み」。dirty なら確認してから破棄する。
-  const reloadWithEncoding = async (encoding: string) => {
-    const key = activeKeyRef.current;
-    const tab = key ? tabsRef.current.find((t) => t.key === key) : null;
-    if (!tab || tab.kind !== 'editor') return;
-    const path = tab.path;
-    if (tab.file && tab.file.content !== null && tab.draft !== tab.file.content) {
-      const ok = await confirmDialog({
-        title: t('files.reloadTitle'),
-        message: t('files.reloadDiscardMessage', { name: basename(path) }),
-        confirmLabel: t('files.discardAndReload'),
-        severity: 'danger',
-      });
-      if (!ok) return;
-    }
-    try {
-      const f = await api.file(root, path, encoding);
-      setTabs((prev) =>
-        prev.map((t) =>
-          t.key === key
-            ? { ...t, file: f, draft: f.content ?? '', error: '', warning: '' } // draft is discarded here, so any restore-time conflict no longer applies
-            : t,
-        ),
-      );
-      // uncontrolled モデルなので明示的に反映する(tryReveal と同じ URI 一致ガード付き。
-      // undo 履歴はリセットされるがリロードなので許容)。インデントも内容が変わったので
-      // 再検出させる。
-      const model = editorRef.current?.getModel();
-      if (
-        f.content !== null &&
-        model &&
-        model.uri.toString() === monaco.Uri.parse(modelPath(path)).toString()
-      ) {
-        model.setValue(f.content);
-        indentAppliedRef.current.delete(path);
-        eolOverrideRef.current.delete(path);
-        applyModelOptions();
-      }
-      setMessage('');
-    } catch (e) {
-      setMessage(`⚠ ${e instanceof Error ? e.message : String(e)}`);
-    }
-  };
-
-  const onMount: OnMount = (editor, monaco) => {
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => saveRef.current());
-    editorRef.current = editor;
-    editor.onDidChangeModel(() => {
-      // タブ切替(モデル切替)を捕まえる。indent 適用 → 保存済みカーソル/スクロール
-      // 復元 → (あれば)検索ジャンプの順: 検索ジャンプは復元されたカーソル位置を
-      // 上書きして常に優先される。
-      applyModelOptions();
-      tryRestoreViewState();
-      tryReveal();
-    });
-    setEditorInst(editor);
-    applyModelOptions();
-    tryRestoreViewState();
-    tryReveal(); // first mount happens after the initial file load completes
-
-    // Persist cursor/scroll position without waiting for a tab switch, so a
-    // reload right after moving the cursor doesn't lose it. Debounced so
-    // rapid cursor/scroll events don't hammer localStorage. These events also
-    // fire on model swaps, but stashActiveViewState's URI-match guard makes
-    // that a no-op — it only ever writes the CURRENTLY active model's state.
-    // root/leafId are read through rootRef/leafIdRef (not this closure's own
-    // parameters): onMount fires once per editor instance and must stay
-    // correct even if the props were to change later without a remount.
-    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
-    const scheduleFlush = () => {
-      if (debounceTimer !== undefined) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        debounceTimer = undefined;
-        flush(rootRef.current, leafIdRef.current);
-      }, 500);
     };
-    const cursorSub = editor.onDidChangeCursorPosition(scheduleFlush);
-    const scrollSub = editor.onDidScrollChange(scheduleFlush);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [root, leafId, flush]);
 
-    editor.onDidDispose(() => {
-      setEditorInst((cur) => (cur === editor ? null : cur));
-      // Closes the hole where a disposed instance lingers in editorRef: harmless today
-      // since Editor never unmounts mid-tab-set, but preview tabs (T6) will make editor
-      // unmount/remount routine, and a stale editorRef would make stashActiveViewState /
-      // save / etc. operate on a dead instance.
-      if (editorRef.current === editor) editorRef.current = null;
-      if (debounceTimer !== undefined) clearTimeout(debounceTimer);
-      cursorSub.dispose();
-      scrollSub.dispose();
+  // Persist whenever the group tree (tab set / order / structure / sizes) or
+  // the active group changes. The tree object's identity changes only on ops —
+  // never on keystrokes (drafts live in the entries pool) — so typing never
+  // triggers a localStorage write here.
+  useEffect(() => {
+    flush(root, leafId);
+  }, [groupsApi.root, groupsApi.activeGroupId, root, leafId, flush]);
+
+  // Debounced draft persistence: deliberately depends on `entries` itself, so
+  // it re-runs on every keystroke. Only the cheap clearTimeout/setTimeout pair
+  // runs each time — flush() only actually fires once 1s has passed since the
+  // last change. root/leafId are read via refs so a reschedule never waits on them.
+  useEffect(() => {
+    const timer = setTimeout(() => flush(rootRef.current, leafIdRef.current), 1000);
+
+    // Same-effect, same trigger: flush() silently skips oversize drafts, so
+    // tell the user right here instead of leaving them to discover it on the
+    // next reload. Set/clear only ever touch OUR OVERSIZE_DRAFT_WARNING slot,
+    // and `prev` is returned as-is when nothing changes (no re-trigger loop).
+    entriesApi.setEntries((prev) => {
+      let changed = false;
+      const next: typeof prev = {};
+      for (const [key, e] of Object.entries(prev)) {
+        const oversize = isDirtyEntry(e) && e.draft.length > MAX_DRAFT_TEXT_LENGTH;
+        if (oversize && e.warning === '') {
+          changed = true;
+          next[key] = { ...e, warning: OVERSIZE_DRAFT_WARNING };
+        } else if (!oversize && e.warning === OVERSIZE_DRAFT_WARNING) {
+          changed = true;
+          next[key] = { ...e, warning: '' };
+        } else {
+          next[key] = e;
+        }
+      }
+      return changed ? next : prev;
     });
+
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entriesApi.entries, flush]);
+
+  // Flush on tab close / reload, where cleanup functions don't get to run.
+  useEffect(() => {
+    const onPageHide = () => flush(root, leafId);
+    window.addEventListener('pagehide', onPageHide);
+    return () => window.removeEventListener('pagehide', onPageHide);
+  }, [root, leafId, flush]);
+
+  // ---- ペイン連携 -----------------------------------------------------------
+
+  const registerPane = useCallback((groupId: string, handle: PaneHandle | null) => {
+    if (handle) paneHandlesRef.current.set(groupId, handle);
+    else paneHandlesRef.current.delete(groupId);
+  }, []);
+
+  const onEditorInstance = useCallback((groupId: string, editor: MonacoEditor | null) => {
+    setEditorInsts((prev) => ((prev[groupId] ?? null) === editor ? prev : { ...prev, [groupId]: editor }));
+  }, []);
+
+  const persistNow = useCallback(() => flush(rootRef.current, leafIdRef.current), [flush]);
+
+  const shared: PaneShared = {
+    root,
+    leafId,
+    entriesRef: entriesApi.entriesRef,
+    viewStatesRef: entriesApi.viewStatesRef,
+    indentAppliedRef: entriesApi.indentAppliedRef,
+    pendingRevealRef,
+    groupsStateRef: groupsApi.stateRef,
+    modelPath: entriesApi.modelPath,
+    registerPane,
+    onEditorInstance,
+    saveGroup,
+    setDraft: entriesApi.setDraft,
+    persistNow,
+    switchTab,
+    closeTab: (groupId, key) => void closeTab(groupId, key),
+    openPreview,
+    openFile,
+    refreshPreview: entriesApi.refreshPreviewTab,
+    splitGroup,
+    focusGroup: groupsApi.setActiveGroup,
+    dropOnTabStrip,
+    dropOnEditorZone,
   };
 
-  const onChange = (value: string | undefined) => {
-    setTabs((prev) => prev.map((t) => (t.key === activeKey ? { ...t, draft: value ?? '' } : t)));
-  };
-
-  const treeCtl = useRef<FileTreeHandle | null>(null);
+  // ---- 描画 -----------------------------------------------------------------
 
   const touch = () => touchFilesTab(instanceRef.current);
 
-  // タイルバー統合 (1 段化): TilePane が登録したスロットへヘッダー UI を createPortal
-  // で差し込む。先頭ゾーン (ツリー列幅) = ビュー切替系、メインゾーン = タブ列。
-  // 表示中 (visible) のビューだけがバーを使う。スロット未登録時は従来どおり
-  // パネル内にインライン描画するフォールバック。
-  const barSlot = useTileBarSlots((s) => s.slots[leafId] ?? null);
-  const barSlotLead = useTileBarSlots((s) => s.slots[leafId + LEAD_SLOT_SUFFIX] ?? null);
-  const inBar = visible && barSlot !== null;
-  const leadInBar = visible && barSlotLead !== null;
+  const activeGroup = findGroup(groupsApi.root, groupsApi.activeGroupId);
+  const activeEntry = activeGroup?.activeKey
+    ? (entriesApi.entries[activeGroup.activeKey] ?? null)
+    : null;
+  const activeEditor = editorInsts[groupsApi.activeGroupId] ?? null;
+  const showStatusBar =
+    activeEntry !== null &&
+    activeEntry.kind === 'editor' &&
+    !activeEntry.error &&
+    activeEntry.file !== null &&
+    !activeEntry.file.binary &&
+    !activeEntry.file.tooLarge;
+
+  const fileMenuItems = (path: string): ContextMenuItem[] => [
+    {
+      label: t('files.historyMenuItem'),
+      icon: 'history',
+      onClick: () => setHistoryPath(path),
+    },
+    {
+      label: 'blame...',
+      icon: 'account',
+      onClick: () => setBlamePath(path),
+    },
+    // Markdown 以外のファイルには出さない(disabled ではなく非表示 — 読み取り専用機能なので
+    // 「押せるが意味がない」項目を並べない)。
+    ...(isMarkdownPath(path)
+      ? [
+          {
+            label: t('files.openPreview'),
+            icon: 'preview',
+            onClick: () => openPreview(path),
+          },
+        ]
+      : []),
+  ];
 
   // ツリー列ヘッダー: [ツリー] [検索] (空き) [新規ファイル] [新規フォルダー] [再読み込み]
   const leadHeader = (
@@ -1022,75 +835,14 @@ export default function FilesTab({
     </>
   );
 
-  const tabsHeader = tabs.length === 0 ? null : (
-    <div className={`editor-tabs${inBar ? ' in-bar' : ''}`}>
-      <div className="editor-tabs-strip" {...middleClickAutoscrollGuard}>
-        {/* map param named `tab` (not `t`) here: this scope also needs the outer
-            translate function `t`, which an OpenTab-named `t` would shadow. */}
-        {tabs.map((tab) => (
-          <div
-            key={tab.key}
-            className={`editor-tab ${activeKey === tab.key ? 'active' : ''}`}
-            title={
-              tab.kind === 'preview' ? t('files.previewTabTitle', { path: tab.path }) : tab.path
-            }
-            onClick={() => switchTo(tab.key)}
-            {...middleClickClose(() => void closeTab(tab.key))}
-          >
-            {tab.kind === 'preview' && <span className="codicon codicon-preview" />}
-            <span className="editor-tab-name">{basename(tab.path)}</span>
-            <span className="editor-tab-actions">
-              {isDirty(tab) && <span className="editor-tab-dirty">●</span>}
-              <button
-                className="editor-tab-close"
-                title={t('common.close')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void closeTab(tab.key);
-                }}
-              >
-                <span className="codicon codicon-close" />
-              </button>
-            </span>
-          </div>
-        ))}
-      </div>
-      {/* 保存ボタンは廃止 (Ctrl+S で保存)。保存結果メッセージと
-          Markdown プレビューだけを右端に出す */}
-      {active &&
-        active.kind !== 'preview' &&
-        !active.error &&
-        active.file &&
-        !active.file.binary &&
-        !active.file.tooLarge && (
-          <>
-            {message && <span className="editor-msg">{message}</span>}
-            {isMarkdownPath(active.path) && (
-              <button
-                className="icon-btn"
-                onClick={() => openPreview(active.path)}
-                title={t('files.openPreview')}
-              >
-                <span className="codicon codicon-open-preview" />
-              </button>
-            )}
-          </>
-        )}
-    </div>
-  );
-
   return (
     <div className="files-tab" ref={containerRef} onPointerDownCapture={touch} onFocusCapture={touch}>
       <div className="files-tree-pane">
-        {/* ツリー列ヘッダー (leadHeader) は表示中タイルバーの先頭ゾーンへポータル。
-            スロット未登録時のみ従来の行としてここに描画 */}
-        {leadInBar && barSlotLead
-          ? createPortal(leadHeader, barSlotLead)
-          : <div className="side-switch">{leadHeader}</div>}
+        <div className="side-switch">{leadHeader}</div>
         <div className="side-view" style={{ display: side === 'tree' ? undefined : 'none' }}>
           <FileTree
             root={root}
-            selectedPath={active?.path ?? null}
+            selectedPath={activeEntry?.path ?? null}
             onSelectFile={openFile}
             onFileContextMenu={(e, path) => setFileMenu({ x: e.clientX, y: e.clientY, path })}
             controllerRef={treeCtl}
@@ -1110,79 +862,41 @@ export default function FilesTab({
         )}
       </div>
       <div className="files-editor-pane">
-        {tabs.length === 0 ? (
-          <div className="placeholder">{t('files.selectFilePlaceholder')}</div>
-        ) : (
-          <>
-            {/* タブ行 (tabsHeader): 表示中はタイルバーのスロットへポータルして
-                ヘッダーを 1 段に。スロット未登録時はここへインライン描画 */}
-            {inBar && barSlot ? createPortal(tabsHeader, barSlot) : tabsHeader}
-            {/* active.kind === 'preview' branches out entirely to MarkdownPreview before any
-                of the editor-only checks below run, so EditorStatusBar / <Editor> stay
-                structurally unreachable from a preview tab (no `file` non-null narrowing
-                games needed — MarkdownPreview handles its own error/loading/binary/tooLarge
-                placeholders internally from the raw tab fields). */}
-            {!active ? null : active.kind === 'preview' ? (
-              <MarkdownPreview
-                root={root}
-                path={active.path}
-                source={active.file?.content ?? null}
-                error={active.error}
-                tooLarge={active.file?.tooLarge}
-                binary={active.file?.binary}
-                onRefresh={() => refreshPreviewTab(active.key, active.path)}
-                onOpenPreview={openPreview}
-                onOpenFile={openFile}
-                scrollPositions={previewScrollPositionsRef.current}
+        <div className="editor-groups-host">
+          <GroupSplitView
+            node={groupsApi.root}
+            onSizes={(splitId, sizes) =>
+              groupsApi.set(setGroupSizes(groupsApi.stateRef.current.root, splitId, sizes))
+            }
+            renderGroup={(group) => (
+              <EditorGroupPane
+                key={group.id}
+                group={group}
+                isActiveGroup={group.id === groupsApi.activeGroupId}
+                entries={entriesApi.entries}
+                message={entriesApi.message}
+                shared={shared}
               />
-            ) : active.error ? (
-              <div className="placeholder">⚠ {active.error}</div>
-            ) : !active.file ? (
-              <div className="placeholder">{t('common.loading')}</div>
-            ) : active.file.binary ? (
-              <div className="placeholder">
-                {t('files.binaryFileMessageWithSize', { size: active.file.size })}
-              </div>
-            ) : active.file.tooLarge ? (
-              <div className="placeholder">
-                {t('files.tooLargeMessageWithSize', {
-                  size: Math.round(active.file.size / 1024),
-                })}
-              </div>
-            ) : (
-              <>
-                {active.warning && <div className="editor-warning">⚠ {t(active.warning)}</div>}
-                <div className="editor-host">
-                  {/* Uncontrolled on purpose: passing `value` makes the library rewrite the
-                      whole model whenever a re-render (e.g. the 4s repo poll) races a
-                      keystroke, which jumps the cursor and corrupts IME composition.
-                      State only mirrors the editor via onChange; models are dropped in
-                      closeTab / the root effect so stale drafts never resurface. */}
-                  <Editor
-                    path={modelPath(active.path)}
-                    defaultValue={active.draft}
-                    onChange={onChange}
-                    onMount={onMount}
-                    keepCurrentModel
-                    theme={monacoThemeName(resolvedTheme)}
-                    options={EDITOR_OPTIONS}
-                  />
-                </div>
-                <EditorStatusBar
-                  editor={editorInst}
-                  activePath={active.path}
-                  file={active.file}
-                  onReloadWithEncoding={(encoding) => void reloadWithEncoding(encoding)}
-                  onSaveWithEncoding={(encoding, bom) => void save({ encoding, bom })}
-                  onEolOverride={() => {
-                    // eolOverrideRef is editor-only, keyed by path (see closeTab's comment).
-                    const tab = tabsRef.current.find((t) => t.key === activeKeyRef.current);
-                    if (tab?.kind === 'editor') eolOverrideRef.current.add(tab.path);
-                  }}
-                />
-              </>
             )}
-          </>
+          />
+        </div>
+        {showStatusBar && activeEntry.file !== null && (
+          <EditorStatusBar
+            editor={activeEditor}
+            activePath={activeEntry.path}
+            file={activeEntry.file}
+            onReloadWithEncoding={(encoding) => void reloadWithEncoding(encoding)}
+            onSaveWithEncoding={(encoding, bom) => {
+              const target = activeGroupEditorKey();
+              if (target) void entriesApi.save(target.key, target.editor, { encoding, bom });
+            }}
+            onEolOverride={() => {
+              // eolOverride は editor-only, path 単位 (モデル共有のため)。
+              const target = activeGroupEditorKey();
+              const entry = target ? entriesApi.entriesRef.current[target.key] : null;
+              if (entry?.kind === 'editor') entriesApi.eolOverrideRef.current.add(entry.path);
+            }}
+          />
         )}
       </div>
       {fileMenu && (

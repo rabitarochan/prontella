@@ -1,7 +1,16 @@
-// Per-worktree editor UI state (open tabs, active tab, Monaco view states, dirty drafts)
-// persisted to localStorage, keyed by tile leaf id. Sibling of layout/useTileLayout.ts's
-// WorktreeLayout persistence but a separate document, since which files are open is a
-// property of a leaf's editor, not of the tile tree shape.
+// Per-worktree editor UI state (editor-group tree, open tabs, active tab, Monaco
+// view states, dirty drafts) persisted to localStorage, keyed by tile leaf id.
+// Sibling of layout/useTileLayout.ts's WorktreeLayout persistence but a separate
+// document, since which files are open is a property of a leaf's editor, not of
+// the tile tree shape.
+//
+// v2 (editor groups): each leaf holds a split tree of tab groups (see
+// components/files/editorGroups.ts — imported as types only, so there is no
+// runtime cycle). v1 documents (flat openFiles/activeTab per leaf) migrate on
+// read into a single group; writes are always v2.
+
+import type { EditorGroup, GroupNode } from './components/files/editorGroups';
+import { equalSizes, newId, normalizeOf, renormalized } from './layout/splitTree';
 
 export type TabKind = 'editor' | 'preview';
 
@@ -12,37 +21,47 @@ export interface OpenTabRef {
   path: string;
 }
 
+/** The derived identity string for a tab ref — used for React keys / lookups /
+ *  group activeKey. Kept here (next to OpenTabRef) as the single definition. */
+export function tabKey(kind: TabKind, path: string): string {
+  return `${kind}:${path}`;
+}
+
+export function refKey(ref: OpenTabRef): string {
+  return tabKey(ref.kind, ref.path);
+}
+
 export interface LeafEditorState {
-  /** worktree-root-relative paths, in tab order. Also accepts the legacy `string[]`
-   *  shape on read (each entry treated as an `'editor'` tab) — see sanitizeOpenFiles. */
-  openFiles: OpenTabRef[];
-  /** Also accepts the legacy `activeFile: string` shape on read (treated as an
-   *  `'editor'` tab) — see sanitizeLeafState. */
-  activeTab: OpenTabRef | null;
-  /** path -> opaque Monaco viewState JSON. Editor tabs only, keyed by path (unchanged) —
-   *  a preview tab has no Monaco view state to persist. */
-  viewStates: Record<string, unknown>;
+  /** Editor-group split tree; leaves are tab groups (worktree-root-relative paths,
+   *  in strip order). Always at least one group (possibly empty). */
+  groups: GroupNode;
+  /** Which group openFile / Ctrl+P etc. target. Always a valid group id. */
+  activeGroupId: string;
+  /** groupId -> path -> opaque Monaco viewState JSON. Editor tabs only — view
+   *  state is PER GROUP (two groups showing one file scroll independently). */
+  viewStates: Record<string, Record<string, unknown>>;
   /** path -> unsaved edit, for dirty tabs only. Editor tabs only, keyed by path
-   *  (unchanged) — preview tabs are never dirty. */
+   *  ACROSS groups — groups share one model/draft per file (see editorGroups.ts). */
   drafts: Record<string, { text: string; baseHash: string }>;
 }
 
 export interface WorktreeEditorState {
-  version: 1;
+  version: 2;
   /** key = tile leaf id */
   leaves: Record<string, LeafEditorState>;
 }
 
-// Caps openFiles on RESTORE (sanitizeOpenFiles below). Exported so FilesTab.tsx's
-// openTab can enforce the same cap at runtime (auto-closing the oldest safe-to-lose tab
-// once open tabs would exceed it) — restore-time and live-session caps must agree.
+// Caps the number of DISTINCT open tab keys per leaf on RESTORE (across all of
+// the leaf's groups — a key open in two groups shares one model/file entry, so
+// the second reference is free and does not count). Exported so FilesTab can
+// enforce the same cap at runtime — restore-time and live-session caps must agree.
 export const MAX_OPEN_FILES = 50;
 // Matches server/files.ts's MAX_FILE_SIZE (2MB) so the invariant "any file the
 // server will open has a draft size limit that can hold its full content"
 // holds. If this were smaller than MAX_FILE_SIZE, an edited draft for a file
 // near that size could be silently dropped on restore even though flush()
-// happily wrote it (see FilesTab.tsx's flush(), which mirrors this same
-// constant so writes and reads agree on the limit).
+// happily wrote it (see useFileEntries' flush computation, which mirrors this
+// same constant so writes and reads agree on the limit).
 export const MAX_DRAFT_TEXT_LENGTH = 2_000_000;
 
 function hasDotDotSegment(p: string): boolean {
@@ -70,6 +89,57 @@ function sanitizeTabRef(entry: unknown): OpenTabRef | null {
   return null;
 }
 
+function sanitizeDraft(raw: unknown): { text: string; baseHash: string } | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const d = raw as { text?: unknown; baseHash?: unknown };
+  if (typeof d.text !== 'string' || typeof d.baseHash !== 'string') return null;
+  if (d.text.length > MAX_DRAFT_TEXT_LENGTH) return null;
+  return { text: d.text, baseHash: d.baseHash };
+}
+
+function makeEmptyGroup(): EditorGroup {
+  return { type: 'leaf', id: newId(), tabs: [], activeKey: null };
+}
+
+/** Editor-tab paths per group id, plus the union across groups. */
+function editorPathIndex(root: GroupNode): {
+  perGroup: Map<string, Set<string>>;
+  all: Set<string>;
+} {
+  const perGroup = new Map<string, Set<string>>();
+  const all = new Set<string>();
+  const rec = (node: GroupNode): void => {
+    if (node.type === 'leaf') {
+      const paths = new Set<string>();
+      for (const t of node.tabs) {
+        if (t.kind === 'editor') {
+          paths.add(t.path);
+          all.add(t.path);
+        }
+      }
+      perGroup.set(node.id, paths);
+      return;
+    }
+    node.children.forEach(rec);
+  };
+  rec(root);
+  return { perGroup, all };
+}
+
+function groupIds(root: GroupNode): string[] {
+  if (root.type === 'leaf') return [root.id];
+  return root.children.flatMap(groupIds);
+}
+
+// ---- v1 (flat) leaf shape, kept as the migration source ---------------------
+
+interface LegacyLeafState {
+  openFiles: OpenTabRef[];
+  activeTab: OpenTabRef | null;
+  viewStates: Record<string, unknown>;
+  drafts: Record<string, { text: string; baseHash: string }>;
+}
+
 function tabRefsEqual(a: OpenTabRef, b: OpenTabRef): boolean {
   return a.kind === b.kind && a.path === b.path;
 }
@@ -82,7 +152,7 @@ function sanitizeOpenFiles(raw: unknown): OpenTabRef[] {
     if (out.length >= MAX_OPEN_FILES) break;
     const ref = sanitizeTabRef(entry);
     if (!ref) continue;
-    const key = `${ref.kind}:${ref.path}`;
+    const key = refKey(ref);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(ref);
@@ -90,24 +160,13 @@ function sanitizeOpenFiles(raw: unknown): OpenTabRef[] {
   return out;
 }
 
-function sanitizeDraft(raw: unknown): { text: string; baseHash: string } | null {
-  if (typeof raw !== 'object' || raw === null) return null;
-  const d = raw as { text?: unknown; baseHash?: unknown };
-  if (typeof d.text !== 'string' || typeof d.baseHash !== 'string') return null;
-  if (d.text.length > MAX_DRAFT_TEXT_LENGTH) return null;
-  return { text: d.text, baseHash: d.baseHash };
-}
-
-function sanitizeLeafState(raw: unknown): LeafEditorState | null {
-  if (typeof raw !== 'object' || raw === null) return null;
-  const l = raw as {
-    openFiles?: unknown;
-    activeFile?: unknown;
-    activeTab?: unknown;
-    viewStates?: unknown;
-    drafts?: unknown;
-  };
-
+function sanitizeLegacyLeafState(l: {
+  openFiles?: unknown;
+  activeFile?: unknown;
+  activeTab?: unknown;
+  viewStates?: unknown;
+  drafts?: unknown;
+}): LegacyLeafState {
   const openFiles = sanitizeOpenFiles(l.openFiles);
 
   // activeTab: read the new field first; fall back to the legacy `activeFile: string`
@@ -152,19 +211,169 @@ function sanitizeLeafState(raw: unknown): LeafEditorState | null {
   return { openFiles, activeTab, viewStates, drafts };
 }
 
-/** Defensive validation for editor state loaded from localStorage. */
+/** Wrap a validated flat (v1) leaf into a single editor group. Pure. */
+export function migrateLegacyLeaf(legacy: LegacyLeafState): LeafEditorState {
+  const group: EditorGroup = {
+    type: 'leaf',
+    id: newId(),
+    tabs: legacy.openFiles,
+    activeKey: legacy.activeTab ? refKey(legacy.activeTab) : null,
+  };
+  return {
+    groups: group,
+    activeGroupId: group.id,
+    viewStates: Object.keys(legacy.viewStates).length > 0 ? { [group.id]: legacy.viewStates } : {},
+    drafts: legacy.drafts,
+  };
+}
+
+// ---- v2 (grouped) leaf sanitize --------------------------------------------
+
+function sanitizeLeafState(raw: unknown): LeafEditorState | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const l = raw as {
+    groups?: unknown;
+    activeGroupId?: unknown;
+    openFiles?: unknown;
+    activeFile?: unknown;
+    activeTab?: unknown;
+    viewStates?: unknown;
+    drafts?: unknown;
+  };
+  if (l.groups === undefined) {
+    // v1 shape (or older) — run it through the legacy validator, then wrap.
+    return migrateLegacyLeaf(sanitizeLegacyLeafState(l));
+  }
+
+  const seenIds = new Set<string>();
+  const uniqueId = (rawId: unknown): string => {
+    let id = typeof rawId === 'string' && rawId !== '' ? rawId : newId();
+    while (seenIds.has(id)) id = newId();
+    seenIds.add(id);
+    return id;
+  };
+
+  // Cap DISTINCT keys across the whole leaf; a key already admitted in some
+  // group is free (it shares that key's model/file entry).
+  const admittedKeys = new Set<string>();
+
+  const sanitizeGroupNode = (n: unknown): GroupNode | null => {
+    if (typeof n !== 'object' || n === null) return null;
+    const node = n as {
+      type?: unknown;
+      id?: unknown;
+      tabs?: unknown;
+      activeKey?: unknown;
+      dir?: unknown;
+      sizes?: unknown;
+      children?: unknown;
+    };
+    if (node.type === 'leaf') {
+      const inGroup = new Set<string>();
+      const tabs: OpenTabRef[] = [];
+      for (const entry of Array.isArray(node.tabs) ? node.tabs : []) {
+        const ref = sanitizeTabRef(entry);
+        if (!ref) continue;
+        const key = refKey(ref);
+        if (inGroup.has(key)) continue; // never duplicated within one group
+        if (!admittedKeys.has(key) && admittedKeys.size >= MAX_OPEN_FILES) continue;
+        admittedKeys.add(key);
+        inGroup.add(key);
+        tabs.push(ref);
+      }
+      const activeKey =
+        typeof node.activeKey === 'string' && tabs.some((t) => refKey(t) === node.activeKey)
+          ? node.activeKey
+          : tabs.length > 0
+            ? refKey(tabs[tabs.length - 1])
+            : null;
+      return { type: 'leaf', id: uniqueId(node.id), tabs, activeKey };
+    }
+    if (node.type === 'split') {
+      if (!Array.isArray(node.children)) return null;
+      const children = node.children
+        .map(sanitizeGroupNode)
+        .filter((c): c is GroupNode => c !== null);
+      if (children.length === 0) return null;
+      if (children.length === 1) return children[0];
+      const dir = node.dir === 'row' ? 'row' : 'column';
+      const rawSizes = Array.isArray(node.sizes) ? node.sizes : [];
+      const sizes =
+        rawSizes.length === children.length && rawSizes.every((s) => typeof s === 'number' && s >= 0)
+          ? renormalized(rawSizes as number[])
+          : equalSizes(children.length);
+      return { type: 'split', id: uniqueId(node.id), dir, sizes, children };
+    }
+    return null;
+  };
+
+  // Empty groups are restore-time junk (a live panel prunes them on close/move);
+  // drop them here, keeping one only when nothing else survives.
+  const dropEmptyGroups = (node: GroupNode | null): GroupNode | null => {
+    if (!node) return null;
+    if (node.type === 'leaf') return node.tabs.length > 0 ? node : null;
+    const children: GroupNode[] = [];
+    const sizes: number[] = [];
+    node.children.forEach((c, i) => {
+      const r = dropEmptyGroups(c);
+      if (r) {
+        children.push(r);
+        sizes.push(node.sizes[i] ?? 100 / node.children.length);
+      }
+    });
+    if (children.length === 0) return null;
+    if (children.length === 1) return children[0];
+    return { ...node, children, sizes: renormalized(sizes) };
+  };
+
+  const groups =
+    normalizeOf<EditorGroup>(dropEmptyGroups(sanitizeGroupNode(l.groups))) ?? makeEmptyGroup();
+
+  const ids = groupIds(groups);
+  const activeGroupId =
+    typeof l.activeGroupId === 'string' && ids.includes(l.activeGroupId) ? l.activeGroupId : ids[0];
+
+  const { perGroup, all } = editorPathIndex(groups);
+
+  const viewStates: Record<string, Record<string, unknown>> = {};
+  if (typeof l.viewStates === 'object' && l.viewStates !== null) {
+    for (const [gid, rawStates] of Object.entries(l.viewStates as Record<string, unknown>)) {
+      const groupPaths = perGroup.get(gid);
+      if (!groupPaths || typeof rawStates !== 'object' || rawStates === null) continue;
+      const states: Record<string, unknown> = {};
+      for (const [path, v] of Object.entries(rawStates as Record<string, unknown>)) {
+        if (groupPaths.has(path) && typeof v === 'object' && v !== null) states[path] = v;
+      }
+      if (Object.keys(states).length > 0) viewStates[gid] = states;
+    }
+  }
+
+  const drafts: Record<string, { text: string; baseHash: string }> = {};
+  if (typeof l.drafts === 'object' && l.drafts !== null) {
+    for (const [path, v] of Object.entries(l.drafts as Record<string, unknown>)) {
+      if (!all.has(path)) continue;
+      const draft = sanitizeDraft(v);
+      if (draft) drafts[path] = draft;
+    }
+  }
+
+  return { groups, activeGroupId, viewStates, drafts };
+}
+
+/** Defensive validation for editor state loaded from localStorage.
+ *  Accepts v1 documents (flat per-leaf tabs) and migrates them to v2 on read. */
 export function sanitizeEditorState(value: unknown): WorktreeEditorState | null {
   if (typeof value !== 'object' || value === null) return null;
   const v = value as { version?: unknown; leaves?: unknown };
-  if (v.version !== 1) return null;
-  if (typeof v.leaves !== 'object' || v.leaves === null) return { version: 1, leaves: {} };
+  if (v.version !== 1 && v.version !== 2) return null;
+  if (typeof v.leaves !== 'object' || v.leaves === null) return { version: 2, leaves: {} };
 
   const leaves: Record<string, LeafEditorState> = {};
   for (const [leafId, raw] of Object.entries(v.leaves as Record<string, unknown>)) {
     const state = sanitizeLeafState(raw);
     if (state) leaves[leafId] = state;
   }
-  return { version: 1, leaves };
+  return { version: 2, leaves };
 }
 
 /** Replace one leaf's slice, keeping every other leaf's slice untouched. */
@@ -204,7 +413,7 @@ export const EDITOR_STATE_STORAGE_PREFIX = 'claude-deck.editorState.';
 export const TILE_LAYOUT_STORAGE_PREFIX = 'claude-deck.tileLayout.';
 
 function emptyDoc(): WorktreeEditorState {
-  return { version: 1, leaves: {} };
+  return { version: 2, leaves: {} };
 }
 
 function loadDoc(worktreePath: string): WorktreeEditorState {

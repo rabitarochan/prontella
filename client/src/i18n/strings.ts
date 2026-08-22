@@ -36,6 +36,17 @@ const CORE_STRINGS = {
   // ---- アプリ / タブタイトル ----
   'app.titleWaiting': { ja: '({n}) 確認待ち — Claude Deck', en: '({n}) needs input — Claude Deck' },
 
+  // ---- モバイル (/m) ----
+  'mobile.title': { ja: 'Claude Deck', en: 'Claude Deck' },
+  'mobile.back': { ja: '一覧', en: 'List' },
+  'mobile.refresh': { ja: '更新', en: 'Refresh' },
+  'mobile.activeTitle': { ja: '稼働中のエージェント', en: 'Active agents' },
+  'mobile.savedTitle': { ja: '保存されたセッション', en: 'Saved sessions' },
+  'mobile.noSessions': {
+    ja: 'エージェントセッションがありません (PC で開始してください)',
+    en: 'No agent sessions (start one on your PC)',
+  },
+
   // ---- レール ----
   'rail.backToDeck': { ja: 'デッキへ戻る', en: 'Back to deck' },
   'rail.searchLabel': { ja: '検索・コマンド', en: 'Search & commands' },

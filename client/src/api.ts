@@ -272,6 +272,8 @@ export const api = {
   createAgent: (cwd: string, resume?: string) => post<TerminalSession>('/api/agents', { cwd, resume }),
   agentResumable: (cwd: string) =>
     request<AgentResumableSession[]>(`/api/agents/resumable?cwd=${q(cwd)}`),
+  // cwd 指定なし = 全ワークツリー横断の保存済みセッション (モバイル /m 用)
+  agentResumableAll: () => request<AgentResumableSession[]>(`/api/agents/resumable`),
   discardAgentRecord: (deckId: string) =>
     post<{ ok: boolean }>(`/api/agents/resumable/${deckId}/discard`, {}),
   killTerminal: (id: string) => post<{ ok: boolean }>(`/api/terminals/${id}/kill`, {}),

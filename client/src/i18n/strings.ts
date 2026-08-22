@@ -170,6 +170,60 @@ const CORE_STRINGS = {
     en: 'Notifications are blocked in browser settings',
   },
   'bell.sound': { ja: 'サウンド', en: 'Sound' },
+
+  // ---- VNC (右ペイン) ----
+  'vnc.title': { ja: 'リモートデスクトップ', en: 'Remote desktop' },
+  'vnc.railTooltip': { ja: 'リモートデスクトップ (VNC)', en: 'Remote desktop (VNC)' },
+  'vnc.paletteToggle': { ja: 'リモートデスクトップ (VNC) を開閉', en: 'Toggle remote desktop (VNC)' },
+  'vnc.connect': { ja: '接続', en: 'Connect' },
+  'vnc.disconnect': { ja: '切断', en: 'Disconnect' },
+  'vnc.reconnect': { ja: '再接続', en: 'Reconnect' },
+  'vnc.connecting': { ja: '接続中…', en: 'Connecting…' },
+  'vnc.checking': { ja: 'VNC サーバーを確認中…', en: 'Checking VNC server…' },
+  'vnc.idleHint': {
+    ja: '{host}:{port} の VNC サーバーへ接続します',
+    en: 'Connect to the VNC server at {host}:{port}',
+  },
+  'vnc.viewOnly': { ja: '表示のみ', en: 'View only' },
+  'vnc.ctrlAltDel': { ja: 'Ctrl+Alt+Del を送信', en: 'Send Ctrl+Alt+Del' },
+  'vnc.passwordTitle': { ja: 'VNC パスワード', en: 'VNC password' },
+  'vnc.passwordPlaceholder': { ja: 'パスワードを入力', en: 'Enter password' },
+  'vnc.passwordSubmit': { ja: '認証', en: 'Authenticate' },
+  'vnc.authFailed': {
+    ja: '認証に失敗しました: {reason}',
+    en: 'Authentication failed: {reason}',
+  },
+  'vnc.disconnected': { ja: '切断されました', en: 'Disconnected' },
+  'vnc.connectFailed': {
+    ja: '接続に失敗しました (VNC サーバーには到達できますが、ハンドシェイクが完了しませんでした)',
+    en: 'Connection failed (the VNC server is reachable but the handshake did not complete)',
+  },
+  'vnc.unreachableTitle': {
+    ja: 'VNC サーバーに接続できません',
+    en: 'Cannot reach the VNC server',
+  },
+  'vnc.unreachableBody': {
+    ja: '{host}:{port} で待ち受けている VNC サーバーが見つかりません。この端末で VNC サーバーを起動してください。',
+    en: 'No VNC server is listening at {host}:{port}. Start a VNC server on this machine.',
+  },
+  'vnc.setupGuideTitle': { ja: 'セットアップ', en: 'Setup' },
+  'vnc.setupWindows': {
+    ja: 'Windows: TightVNC / UltraVNC をサービスとしてインストールし、パスワードを設定',
+    en: 'Windows: install TightVNC / UltraVNC as a service and set a password',
+  },
+  'vnc.setupMac': {
+    ja: 'macOS: システム設定 → 共有 → 画面共有をオンにし、VNC パスワードを設定',
+    en: 'macOS: System Settings → Sharing → enable Screen Sharing and set a VNC password',
+  },
+  'vnc.setupLinux': {
+    ja: 'Linux: x11vnc (X11) / wayvnc (Wayland) / gnome-remote-desktop などを起動',
+    en: 'Linux: run x11vnc (X11) / wayvnc (Wayland) / gnome-remote-desktop, etc.',
+  },
+  'vnc.configHint': {
+    ja: '接続先は ~/.claude-deck3/config.json の "vnc" キー (例: {"vnc": {"host": "127.0.0.1", "port": 5900}}) か、環境変数 CLAUDE_DECK_VNC_HOST / CLAUDE_DECK_VNC_PORT で変更できます。',
+    en: 'The target can be changed via the "vnc" key in ~/.claude-deck3/config.json (e.g. {"vnc": {"host": "127.0.0.1", "port": 5900}}) or the CLAUDE_DECK_VNC_HOST / CLAUDE_DECK_VNC_PORT environment variables.',
+  },
+  'vnc.retryProbe': { ja: '再確認', en: 'Check again' },
 } as const satisfies Record<string, Record<Lang, string>>;
 
 export const STRINGS = {

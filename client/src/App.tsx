@@ -10,7 +10,9 @@ import CommandPalette from './components/CommandPalette';
 import DeckView from './components/DeckView';
 import QuickOpenModal from './components/QuickOpenModal';
 import Rail from './components/Rail';
+import VncPane from './components/VncPane';
 import WorktreeView from './components/WorktreeView';
+import { useVncPane } from './layout/vncPaneStore';
 
 const POLL_MS = 4000;
 
@@ -21,6 +23,7 @@ export default function App() {
   const [quickOpenTarget, setQuickOpenTarget] = useState<FilesTabHandle | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [worktreeTarget, setWorktreeTarget] = useState<ActiveRepo | null>(null);
+  const vncVisited = useVncPane((s) => s.visited);
   useSearchHotkeys(setQuickOpenTarget);
 
   // Ctrl+K = グローバルコマンドパレット。Ctrl+P (ファイル検索) と同じ流儀:
@@ -95,6 +98,9 @@ export default function App() {
           <DeckView />
         )}
       </main>
+      {/* VNC ペインは worktree 切替 (WorktreeView の key remount) の影響を受けない
+          App 直下に置き、一度開いたら閉じても unmount しない (RFB 接続の生存条件)。 */}
+      {vncVisited && <VncPane />}
       {quickOpenTarget && (
         <QuickOpenModal target={quickOpenTarget} onClose={() => setQuickOpenTarget(null)} />
       )}

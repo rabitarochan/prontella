@@ -10,7 +10,7 @@
     "noEmit": true,
     "isolatedModules": true,
     "resolveJsonModule": true,
-    "types": ["vite/client"],
+    "types": ["vite/client", "novnc__novnc"],
     "forceConsistentCasingInFileNames": true,
     "baseUrl": ".",
     "paths": {

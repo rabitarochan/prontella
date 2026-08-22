@@ -24,3 +24,23 @@
   クリアは 1 回だけガード (毎回消すとリロード復元検証が自壊する — 実測で踏んだ)。
 - supersedes: 001 (罠 3 の該当部分のみ)
 - result: 修正後の本走行で実機 E2E 31/31 + プレビュー 6/6 PASS。
+
+## 003: EditContext 版 Monaco の入力経路 + 打鍵単位再現 (罠 12) + cwd 後始末 (罠 13)
+
+- date: 2026-08-22
+- context: コンテキストメニュー拡充の隔離検証で 3 件を実測。(a) 同梱 Monaco が
+  EditContext 版になり `textarea.inputarea` が消え、textarea 前提の注入
+  (execCommand insertText) が全滅。MCP evaluate_script しか無い環境で Fiber 走査 +
+  `editor.trigger('src','type')` により onChange → dirty の実経路を通した。
+  (b) 「値の直接 set + Enter 合成」で検証した新規作成/リネーム入力に、react-arborist の
+  タイプアヘッドがフォーカスを奪う不具合が潜んでおり、打鍵イベントを経由しない検証は
+  これを再現できずユーザー報告で発覚した。(c) フィクスチャ削除が Device or resource busy
+  で失敗 — 原因は Bash セッション自身の cwd 残留で、プロセス探索では見つからなかった。
+- change: 罠 3 に EditContext 版の注意と Fiber 法の具体レシピ (fiber ルートまで遡上 →
+  hooks 走査で getModel/executeEdits 保持値を拾う) を追記。罠 12 = 文字入力は打鍵
+  イベント単位で、既存要素名と前方一致する文字を意図的に選ぶ。罠 13 = 後始末の rm は
+  cwd を vt/ の外へ移してから。
+- supersedes: 002 (罠 3 の textarea 前提の部分のみ — trusted click → insertText の
+  優先順位自体は変えない)
+- result: 打鍵単位の再検証でタイプアヘッド不具合の修正を確認 (press_key k/n/s)。
+  cwd 退避後の後始末は同セッションで再発なし。

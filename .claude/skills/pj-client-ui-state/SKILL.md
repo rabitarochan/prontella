@@ -115,3 +115,29 @@ description: claude-deck3 のクライアント(React / Monaco / react-arborist)
   preventDefault する(狭域フィルター。アプリ側の拒否を飲み込まない)
 - **検証項目に必ず入れる**: 「**入力した直後に**再マウントを起こす構造変更」。アイドル状態の
   再マウントだけ試すとすり抜ける(§5 の「ウォームでしか試さない」と同型の罠)
+
+## 8. コンテキストメニューから開くインライン入力は autoFocus が負ける
+
+- **症状**: メニュー項目クリックで出したインライン入力(ツリーのリネーム等)が
+  フォーカスされないまま表示される。見た目・値は正常なので目視では気づけない
+- **機構**: Radix DropdownMenu は onSelect 後のクローズ処理(FocusScope)でフォーカスを
+  動かす。input のマウント(autoFocus 発火)より後に走るため奪い返される。ContextMenu.tsx の
+  `onCloseAutoFocus` preventDefault は「トリガーへ返さない」だけで、input への着地は保証しない
+- **打ち手**: ref コールバックで `dataset` ガード付き `setTimeout(() => el.focus(), 0)` を
+  1 回だけ仕込む(FileTree.tsx のリネーム/作成入力が実装例)。ツールバーボタン起動なら
+  素の autoFocus で足りる — メニュー起動の経路を新設したときにだけ再発する
+- **検証**: `document.activeElement === input` を実測する(スクリーンショットでは分からない)
+
+## 9. サードパーティツリーの組み込みキーハンドラーはインライン入力と衝突する
+
+- **症状**: ツリー内のインライン入力(新規作成・リネーム)に文字が入力できない。
+  1 文字打つとフォーカスが一致する行へ飛び、blur ハンドラーが**中途の名前で確定**する
+- **機構**: react-arborist のコンテナー `onKeyDown` にタイプアヘッド検索がある
+  (default-container.js の `focusSearchTerm` — 前方一致行へ `tree.focus()` → 行 DOM へ
+  フォーカス移動)。組み込みの `tree.isEditing` ガードは自前 input(disableEdit 運用)を
+  保護しない。矢印キー・Backspace もツリー操作(行移動・onDelete)として解釈される
+- **打ち手**: インライン入力の `onKeyDown` 先頭で**無条件に `e.stopPropagation()`**。
+  キー種別で選別しない(タイプアヘッドは全印字キー、ナビゲーションは制御キーに反応する)
+- **検証**: **打鍵イベント単位**で実際に文字を打つ(既存行名と前方一致する文字を選ぶ)。
+  値の直接 set + Enter 合成では keydown 経路を通らず再現しない(実測: これで初回検証を
+  すり抜け、ユーザー報告で発覚した)

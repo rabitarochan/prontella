@@ -74,7 +74,15 @@ description: claude-deck3 の動作検証を、ユーザーの実設定・実リ
    onChange → dirty → debounce の実経路が通る(2026-08-22 実測、Fiber 法より大幅に簡単)。
    React Fiber から editor を取って `executeEdits()` を呼ぶ旧法は、複雑な編集や
    カーソル位置指定が要るときの代替として残す。Ctrl+S / Ctrl+P などコマンド系は
-   `Input.dispatchKeyEvent`(modifiers=2 + code/KeyS 等)で通常どおり動く
+   `Input.dispatchKeyEvent`(modifiers=2 + code/KeyS 等)で通常どおり動く。
+   **EditContext 版 Monaco**(2026-08 時点の同梱版)は `textarea.inputarea` が存在しない
+   (`.native-edit-context` + `ime-text-area` のみ)ため、textarea への `execCommand
+   ('insertText')` 注入は不可。生 CDP が使えない環境(chrome-devtools MCP の
+   evaluate_script のみ等)での Fiber 法の実測レシピ: React 管理ノード
+   (`.files-editor-pane`)の `__reactFiber$*` キーから `return` でルートまで遡上 →
+   全 fiber の hooks (`memoizedState` チェーン) を走査し、`getModel` と `executeEdits` を
+   持つ値(`.current` の中も見る)を editor として拾う →
+   `editor.trigger('src', 'type', { text })` で onChange → dirty の実経路が通る
 4. **選択中 worktree の削除**は 4 秒ポーリングのファイルロックで `git worktree remove` が失敗する
    (既知の既存問題)。削除系の検証は別 worktree へ切替えてから行う。
    **⚠ 2026-07-21 以降、再現を確認していない**(2026-07-28 時点)。次に worktree 周りを触るときに
@@ -115,6 +123,17 @@ description: claude-deck3 の動作検証を、ユーザーの実設定・実リ
     (9-13 を丸ごと許容しているため)。この式で「制御バイトなし」と判定した直後にフックが
     0x0b を検出した実測あり。正しくは「**通してよいバイトを列挙**する」= 0x09(タブ)・
     0x0a(LF)・0x0d(CR) 以外で 0x20 未満、および 0x7f を検出、と書く
+12. **文字入力の検証は打鍵イベント単位で再現する**: input への「値の直接 set +
+    Enter 合成」は onChange/確定経路しか通らず、**keydown 起因の不具合(ツリーの
+    タイプアヘッドによるフォーカス強奪等)を素通しする**(実測: これで初回検証を
+    すり抜け、ユーザー報告で発覚した)。1 文字ずつ trusted なキーイベント
+    (`Input.dispatchKeyEvent` / MCP press_key)で打ち、**既存要素名と前方一致する
+    文字を意図的に選ぶ**(タイプアヘッド・ショートカット衝突を能動的に踏みにいく)
+13. **後始末の `rm -rf` は先にシェルの cwd を `vt/` の外へ移す**: Bash セッションの
+    作業ディレクトリーは呼び出しをまたいで永続するため、フィクスチャ作成時の
+    `cd vt/<sub>/repo1` が残っていると自分自身が対象を掴んでいて
+    `Device or resource busy` で削除に失敗する(実測。プロセス探索では見つからず
+    切り分けに時間を溶かした)。`cd <リポジトリールート> && rm -rf vt/<sub>` の形にする
 
 ## フィクスチャの作り方
 

@@ -12,8 +12,12 @@ import {
   moveTabToGroup,
   openTabInGroup,
   orphanedKeysAfter,
+  pathIsWithin,
   pickEviction,
   pruneEmptyGroups,
+  removeTabPaths,
+  renamedPath,
+  renameTabPaths,
   reorderTab,
   splitWithTab,
   type EditorGroup,
@@ -277,5 +281,123 @@ describe('activateTab', () => {
     const root = group('A', ['a.ts', 'b.ts'], 'b.ts');
     expect(findGroup(activateTab(root, 'A', 'editor:a.ts'), 'A')!.activeKey).toBe('editor:a.ts');
     expect(activateTab(root, 'A', 'editor:zzz')).toBe(root);
+  });
+});
+
+describe('renamedPath', () => {
+  it('完全一致は新パスを返す', () => {
+    expect(renamedPath('src/a.ts', 'src/a.ts', 'src/b.ts')).toBe('src/b.ts');
+  });
+
+  it('ディレクトリー配下 (from + "/") はプレフィックス置換する', () => {
+    expect(renamedPath('src/deep/a.ts', 'src', 'lib')).toBe('lib/deep/a.ts');
+  });
+
+  it('無関係なパスは null', () => {
+    expect(renamedPath('other/a.ts', 'src', 'lib')).toBeNull();
+  });
+
+  it('名前が前方一致するだけの別ディレクトリー (src2) は対象外', () => {
+    expect(renamedPath('src2/a.ts', 'src', 'lib')).toBeNull();
+  });
+});
+
+describe('renameTabPaths', () => {
+  it('ファイルリネームで ref と activeKey が追随する (editor / preview 両方)', () => {
+    const root: EditorGroup = {
+      type: 'leaf',
+      id: 'A',
+      tabs: [ref('a.md'), ref('a.md', 'preview'), ref('other.ts')],
+      activeKey: 'preview:a.md',
+    };
+    const out = renameTabPaths(root, 'a.md', 'b.md');
+    const g = findGroup(out, 'A')!;
+    expect(g.tabs).toEqual([ref('b.md'), ref('b.md', 'preview'), ref('other.ts')]);
+    expect(g.activeKey).toBe('preview:b.md');
+  });
+
+  it('ディレクトリーリネームは配下の全タブをプレフィックス置換する', () => {
+    const root = group('A', ['src/a.ts', 'src/deep/b.ts', 'lib/c.ts'], 'src/deep/b.ts');
+    const out = renameTabPaths(root, 'src', 'renamed');
+    expect(tabsOf(out, 'A')).toEqual(['renamed/a.ts', 'renamed/deep/b.ts', 'lib/c.ts']);
+    expect(findGroup(out, 'A')!.activeKey).toBe('editor:renamed/deep/b.ts');
+  });
+
+  it('複数グループに同じファイルが開いていても両方追随する', () => {
+    const root = split('s', 'row', [group('A', ['a.ts'], 'a.ts'), group('B', ['a.ts', 'b.ts'], 'b.ts')]);
+    const out = renameTabPaths(root, 'a.ts', 'c.ts');
+    expect(tabsOf(out, 'A')).toEqual(['c.ts']);
+    expect(findGroup(out, 'A')!.activeKey).toBe('editor:c.ts');
+    expect(tabsOf(out, 'B')).toEqual(['c.ts', 'b.ts']);
+    expect(findGroup(out, 'B')!.activeKey).toBe('editor:b.ts'); // 無関係な activeKey は不変
+  });
+
+  it('書き換えでグループ内のキーが重複したら先勝ちで dedupe する', () => {
+    const root = group('A', ['a.ts', 'b.ts'], 'b.ts');
+    const out = renameTabPaths(root, 'b.ts', 'a.ts');
+    expect(tabsOf(out, 'A')).toEqual(['a.ts']);
+    // activeKey は書き換え後のキーを指したまま (dedupe で生き残った同一キー)
+    expect(findGroup(out, 'A')!.activeKey).toBe('editor:a.ts');
+  });
+
+  it('無関係なリネームではタブ構成が変わらない', () => {
+    const root = group('A', ['a.ts'], 'a.ts');
+    const out = renameTabPaths(root, 'x.ts', 'y.ts');
+    expect(allGroups(out)).toEqual(allGroups(root));
+  });
+});
+
+describe('pathIsWithin', () => {
+  it('自身と "/" 区切りの配下だけが true (前方一致するだけの別パスは false)', () => {
+    expect(pathIsWithin('src', 'src')).toBe(true);
+    expect(pathIsWithin('src/deep/a.ts', 'src')).toBe(true);
+    expect(pathIsWithin('src2/a.ts', 'src')).toBe(false);
+    expect(pathIsWithin('other', 'src')).toBe(false);
+  });
+});
+
+describe('removeTabPaths', () => {
+  it('ファイル削除で editor / preview 両方のタブが消える', () => {
+    const root: EditorGroup = {
+      type: 'leaf',
+      id: 'A',
+      tabs: [ref('a.md'), ref('a.md', 'preview'), ref('b.ts')],
+      activeKey: 'editor:b.ts',
+    };
+    const out = removeTabPaths(root, 'a.md');
+    expect(findGroup(out, 'A')!.tabs).toEqual([ref('b.ts')]);
+    expect(findGroup(out, 'A')!.activeKey).toBe('editor:b.ts');
+  });
+
+  it('ディレクトリー削除は配下の全タブを消す', () => {
+    const root = group('A', ['src/a.ts', 'src/deep/b.ts', 'lib/c.ts'], 'lib/c.ts');
+    const out = removeTabPaths(root, 'src');
+    expect(tabsOf(out, 'A')).toEqual(['lib/c.ts']);
+  });
+
+  it('アクティブタブが消えたら右隣、なければ左隣へ引き継ぐ', () => {
+    const right = removeTabPaths(group('A', ['a.ts', 'b.ts', 'c.ts'], 'b.ts'), 'b.ts');
+    expect(findGroup(right, 'A')!.activeKey).toBe('editor:c.ts');
+    const left = removeTabPaths(group('A', ['a.ts', 'b.ts'], 'b.ts'), 'b.ts');
+    expect(findGroup(left, 'A')!.activeKey).toBe('editor:a.ts');
+  });
+
+  it('空になったグループは畳まれ、隣が残る', () => {
+    const root = split('s', 'row', [group('A', ['src/a.ts'], 'src/a.ts'), group('B', ['b.ts'], 'b.ts')]);
+    const out = removeTabPaths(root, 'src');
+    expect(groupIds(out)).toEqual(['B']);
+    expect(out.type).toBe('leaf');
+  });
+
+  it('パネル最後のグループは空になっても残り、activeKey は null になる', () => {
+    const out = removeTabPaths(group('A', ['a.ts'], 'a.ts'), 'a.ts');
+    expect(groupIds(out)).toHaveLength(1);
+    expect(allGroups(out)[0].tabs).toEqual([]);
+    expect(allGroups(out)[0].activeKey).toBeNull();
+  });
+
+  it('無関係な削除ではタブ構成が変わらない', () => {
+    const root = group('A', ['a.ts'], 'a.ts');
+    expect(allGroups(removeTabPaths(root, 'x.ts'))).toEqual(allGroups(root));
   });
 });

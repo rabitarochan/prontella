@@ -120,6 +120,115 @@ export function createDir(root: string, rel: string): void {
   fs.mkdirSync(abs); // throws EEXIST if the directory already exists
 }
 
+// ---- rename / copy / reveal (ツリーのコンテキストメニュー用) ------------------------------
+
+/**
+ * リネーム後の名前として妥当なら null、不正ならエラーメッセージを返す純関数。
+ * newName は自由入力 — 区切り文字を含む名前は「同一ディレクトリー内のリネーム」から
+ * 逸脱する(親をまたぐ移動や safeResolve 前の細工)ので、safeResolve に届く前に弾く。
+ */
+export function invalidEntryName(name: unknown): string | null {
+  if (typeof name !== 'string' || name.trim() === '') return '名前が必要です';
+  const trimmed = name.trim();
+  if (trimmed.includes('/') || trimmed.includes('\\')) return '名前に / や \\ は使えません';
+  if (trimmed === '.' || trimmed === '..') return `不正な名前です: ${JSON.stringify(trimmed)}`;
+  return null;
+}
+
+/**
+ * `rel` を同一ディレクトリー内で `newName` にリネームし、新しい相対パス(forward slash)を返す。
+ * 既存パスへの上書きは拒否する。ただし Windows の case-only リネーム(Foo.ts → foo.ts)は
+ * existsSync が true を返すため、旧・新の解決先が同一(大文字小文字のみ違う)ときに限り許可する。
+ */
+export function renameEntry(root: string, rel: string, newName: string): string {
+  const invalid = invalidEntryName(newName);
+  if (invalid) throw new Error(invalid);
+  const name = newName.trim();
+  const oldAbs = safeResolve(root, rel);
+  if (!fs.existsSync(oldAbs)) throw new Error('対象が見つかりません');
+  const relPosix = rel.replace(/\\/g, '/');
+  const slash = relPosix.lastIndexOf('/');
+  const newRel = slash === -1 ? name : `${relPosix.slice(0, slash)}/${name}`;
+  const newAbs = safeResolve(root, newRel);
+  const caseOnly = oldAbs !== newAbs && oldAbs.toLowerCase() === newAbs.toLowerCase();
+  if (newAbs === oldAbs) return newRel; // 名前が実質変わらない
+  if (!caseOnly && fs.existsSync(newAbs)) throw new Error(`既に存在します: ${name}`);
+  fs.renameSync(oldAbs, newAbs);
+  return newRel;
+}
+
+/**
+ * VS Code 風の複製名を決める純関数: `foo.ext` → `foo copy.ext` → `foo copy 2.ext` …。
+ * 拡張子は path.extname 準拠(`.env` は拡張子なし扱い → `.env copy` になる)。
+ */
+export function duplicateName(name: string, exists: (candidate: string) => boolean): string {
+  const ext = path.extname(name);
+  const stem = name.slice(0, name.length - ext.length);
+  for (let i = 1; ; i++) {
+    const candidate = i === 1 ? `${stem} copy${ext}` : `${stem} copy ${i}${ext}`;
+    if (!exists(candidate)) return candidate;
+  }
+}
+
+/**
+ * `rel` を同一ディレクトリー内に複製し、新しい相対パス(forward slash)を返す。
+ * 名前は duplicateName で衝突しない兄弟名を選ぶ。ディレクトリーは再帰コピー。
+ * 決定と作成の間のレース対策として作成側でも既存を拒否する(COPYFILE_EXCL / errorOnExist)。
+ */
+export async function copyEntry(root: string, rel: string): Promise<string> {
+  const srcAbs = safeResolve(root, rel);
+  const stat = fs.statSync(srcAbs);
+  const relPosix = rel.replace(/\\/g, '/');
+  const slash = relPosix.lastIndexOf('/');
+  const parentRel = slash === -1 ? '' : relPosix.slice(0, slash);
+  const name = slash === -1 ? relPosix : relPosix.slice(slash + 1);
+  const parentAbs = path.dirname(srcAbs);
+  const newName = duplicateName(name, (candidate) => fs.existsSync(path.join(parentAbs, candidate)));
+  const newRel = parentRel ? `${parentRel}/${newName}` : newName;
+  const dstAbs = safeResolve(root, newRel);
+  if (stat.isDirectory()) {
+    await fs.promises.cp(srcAbs, dstAbs, { recursive: true, errorOnExist: true, force: false });
+  } else {
+    fs.copyFileSync(srcAbs, dstAbs, fs.constants.COPYFILE_EXCL);
+  }
+  return newRel;
+}
+
+/**
+ * `rel` を削除する(ディレクトリーは再帰)。root 自体の削除は拒否する
+ * (rel='' や '.' が root に解決されるため、safeResolve だけでは防げない)。
+ * 対象が無ければ statSync の ENOENT がそのまま上がる。
+ */
+export function deleteEntry(root: string, rel: string): void {
+  const abs = safeResolve(root, rel);
+  if (abs === path.resolve(root)) throw new Error('ルート自体は削除できません');
+  const stat = fs.statSync(abs);
+  if (stat.isDirectory()) fs.rmSync(abs, { recursive: true });
+  else fs.rmSync(abs);
+}
+
+export type ResolveRevealResult =
+  | { ok: true; abs: string }
+  | { ok: false; status: 400 | 404; error: string };
+
+/**
+ * POST /api/fs/reveal の検証ヘルパー(resolveRawFile と同じ流儀: 判定をタグ付き戻り値に
+ * 切り出して vitest で固定し、ルートには explorer 起動の副作用だけを残す)。
+ * root 外(400)を先に弾いてから存在(404)を見る。
+ */
+export function resolveRevealTarget(root: string, rel: string): ResolveRevealResult {
+  let abs: string;
+  try {
+    abs = safeResolve(root, rel);
+  } catch {
+    return { ok: false, status: 400, error: 'パスがルート外を指しています' };
+  }
+  if (!fs.existsSync(abs)) {
+    return { ok: false, status: 404, error: '対象が見つかりません' };
+  }
+  return { ok: true, abs };
+}
+
 // ---- raw file serving (GET /api/fs/raw、Markdown プレビューのローカル画像用) --------------
 
 // 許可拡張子のみ MIME を返すホワイトリスト(拡張子偽装で任意ファイルを画像として配信させない防壁)。

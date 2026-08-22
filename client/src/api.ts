@@ -251,6 +251,11 @@ export const api = {
     }),
   createFile: (root: string, path: string) => post<{ ok: boolean }>('/api/fs/file', { root, path }),
   createFolder: (root: string, path: string) => post<{ ok: boolean }>('/api/fs/dir', { root, path }),
+  renameEntry: (root: string, path: string, newName: string) =>
+    post<{ path: string }>('/api/fs/rename', { root, path, newName }),
+  duplicateEntry: (root: string, path: string) => post<{ path: string }>('/api/fs/copy', { root, path }),
+  deleteEntry: (root: string, path: string) => post<{ ok: boolean }>('/api/fs/delete', { root, path }),
+  revealInExplorer: (root: string, path: string) => post<{ ok: boolean }>('/api/fs/reveal', { root, path }),
 
   searchFiles: (root: string) => request<{ files: string[] }>(`/api/search/files?root=${q(root)}`),
   searchText: (

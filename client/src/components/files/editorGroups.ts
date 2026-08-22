@@ -10,7 +10,7 @@
 // DERIVED from the tree (groupsWithKey / orphanedKeysAfter) — there is no
 // separate counter state to drift out of sync.
 
-import { refKey, tabKey, type OpenTabRef } from '../../editorState';
+import { refKey, tabKey, type OpenTabRef, type TabKind } from '../../editorState';
 import {
   findLeafOf,
   insertBesideLeaf,
@@ -154,6 +154,90 @@ export function pruneEmptyGroups(root: GroupNode): GroupNode {
  *  the panel's last group, which stays as the placeholder). */
 export function closeTabInGroup(root: GroupNode, groupId: string, key: string): GroupNode {
   return pruneEmptyGroups(withTabRemoved(root, groupId, key));
+}
+
+/** `path` が `base` 自身、または `base + '/'` 配下(= ディレクトリー操作の巻き込み対象)か。 */
+export function pathIsWithin(path: string, base: string): boolean {
+  return path === base || path.startsWith(base + '/');
+}
+
+/**
+ * ファイル/ディレクトリーのリネームで `path` がどう変わるかを返す: `from` と完全一致、
+ * または `from + '/'` 配下(ディレクトリーリネーム)なら新パス、無関係なら null。
+ */
+export function renamedPath(path: string, from: string, to: string): string | null {
+  if (path === from) return to;
+  if (path.startsWith(from + '/')) return to + path.slice(from.length);
+  return null;
+}
+
+/**
+ * 削除 (`target` とその配下) に該当するタブ参照を全グループから取り除く。
+ * activeKey が消えたグループは closeTabInGroup と同じ「右隣、なければ左隣」ルールで
+ * 生き残りタブへ引き継ぎ、空になったグループは畳む (最後の 1 グループは残る)。
+ */
+export function removeTabPaths(root: GroupNode, target: string): GroupNode {
+  let out = root;
+  for (const g of allGroups(root)) {
+    out = updateLeafOf<EditorGroup>(out, g.id, (leaf) => {
+      const keep = leaf.tabs.filter((t) => !pathIsWithin(t.path, target));
+      if (keep.length === leaf.tabs.length) return leaf;
+      let activeKey = leaf.activeKey;
+      if (activeKey !== null && !keep.some((t) => refKey(t) === activeKey)) {
+        const idx = leaf.tabs.findIndex((t) => refKey(t) === activeKey);
+        const kept = new Set(keep.map((t) => refKey(t)));
+        let next: string | null = null;
+        for (let i = idx + 1; i < leaf.tabs.length && next === null; i++) {
+          if (kept.has(refKey(leaf.tabs[i]))) next = refKey(leaf.tabs[i]);
+        }
+        for (let i = idx - 1; i >= 0 && next === null; i--) {
+          if (kept.has(refKey(leaf.tabs[i]))) next = refKey(leaf.tabs[i]);
+        }
+        activeKey = next;
+      }
+      return { ...leaf, tabs: keep, activeKey };
+    });
+  }
+  return pruneEmptyGroups(out);
+}
+
+/**
+ * リネーム (`from` → `to`) を全グループのタブ参照と activeKey に反映する。
+ * 書き換え後に同一グループ内でキーが重複した場合は先勝ちで dedupe する
+ * (「グループ内で同一キーは重複しない」不変条件の維持。新パスのタブが既に同じ
+ * グループにあるのはロードエラー中のタブ等の稀なケースのみ)。
+ */
+export function renameTabPaths(root: GroupNode, from: string, to: string): GroupNode {
+  let out = root;
+  for (const g of allGroups(root)) {
+    out = updateLeafOf<EditorGroup>(out, g.id, (leaf) => {
+      let changed = false;
+      const seen = new Set<string>();
+      const tabs: OpenTabRef[] = [];
+      for (const t of leaf.tabs) {
+        const np = renamedPath(t.path, from, to);
+        const nt = np === null ? t : { ...t, path: np };
+        if (nt !== t) changed = true;
+        const k = refKey(nt);
+        if (seen.has(k)) {
+          changed = true;
+          continue;
+        }
+        seen.add(k);
+        tabs.push(nt);
+      }
+      if (!changed) return leaf;
+      let activeKey = leaf.activeKey;
+      if (activeKey !== null) {
+        const sep = activeKey.indexOf(':');
+        const kind = activeKey.slice(0, sep) as TabKind;
+        const np = renamedPath(activeKey.slice(sep + 1), from, to);
+        if (np !== null) activeKey = tabKey(kind, np);
+      }
+      return { ...leaf, tabs, activeKey };
+    });
+  }
+  return out;
 }
 
 /** Reorder within a group. `toIndex` is the insertion index in the strip with

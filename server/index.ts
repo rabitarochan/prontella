@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1119,6 +1120,66 @@ app.post('/api/fs/dir', asyncHandler(async (req, res) => {
   files.createDir(root, rel);
   res.json({ ok: true });
 }));
+
+// typeof を先に見る: 配列 body (root: ['a','b'] 等) が後段の path 解決を壊すのを防ぐ
+// (/api/fs/raw と同じ防壁)。newName の中身の検証は files.invalidEntryName が担う。
+app.post('/api/fs/rename', asyncHandler(async (req, res) => {
+  const { root, path: rel, newName } = req.body as { root: string; path: string; newName: string };
+  if (typeof root !== 'string' || !root || typeof rel !== 'string' || !rel) {
+    res.status(400).json({ error: 'root と path が必要です' });
+    return;
+  }
+  if (typeof newName !== 'string') {
+    res.status(400).json({ error: 'newName が必要です' });
+    return;
+  }
+  res.json({ path: files.renameEntry(root, rel, newName) });
+}));
+
+app.post('/api/fs/delete', asyncHandler(async (req, res) => {
+  const { root, path: rel } = req.body as { root: string; path: string };
+  if (typeof root !== 'string' || !root || typeof rel !== 'string' || !rel) {
+    res.status(400).json({ error: 'root と path が必要です' });
+    return;
+  }
+  files.deleteEntry(root, rel);
+  res.json({ ok: true });
+}));
+
+app.post('/api/fs/copy', asyncHandler(async (req, res) => {
+  const { root, path: rel } = req.body as { root: string; path: string };
+  if (typeof root !== 'string' || !root || typeof rel !== 'string' || !rel) {
+    res.status(400).json({ error: 'root と path が必要です' });
+    return;
+  }
+  res.json({ path: await files.copyEntry(root, rel) });
+}));
+
+// OS のファイルマネージャーで対象を選択状態で開く。abs は safeResolve 済みで root 配下に
+// 限定され、shell を介さない spawn なのでインジェクションの余地はない。explorer.exe は
+// 成功時も終了コード 1 を返すため exit code は見ない(fire-and-forget)。
+app.post('/api/fs/reveal', (req, res) => {
+  const root = req.body?.root;
+  const rel = req.body?.path;
+  if (typeof root !== 'string' || !root || typeof rel !== 'string' || !rel) {
+    res.status(400).json({ error: 'root と path が必要です' });
+    return;
+  }
+  const result = files.resolveRevealTarget(root, rel);
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error });
+    return;
+  }
+  const child =
+    process.platform === 'win32'
+      ? spawn('explorer.exe', ['/select,' + result.abs], { detached: true, stdio: 'ignore' })
+      : process.platform === 'darwin'
+        ? spawn('open', ['-R', result.abs], { detached: true, stdio: 'ignore' })
+        : spawn('xdg-open', [path.dirname(result.abs)], { detached: true, stdio: 'ignore' });
+  child.on('error', () => {}); // ENOENT 等でサーバーを巻き込まない
+  child.unref();
+  res.json({ ok: true });
+});
 
 app.get('/api/fs/git-status', asyncHandler(async (req, res) => {
   const root = queryStr(req, 'root');

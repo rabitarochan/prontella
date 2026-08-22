@@ -101,3 +101,17 @@ description: claude-deck3 のクライアント(React / Monaco / react-arborist)
 - **一般化**: 開閉・選択・スクロール位置など、**サードパーティが自前で持つ UI 状態は
   props の入れ替えでは初期化されない**。自前実装(例: `BranchTree` の `expanded` は
   自分の `useState`)とは寿命の考え方が違うので、混在させるときに特に踏みやすい
+
+## 7. Monaco を含むコンポーネントの再マウントは「入力直後」に限り Canceled 例外を漏らす
+
+- **症状**: エディターグループの分割/畳み込み(`<Editor>` の再マウント)で、コンソールに
+  `Uncaught (in promise) Canceled: Canceled` が出る。機能被害(スクロール飛び・IME 断)は無い
+- **機構**: Monaco は dispose 時に in-flight の非同期処理(トークナイズ・ワードハイライト等)を
+  CancellationError で中断し、それが未処理 Promise 拒否として浮上する。**アイドル状態の再マウント
+  では出ず、「入力→即座に構造変更」でだけ出る**(切り分けプローブで実測 — idle の
+  分割/畳み込み・最終タブ close・リロードはすべて例外ゼロ、type→split/collapse のみ再現)
+- **打ち手**: VS Code 本体も cancellation はエラー扱いしない(onUnexpectedError で無視)。
+  `monaco-setup.ts` で `unhandledrejection` を **name と message の両方が 'Canceled' のときだけ**
+  preventDefault する(狭域フィルター。アプリ側の拒否を飲み込まない)
+- **検証項目に必ず入れる**: 「**入力した直後に**再マウントを起こす構造変更」。アイドル状態の
+  再マウントだけ試すとすり抜ける(§5 の「ウォームでしか試さない」と同型の罠)

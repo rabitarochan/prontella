@@ -49,6 +49,16 @@ description: claude-deck3 の動作検証を、ユーザーの実設定・実リ
      出ていない(このミッションで実際に踏んだ)
    - **配信されているアセットが今回の変更を含むかを、ビルド成果物への新規文字列の grep で確認する**
      (古いバンドルを検証してしまう事故を防ぐ)
+   - **HTML5 ネイティブ DnD は、判定がアプリ内ストア駆動なら untrusted DragEvent の合成で
+     実経路ごと検証できる**(2026-08-22 実測: タブ DnD の並べ替え/分割/クロス leaf 転送を全て
+     これで検証)。`new DataTransfer()` を作って dragstart → dragover → drop → dragend を
+     `dispatchEvent` する。claude-deck3 の DnD は「dragover 中に dataTransfer.getData が読めない
+     (protected mode)ため zustand ストアを正とする」設計なので、dataTransfer の中身が空でも
+     製品コードと同じ分岐を通る。**dragstart の後はドロップオーバーレイ等の React 再レンダーを
+     待ってから (実測 250ms) dragover を撃つ** — 即時に撃つとオーバーレイ未描画で空振りする
+   - **`Page.addScriptToEvaluateOnNewDocument` で localStorage を消す初期化は「1 回だけ」ガードを
+     付ける**(フラグ key で分岐)。毎ナビゲーションで消すと、リロード復元の検証が自分の
+     初期化スクリプトに壊されて「復元されない」という偽の不合格が出る(実測で踏んだ)
 6. **終了時の後始末(必須)**: サーバープロセス kill → ポート解放を確認 / ブラウザーページをクローズ /
    自分が使った `vt/<サブディレクトリー>` を削除(`vt/README.md` は消さない) /
    実設定 `%USERPROFILE%\.claude-deck3` のタイムスタンプが不変であることを確認して報告
@@ -58,10 +68,13 @@ description: claude-deck3 の動作検証を、ユーザーの実設定・実リ
 1. **autocrlf**: 隔離ホームでは実 `~/.gitconfig`(autocrlf=false)が隠れ、システム既定の
    autocrlf=true に落ちる。CRLF 混入の赤ニシンで時間を溶かすので、一時リポジトリーに明示設定する
 2. **Volta**: USERPROFILE 差し替えでシムが LocalAppData を見失う。実体 node.exe 直叩きで回避
-3. **Monaco への入力**: 隠し textarea が aria-hidden のため、CDP の実キー入力(type_text 等)は
-   Chrome の a11y ガードにブロックされる。**React Fiber から editor インスタンスを取得して
-   `executeEdits()` を呼ぶ**と、onChange → dirty → debounce の実経路ごと検証できる
-   (Ctrl+S / Ctrl+P などコマンド系ショートカットは別経路のため press_key で通常どおり動く)
+3. **Monaco への入力**: a11y ガードにブロックされるのは **a11y ツリー経由でターゲティングする
+   MCP の type_text 系**であって、生 CDP は対象外。**第一候補は「trusted click
+   (`Input.dispatchMouseEvent`) でエディターへフォーカス → `Input.insertText`」** — これだけで
+   onChange → dirty → debounce の実経路が通る(2026-08-22 実測、Fiber 法より大幅に簡単)。
+   React Fiber から editor を取って `executeEdits()` を呼ぶ旧法は、複雑な編集や
+   カーソル位置指定が要るときの代替として残す。Ctrl+S / Ctrl+P などコマンド系は
+   `Input.dispatchKeyEvent`(modifiers=2 + code/KeyS 等)で通常どおり動く
 4. **選択中 worktree の削除**は 4 秒ポーリングのファイルロックで `git worktree remove` が失敗する
    (既知の既存問題)。削除系の検証は別 worktree へ切替えてから行う。
    **⚠ 2026-07-21 以降、再現を確認していない**(2026-07-28 時点)。次に worktree 周りを触るときに

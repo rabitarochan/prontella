@@ -1,4 +1,5 @@
 import { useLang, useT } from '../i18n';
+import { useVncPane } from '../layout/vncPaneStore';
 import { useDeck } from '../store';
 import AttentionBell from './AttentionBell';
 import Sidebar from './Sidebar';
@@ -14,6 +15,7 @@ export default function Rail({ onOpenPalette }: { onOpenPalette: () => void }) {
   const select = useDeck((s) => s.select);
   const lang = useLang((s) => s.lang);
   const setLang = useLang((s) => s.setLang);
+  const toggleVnc = useVncPane((s) => s.toggle);
 
   return (
     <aside className="rail">
@@ -22,6 +24,9 @@ export default function Rail({ onOpenPalette }: { onOpenPalette: () => void }) {
           <span className="rail-logo-mark">◆</span> Claude Deck
         </button>
         <span className="rail-title-actions">
+          <button className="icon-btn" title={t('vnc.railTooltip')} onClick={toggleVnc}>
+            <span className="codicon codicon-vm" />
+          </button>
           <AttentionBell />
           {/* モックアップ同様の単一トグル: 現在の言語を表示し、クリックで ja ⇄ en */}
           <button

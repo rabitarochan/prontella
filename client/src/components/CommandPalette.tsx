@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { findWorktree, resolveAndSelect, useAgentEvents, waitingSessions } from '../agentEvents';
 import { useLang, useT } from '../i18n';
 import { getActiveWorktreeCommands } from '../layout/worktreeCommands';
+import { useVncPane } from '../layout/vncPaneStore';
 import { isActive } from '../repoSections';
 import { getActiveFilesTab, type FilesTabHandle } from '../search/registry';
 import { useDeck } from '../store';
@@ -40,6 +41,7 @@ export default function CommandPalette({
   const t = useT();
   const setLang = useLang((s) => s.setLang);
   const setThemeMode = useTheme((s) => s.setMode);
+  const toggleVnc = useVncPane((s) => s.toggle);
   const { repos, select } = useDeck();
   const sessions = useAgentEvents((s) => s.sessions);
   const [query, setQuery] = useState('');
@@ -109,6 +111,13 @@ export default function CommandPalette({
         run: () => onAddWorktree(repo),
       });
     }
+    all.push({
+      id: 'cmd:vnc',
+      section: 'commands',
+      icon: 'vm',
+      label: t('vnc.paletteToggle'),
+      run: () => toggleVnc(),
+    });
     all.push(
       {
         id: 'cmd:theme:light',

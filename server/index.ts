@@ -13,8 +13,12 @@ import { buildPartialPatchLines, checkApplyHunksRequest, hashHunk, splitDiffHunk
 import { PtyManager, aggregateStatus } from './pty.js';
 import { AgentSessionManager } from './agentSession.js';
 import { attachEvents } from './sessionEvents.js';
+import { attachVncBridge, getVncTarget, probeVncTarget } from './vnc.js';
 
 const PORT = Number(process.env.PORT) || 3711;
+// 既定はループバックのみ。deck は認証を持たないため、LAN へ公開するときは
+// CLAUDE_DECK_HOST=0.0.0.0 等を明示的に指定する (起動時に警告を出す)。
+const HOST = process.env.CLAUDE_DECK_HOST || '127.0.0.1';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // 単発の未捕捉例外でサーバープロセス全体が落ちるのを防ぐ。ローカル開発ツールとして、
@@ -1265,9 +1269,10 @@ app.post('/api/agents/resumable/:id/discard', asyncHandler(async (req, res) => {
   res.json({ ok: agentManager.discardRecord(req.params.id) });
 }));
 
-// Claude Code の hooks (deck-hook.mjs) からのイベント通知。127.0.0.1 バインドの
-// ためローカルプロセスのみ到達できる。未知のターミナル id は黙って無視する
-// (セッション終了とフック POST のレースで普通に起きる)。
+// Claude Code の hooks (deck-hook.mjs) からのイベント通知。既定の 127.0.0.1 バインド
+// ではローカルプロセスのみ到達できる (CLAUDE_DECK_HOST で公開した場合は LAN からも
+// 届くが、未知のターミナル id は黙って無視するため実害は誤ステータス表示まで)。
+// 未知 id の無視はセッション終了とフック POST のレースで普通に起きるための仕様。
 app.post('/api/agent-events', asyncHandler(async (req, res) => {
   const { term, event, message, notificationType } = req.body as {
     term?: string;
@@ -1286,6 +1291,16 @@ app.post('/api/agent-events', asyncHandler(async (req, res) => {
       typeof notificationType === 'string' ? notificationType : '',
     ),
   });
+}));
+
+// ---- vnc ---------------------------------------------------------------------
+
+// 接続前プリフライト。プローブ対象は設定済みターゲット固定で、パラメーターは
+// 一切受けない (受けると任意 host:port の到達性を調べるポートスキャン器になる)。
+app.get('/api/vnc/status', asyncHandler(async (_req, res) => {
+  const target = getVncTarget();
+  const { reachable } = await probeVncTarget();
+  res.json({ host: target.host, port: target.port, reachable });
 }));
 
 // ---- static client (production build) ---------------------------------------
@@ -1342,12 +1357,25 @@ server.on('upgrade', (req, socket, head) => {
     // 全セッションのステータス変化を購読するグローバルチャンネル (通知・要対応キュー用)。
     // PTY と chat の両マネージャーが sessionEvents 経由で流す
     wss.handleUpgrade(req, socket, head, (ws) => attachEvents(ws));
+  } else if (url.pathname === '/ws/vnc') {
+    // noVNC → ホストの VNC サーバーへの生 RFB ブリッジ。接続先はサーバー側設定のみで
+    // 決まり、クエリパラメーターは意図的に読まない (読んだらオープンプロキシになる)。
+    wss.handleUpgrade(req, socket, head, (ws) => attachVncBridge(ws));
   } else {
     socket.destroy();
   }
 });
 
-server.listen(PORT, '127.0.0.1', () => {
+server.listen(PORT, HOST, () => {
   console.log(`[claude-deck3] server: http://localhost:${PORT}`);
   console.log(`[claude-deck3] mode: ${process.env.NODE_ENV ?? 'development'}`);
+  if (HOST !== '127.0.0.1' && HOST !== 'localhost' && HOST !== '::1') {
+    console.warn(
+      `[claude-deck3] ******************************************************************\n` +
+      `[claude-deck3] 警告: ${HOST} にバインドしています。deck は認証を持たず、到達できる\n` +
+      `[claude-deck3] 相手すべてにフルアクセスのターミナル・ファイル編集・VNC 操作を許します。\n` +
+      `[claude-deck3] 信頼できるネットワーク (VPN/トンネル内など) でのみ使用してください。\n` +
+      `[claude-deck3] ******************************************************************`,
+    );
+  }
 });

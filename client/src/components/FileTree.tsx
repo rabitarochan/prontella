@@ -10,6 +10,7 @@ interface TNode {
   type: 'dir' | 'file';
   children: TNode[] | null; // null = directory not loaded yet
   placeholder?: 'file' | 'dir'; // temporary inline create-input node
+  renaming?: boolean; // row temporarily rendered as an inline rename input
 }
 
 const CREATING_ID = '__creating__';
@@ -43,6 +44,15 @@ function mergeLevel(prev: TNode[] | null, fresh: TNode[]): TNode[] {
   return fresh.map((n) => {
     const old = byId.get(n.id);
     return old && old.type === 'dir' && old.children ? { ...n, children: old.children } : n;
+  });
+}
+
+/** Mark the node at `id` as an inline-rename row (identity-preserving deep map). */
+function withRenamingFlag(nodes: TNode[], id: string): TNode[] {
+  return nodes.map((n) => {
+    if (n.id === id) return { ...n, renaming: true };
+    if (n.children?.length) return { ...n, children: withRenamingFlag(n.children, id) };
+    return n;
   });
 }
 
@@ -135,12 +145,14 @@ export function fileIcon(name: string): { icon: string; color: string } {
 interface FileTreeCtxValue {
   selectedPath: string | null;
   onSelectFile: (path: string) => void;
-  onFileContextMenu?: (e: React.MouseEvent, path: string) => void;
+  onEntryContextMenu?: (e: React.MouseEvent, path: string, kind: 'file' | 'dir') => void;
   loadDir: (id: string) => Promise<void>;
   setActiveDir: (id: string) => void;
   colorClass: (path: string, isDir: boolean) => string;
   confirmCreate: (rawName: string) => Promise<void>;
   cancelCreate: () => void;
+  confirmRename: (rawName: string) => Promise<void>;
+  cancelRename: () => void;
 }
 
 const FileTreeCtx = createContext<FileTreeCtxValue>(null!);
@@ -164,13 +176,63 @@ function TreeNode({ node, style }: NodeRendererProps<TNode>) {
   const {
     selectedPath,
     onSelectFile,
-    onFileContextMenu,
+    onEntryContextMenu,
     loadDir,
     setActiveDir,
     colorClass,
     confirmCreate,
     cancelCreate,
+    confirmRename,
+    cancelRename,
   } = useContext(FileTreeCtx);
+
+  if (node.data.renaming) {
+    const isDirRn = node.data.type === 'dir';
+    const { icon, color } = isDirRn
+      ? { icon: node.isOpen ? 'folder-opened' : 'folder', color: '#dcb67a' }
+      : fileIcon(node.data.name);
+    return (
+      <div className="tree-row" style={style}>
+        <span
+          className={`tree-chevron codicon codicon-chevron-right ${node.isOpen ? 'open' : ''}`}
+          style={{ visibility: isDirRn ? 'visible' : 'hidden' }}
+        />
+        <span className={`tree-icon codicon codicon-${icon}`} style={{ color }} />
+        <input
+          className="tree-name-input"
+          autoFocus
+          // autoFocus だけだと、コンテキストメニュー (Radix DropdownMenu) のクローズ時
+          // フォーカス処理に負けて input が非フォーカスのまま残る (実機で確認)。
+          // マウント直後の次タスクで奪い返す (1 回だけ — 再レンダーで再発火させない)。
+          ref={(el) => {
+            if (!el || el.dataset.autofocused) return;
+            el.dataset.autofocused = '1';
+            setTimeout(() => el.focus(), 0);
+          }}
+          defaultValue={node.data.name}
+          // フォーカス時に拡張子を除く stem を選択する (VS Code の F2 と同じ)
+          onFocus={(e) => {
+            const name = node.data.name;
+            const dot = name.lastIndexOf('.');
+            e.currentTarget.setSelectionRange(0, dot > 0 ? dot : name.length);
+          }}
+          onKeyDown={(e) => {
+            // 必ず止める: react-arborist のコンテナー onKeyDown にタイプアヘッド検索が
+            // あり、伝播すると入力文字に一致する行へ DOM フォーカスが移って input が
+            // blur → 中途の名前で確定/キャンセルされてしまう (不具合報告の原因)
+            e.stopPropagation();
+            if (e.key === 'Enter') void confirmRename(e.currentTarget.value);
+            else if (e.key === 'Escape') cancelRename();
+          }}
+          onBlur={(e) => {
+            const v = e.target.value.trim();
+            if (v && v !== node.data.name) void confirmRename(v);
+            else cancelRename();
+          }}
+        />
+      </div>
+    );
+  }
 
   if (node.data.placeholder) {
     const isDirPh = node.data.placeholder === 'dir';
@@ -187,8 +249,18 @@ function TreeNode({ node, style }: NodeRendererProps<TNode>) {
         <input
           className="tree-name-input"
           autoFocus
+          // コンテキストメニューから起動されたときは Radix のクローズ時フォーカス処理に
+          // autoFocus が負けるので、リネーム入力と同じく次タスクで奪い返す
+          ref={(el) => {
+            if (!el || el.dataset.autofocused) return;
+            el.dataset.autofocused = '1';
+            setTimeout(() => el.focus(), 0);
+          }}
           placeholder={isDirPh ? t('files.newFolderNamePlaceholder') : t('files.newFileNamePlaceholder')}
           onKeyDown={(e) => {
+            // 必ず止める: 伝播すると react-arborist のタイプアヘッド検索が一致行へ
+            // フォーカスを移し、input が blur → 中途の名前で確定されてしまう
+            e.stopPropagation();
             if (e.key === 'Enter') void confirmCreate(e.currentTarget.value);
             else if (e.key === 'Escape') cancelCreate();
           }}
@@ -222,10 +294,10 @@ function TreeNode({ node, style }: NodeRendererProps<TNode>) {
         }
       }}
       onContextMenu={
-        !isDir && onFileContextMenu
+        onEntryContextMenu
           ? (e) => {
               e.preventDefault();
-              onFileContextMenu(e, node.data.id);
+              onEntryContextMenu(e, node.data.id, node.data.type);
             }
           : undefined
       }
@@ -242,7 +314,12 @@ function TreeNode({ node, style }: NodeRendererProps<TNode>) {
 
 /** ツリー操作をヘッダー側 (FilesTab の統合ヘッダー行) から呼ぶためのハンドル。 */
 export interface FileTreeHandle {
-  startCreate: (kind: 'file' | 'dir') => void;
+  /** parentId 省略時は最後にクリックした場所 (activeDir) に作る。 */
+  startCreate: (kind: 'file' | 'dir', parentId?: string) => void;
+  startRename: (path: string) => void;
+  refreshLevel: (parentId: string) => Promise<void>;
+  /** 削除後の後片付け: 新規作成先 (activeDir) が消えたパス配下なら親へ退避してから親階層を再取得。 */
+  refreshAfterDelete: (path: string) => Promise<void>;
   reload: () => void;
 }
 
@@ -250,7 +327,8 @@ export default function FileTree({
   root,
   selectedPath,
   onSelectFile,
-  onFileContextMenu,
+  onEntryContextMenu,
+  onRenamed,
   controllerRef,
   hideToolbar,
 }: {
@@ -258,11 +336,13 @@ export default function FileTree({
   selectedPath: string | null;
   onSelectFile: (path: string) => void;
   /**
-   * ファイル行 (ディレクトリ行は対象外) の右クリックで発火する。ContextMenu の構築・表示は
+   * ファイル行 / ディレクトリー行の右クリックで発火する。ContextMenu の構築・表示は
    * 呼び出し元 (FilesTab) の責務 — BranchTree の onContextMenu と同じ分担パターン。
    */
-  onFileContextMenu?: (e: React.MouseEvent, path: string) => void;
-  /** ツリー操作 (新規作成 / 再読み込み) を外部トリガーにするためのハンドル受け口。 */
+  onEntryContextMenu?: (e: React.MouseEvent, path: string, kind: 'file' | 'dir') => void;
+  /** インラインリネームの成立後に発火する (開いているタブのパス追随は呼び出し元の責務)。 */
+  onRenamed?: (oldPath: string, newPath: string, kind: 'file' | 'dir') => void;
+  /** ツリー操作 (新規作成 / リネーム / 再読み込み) を外部トリガーにするためのハンドル受け口。 */
   controllerRef?: React.MutableRefObject<FileTreeHandle | null>;
   /** 内蔵ツールバーを描画しない (操作は controllerRef 経由。notice 行だけは残る)。 */
   hideToolbar?: boolean;
@@ -275,6 +355,7 @@ export default function FileTree({
   const [size, setSize] = useState({ width: 260, height: 400 });
   const [activeDir, setActiveDir] = useState(''); // directory new items are created in ('' = root)
   const [creating, setCreating] = useState<{ parentId: string; type: 'file' | 'dir' } | null>(null);
+  const [renaming, setRenaming] = useState<{ path: string; kind: 'file' | 'dir' } | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const treeRef = useRef<TreeApi<TNode> | null>(null);
   const loadingRef = useRef(new Set<string>());
@@ -425,9 +506,10 @@ export default function FileTree({
   );
 
   // ---- inline create ---------------------------------------------------------
+  /** parentOverride: コンテキストメニューの「ファイル/フォルダーの作成」用。省略時は activeDir。 */
   const startCreate = useCallback(
-    async (type: 'file' | 'dir') => {
-      const parentId = activeDir;
+    async (type: 'file' | 'dir', parentOverride?: string) => {
+      const parentId = parentOverride ?? activeDir;
       if (parentId) {
         const node = nodes ? findNode(nodes, parentId) : null;
         if (node && node.children === null) {
@@ -437,7 +519,10 @@ export default function FileTree({
       }
       handledRef.current = false;
       setNotice('');
+      setRenaming(null); // creating と renaming は相互排他 (handledRef を共有するため)
       setCreating({ parentId, type });
+      // 明示指定された親は次回以降の作成先にもする (VS Code のフォーカスディレクトリー相当)
+      if (parentOverride !== undefined) setActiveDir(parentOverride);
     },
     [activeDir, nodes, loadDir],
   );
@@ -479,36 +564,97 @@ export default function FileTree({
     [creating, root, refreshLevel, onSelectFile],
   );
 
+  // ---- inline rename ---------------------------------------------------------
+  const startRename = useCallback(
+    (path: string) => {
+      const node = nodes ? findNode(nodes, path) : null;
+      if (!node) return;
+      handledRef.current = false;
+      setNotice('');
+      setCreating(null); // creating と renaming は相互排他 (handledRef を共有するため)
+      setRenaming({ path, kind: node.type });
+    },
+    [nodes],
+  );
+
+  const cancelRename = useCallback(() => {
+    if (handledRef.current) return;
+    handledRef.current = true;
+    setRenaming(null);
+  }, []);
+
+  const confirmRename = useCallback(
+    async (rawName: string) => {
+      if (handledRef.current) return;
+      const r = renaming;
+      if (!r) return;
+      const name = rawName.trim();
+      const oldName = r.path.slice(r.path.lastIndexOf('/') + 1);
+      if (!name || name === oldName) {
+        handledRef.current = true;
+        setRenaming(null);
+        return;
+      }
+      handledRef.current = true;
+      setRenaming(null);
+      try {
+        const { path: newPath } = await api.renameEntry(root, r.path, name);
+        // 新規作成先 (activeDir) がリネームされたパス配下を指していたら追随させる
+        setActiveDir((prev) =>
+          prev === r.path ? newPath : prev.startsWith(r.path + '/') ? newPath + prev.slice(r.path.length) : prev,
+        );
+        await refreshLevel(parentOf(r.path));
+        onRenamed?.(r.path, newPath, r.kind);
+      } catch (e) {
+        setNotice(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [renaming, root, refreshLevel, onRenamed],
+  );
+
   const displayNodes = useMemo(() => {
-    if (!nodes || !creating) return nodes;
-    const ph: TNode = {
-      id: CREATING_ID,
-      name: '',
-      type: creating.type === 'dir' ? 'dir' : 'file',
-      children: creating.type === 'dir' ? [] : null,
-      placeholder: creating.type,
-    };
-    return insertPlaceholder(nodes, creating.parentId, ph);
-  }, [nodes, creating]);
+    if (!nodes) return nodes;
+    let out = nodes;
+    if (renaming) out = withRenamingFlag(out, renaming.path);
+    if (creating) {
+      const ph: TNode = {
+        id: CREATING_ID,
+        name: '',
+        type: creating.type === 'dir' ? 'dir' : 'file',
+        children: creating.type === 'dir' ? [] : null,
+        placeholder: creating.type,
+      };
+      out = insertPlaceholder(out, creating.parentId, ph);
+    }
+    return out;
+  }, [nodes, creating, renaming]);
 
   const ctx = useMemo<FileTreeCtxValue>(
     () => ({
       selectedPath,
       onSelectFile,
-      onFileContextMenu,
+      onEntryContextMenu,
       loadDir,
       setActiveDir,
       colorClass,
       confirmCreate,
       cancelCreate,
+      confirmRename,
+      cancelRename,
     }),
-    [selectedPath, onSelectFile, onFileContextMenu, loadDir, setActiveDir, colorClass, confirmCreate, cancelCreate],
+    [selectedPath, onSelectFile, onEntryContextMenu, loadDir, setActiveDir, colorClass, confirmCreate, cancelCreate, confirmRename, cancelRename],
   );
 
   // 統合ヘッダー行 (FilesTab) から操作できるよう毎レンダーで最新のクロージャーを公開する
   if (controllerRef) {
     controllerRef.current = {
-      startCreate: (kind) => void startCreate(kind),
+      startCreate: (kind, parentId) => void startCreate(kind, parentId),
+      startRename,
+      refreshLevel,
+      refreshAfterDelete: (path) => {
+        setActiveDir((prev) => (prev === path || prev.startsWith(path + '/') ? parentOf(path) : prev));
+        return refreshLevel(parentOf(path));
+      },
       reload: loadRoot,
     };
   }

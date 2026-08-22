@@ -9,6 +9,8 @@
 // 「操作 → 木の変換 → リソース破棄 → 永続化」のオーケストレーションだけを持つ。
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { api } from '../api';
+import { copyText } from '../clipboard';
 import {
   hashText,
   loadLeafEditorState,
@@ -27,7 +29,7 @@ import BlameModal from './BlameModal';
 import { useConfirm } from './ConfirmDialog';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import EditorStatusBar from './EditorStatusBar';
-import { basename } from './editorTabs';
+import { basename, toPosixPath } from './editorTabs';
 import FileHistoryModal from './FileHistoryModal';
 import FileTree, { type FileTreeHandle } from './FileTree';
 import SearchPanel from './SearchPanel';
@@ -45,7 +47,11 @@ import {
   moveTabToGroup,
   openTabInGroup,
   orphanedKeysAfter,
+  pathIsWithin,
   pickEviction,
+  removeTabPaths,
+  renamedPath,
+  renameTabPaths,
   setGroupSizes,
   splitWithTab,
   type GroupNode,
@@ -118,9 +124,9 @@ export default function FilesTab({
   const searchVisitedRef = useRef(false);
   if (side === 'search') searchVisitedRef.current = true;
 
-  // ファイルツリーの右クリックメニュー(「ファイルの履歴...」等)。読み取り専用機能なので
-  // ConfirmDialog は不要 — pj-git-route の「操作系でない機能は確認不要」の原則どおり。
-  const [fileMenu, setFileMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  // ファイルツリーの右クリックメニュー。リネーム/複製は上書きしない操作(既存パスへの
+  // 上書きはサーバーが拒否)なので ConfirmDialog は不要 — pj-git-route の原則どおり。
+  const [fileMenu, setFileMenu] = useState<{ x: number; y: number; path: string; kind: 'file' | 'dir' } | null>(null);
   const [historyPath, setHistoryPath] = useState<string | null>(null);
   const [blamePath, setBlamePath] = useState<string | null>(null);
   const treeCtl = useRef<FileTreeHandle | null>(null);
@@ -297,6 +303,50 @@ export default function FilesTab({
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [applyGroups, confirmDialog, t],
+  );
+
+  // ---- ツリーのリネーム追随 --------------------------------------------------
+  // インラインリネーム成立後、この leaf 内で開いているタブ (ディレクトリーなら配下全て) を
+  // 新パスへ移す。dirty な draft は draftsRef (復元待ちキュー) 経由で運ぶ — リネームは
+  // ディスク内容を変えないので loadFile の baseHash 照合が成立し、dirty のまま復元される。
+  // 別 leaf (別タイル) の同ファイルタブは追随しない (外部ツールによるリネームと同じ扱いで、
+  // 既存のロードエラー表示にフォールバックする)。
+  const onTreeRenamed = useCallback(
+    (oldPath: string, newPath: string) => {
+      stashAll();
+      const before = groupsApi.stateRef.current.root;
+      const affected = distinctRefs(before).filter((r) => renamedPath(r.path, oldPath, newPath) !== null);
+      if (affected.length === 0) return;
+      for (const ref of affected) {
+        if (ref.kind !== 'editor') continue;
+        const from = ref.path;
+        const to = renamedPath(from, oldPath, newPath)!;
+        const e = entriesApi.entriesRef.current[tabKey('editor', from)];
+        if (e && isDirtyEntry(e) && e.file?.content != null) {
+          entriesApi.draftsRef.current[to] = { text: e.draft, baseHash: hashText(e.file.content) };
+        } else if (entriesApi.draftsRef.current[from]) {
+          // 未ロードのまま残っていた復元待ち draft もそのまま新パスへ運ぶ
+          entriesApi.draftsRef.current[to] = entriesApi.draftsRef.current[from];
+        }
+        for (const states of Object.values(entriesApi.viewStatesRef.current)) {
+          if (from in states) states[to] = states[from];
+        }
+        if (entriesApi.eolOverrideRef.current.has(from)) entriesApi.eolOverrideRef.current.add(to);
+      }
+      // 旧キーは orphan になり applyGroups → disposeKeys が旧モデル・旧 draft を回収する
+      // (移送済みなので安全)。
+      applyGroups(renameTabPaths(before, oldPath, newPath));
+      const newRefs = affected.map((r) => ({ kind: r.kind, path: renamedPath(r.path, oldPath, newPath)! }));
+      entriesApi.ensureEntries(newRefs);
+      for (const r of newRefs) entriesApi.loadFile(tabKey(r.kind, r.path), r.path);
+      const p = pendingRevealRef.current;
+      if (p) {
+        const np = renamedPath(p.path, oldPath, newPath);
+        if (np !== null) pendingRevealRef.current = { ...p, path: np };
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [applyGroups, stashAll],
   );
 
   /** DnD 中のタブが reveal 待ちなら破棄する (移動先で誤ジャンプしないように)。 */
@@ -766,27 +816,136 @@ export default function FilesTab({
     !activeEntry.file.binary &&
     !activeEntry.file.tooLarge;
 
-  const fileMenuItems = (path: string): ContextMenuItem[] => [
+  /** setMessage を一定時間で消す (save の成功メッセージと同じ寿命)。 */
+  const flashMessage = (text: string) => {
+    entriesApi.setMessage(text);
+    setTimeout(() => entriesApi.setMessage(''), 2500);
+  };
+
+  const copyToClipboard = (text: string) => {
+    void copyText(text).then((ok) => {
+      if (ok) flashMessage(t('files.copiedMessage'));
+    });
+  };
+
+  /** ツリー相対パスの親ディレクトリー ('' = root)。 */
+  const parentDirOf = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
+
+  const duplicateEntry = (path: string, kind: 'file' | 'dir') => {
+    const parent = parentDirOf(path);
+    api
+      .duplicateEntry(rootRef.current, path)
+      .then(async ({ path: newPath }) => {
+        await treeCtl.current?.refreshLevel(parent);
+        // 作成後にエディターで開く (confirmCreate が新規ファイルを開く既存パターンに合わせる)
+        if (kind === 'file') openFile(newPath);
+      })
+      .catch((e: unknown) => flashMessage(`⚠ ${e instanceof Error ? e.message : String(e)}`));
+  };
+
+  const deleteEntry = async (path: string, kind: 'file' | 'dir') => {
+    const name = basename(path);
+    const ok = await confirmDialog({
+      title: t('files.deleteConfirmTitle'),
+      message:
+        kind === 'dir'
+          ? t('files.deleteFolderConfirmMessage', { name })
+          : t('files.deleteFileConfirmMessage', { name }),
+      confirmLabel: t('files.deleteConfirmLabel'),
+      severity: 'danger',
+    });
+    if (!ok) return;
+    try {
+      await api.deleteEntry(rootRef.current, path);
+    } catch (e) {
+      flashMessage(`⚠ ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    // 開いているタブ (ディレクトリーなら配下全て) を閉じる。dirty の追加確認はしない —
+    // 削除の確認自体が破棄の同意。orphan 化した draft/モデルは applyGroups → disposeKeys が回収。
+    stashAll();
+    applyGroups(removeTabPaths(groupsApi.stateRef.current.root, path));
+    const p = pendingRevealRef.current;
+    if (p && pathIsWithin(p.path, path)) pendingRevealRef.current = null;
+    await treeCtl.current?.refreshAfterDelete(path);
+  };
+
+  const fileMenuItems = (path: string, kind: 'file' | 'dir'): ContextMenuItem[] => [
+    // 作成先: ディレクトリー行ならその中、ファイル行なら同じディレクトリー (VS Code 同様)
     {
-      label: t('files.historyMenuItem'),
-      icon: 'history',
-      onClick: () => setHistoryPath(path),
+      label: t('files.createFileMenuItem'),
+      icon: 'new-file',
+      onClick: () => treeCtl.current?.startCreate('file', kind === 'dir' ? path : parentDirOf(path)),
     },
     {
-      label: 'blame...',
-      icon: 'account',
-      onClick: () => setBlamePath(path),
+      label: t('files.createFolderMenuItem'),
+      icon: 'new-folder',
+      onClick: () => treeCtl.current?.startCreate('dir', kind === 'dir' ? path : parentDirOf(path)),
     },
-    // Markdown 以外のファイルには出さない(disabled ではなく非表示 — 読み取り専用機能なので
-    // 「押せるが意味がない」項目を並べない)。
-    ...(isMarkdownPath(path)
-      ? [
+    { separator: true },
+    {
+      label: t('files.revealInExplorerMenuItem'),
+      icon: 'folder-opened',
+      onClick: () => {
+        api.revealInExplorer(rootRef.current, path).catch((e: unknown) => {
+          flashMessage(`⚠ ${e instanceof Error ? e.message : String(e)}`);
+        });
+      },
+    },
+    { separator: true },
+    {
+      label: t('files.copyPathMenuItem'),
+      icon: 'copy',
+      onClick: () => copyToClipboard(toPosixPath(rootRef.current, path)),
+    },
+    {
+      label: t('files.copyRelativePathMenuItem'),
+      icon: 'copy',
+      onClick: () => copyToClipboard(path),
+    },
+    { separator: true },
+    {
+      label: t('files.renameMenuItem'),
+      icon: 'edit',
+      onClick: () => treeCtl.current?.startRename(path),
+    },
+    {
+      label: kind === 'dir' ? t('files.duplicateFolderMenuItem') : t('files.duplicateFileMenuItem'),
+      icon: 'files',
+      onClick: () => duplicateEntry(path, kind),
+    },
+    {
+      label: t('files.deleteMenuItem'),
+      icon: 'trash',
+      danger: true,
+      onClick: () => void deleteEntry(path, kind),
+    },
+    // git 履歴系とプレビューはファイルのみ (ディレクトリーには意味がないので非表示)。
+    ...(kind === 'file'
+      ? ([
+          { separator: true },
           {
-            label: t('files.openPreview'),
-            icon: 'preview',
-            onClick: () => openPreview(path),
+            label: t('files.historyMenuItem'),
+            icon: 'history',
+            onClick: () => setHistoryPath(path),
           },
-        ]
+          {
+            label: 'blame...',
+            icon: 'account',
+            onClick: () => setBlamePath(path),
+          },
+          // Markdown 以外のファイルには出さない(disabled ではなく非表示 — 読み取り専用機能なので
+          // 「押せるが意味がない」項目を並べない)。
+          ...(isMarkdownPath(path)
+            ? [
+                {
+                  label: t('files.openPreview'),
+                  icon: 'preview',
+                  onClick: () => openPreview(path),
+                },
+              ]
+            : []),
+        ] satisfies ContextMenuItem[])
       : []),
   ];
 
@@ -844,7 +1003,8 @@ export default function FilesTab({
             root={root}
             selectedPath={activeEntry?.path ?? null}
             onSelectFile={openFile}
-            onFileContextMenu={(e, path) => setFileMenu({ x: e.clientX, y: e.clientY, path })}
+            onEntryContextMenu={(e, path, kind) => setFileMenu({ x: e.clientX, y: e.clientY, path, kind })}
+            onRenamed={onTreeRenamed}
             controllerRef={treeCtl}
             hideToolbar
           />
@@ -903,7 +1063,7 @@ export default function FilesTab({
         <ContextMenu
           x={fileMenu.x}
           y={fileMenu.y}
-          items={fileMenuItems(fileMenu.path)}
+          items={fileMenuItems(fileMenu.path, fileMenu.kind)}
           onClose={() => setFileMenu(null)}
         />
       )}

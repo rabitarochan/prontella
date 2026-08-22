@@ -2,16 +2,20 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
-export interface ContextMenuItem {
-  label: string;
-  icon?: string;
-  disabled?: boolean;
-  danger?: boolean;
-  onClick: () => void;
-}
+export type ContextMenuItem =
+  | {
+      label: string;
+      icon?: string;
+      disabled?: boolean;
+      danger?: boolean;
+      onClick: () => void;
+      separator?: undefined;
+    }
+  | { separator: true };
 
 /**
  * 座標 (x, y) に開く右クリックメニュー。呼び出し側が座標と items を渡して
@@ -40,17 +44,21 @@ export default function ContextMenu({
         // 右クリック元 (ターミナル / ツリー) からフォーカスを奪い返さない
         onCloseAutoFocus={(e) => e.preventDefault()}
       >
-        {items.map((item, i) => (
-          <DropdownMenuItem
-            key={i}
-            disabled={item.disabled}
-            variant={item.danger ? 'destructive' : 'default'}
-            onSelect={() => item.onClick()}
-          >
-            {item.icon && <span className={`codicon codicon-${item.icon}`} />}
-            {item.label}
-          </DropdownMenuItem>
-        ))}
+        {items.map((item, i) =>
+          item.separator ? (
+            <DropdownMenuSeparator key={i} />
+          ) : (
+            <DropdownMenuItem
+              key={i}
+              disabled={item.disabled}
+              variant={item.danger ? 'destructive' : 'default'}
+              onSelect={() => item.onClick()}
+            >
+              {item.icon && <span className={`codicon codicon-${item.icon}`} />}
+              {item.label}
+            </DropdownMenuItem>
+          ),
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

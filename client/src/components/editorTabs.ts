@@ -7,6 +7,15 @@ export function basename(path: string): string {
 }
 
 /**
+ * root (OS ネイティブ形式) と root 相対パスから、OS を問わず `/` 区切りの絶対パスを作る。
+ * 「パスのコピー」用 — Windows でも `C:/Users/...` 形式で返す。
+ */
+export function toPosixPath(root: string, rel: string): string {
+  const base = root.replace(/\\/g, '/').replace(/\/+$/, '');
+  return rel ? `${base}/${rel}` : base;
+}
+
+/**
  * `.editor-tabs` (overflow-x:auto なストリップ) に spread する。中ボタン押下の
  * 既定動作 (Chrome/Firefox のオートスクロール) を止める。タブとタブの隙間や
  * padding を「かすった」ミドルクリックでパンカーソルが出るのも防ぐため、

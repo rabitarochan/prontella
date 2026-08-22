@@ -49,6 +49,26 @@ export const FILES_STRINGS = {
   'files.newFolderNamePlaceholder': { ja: '新規フォルダー名', en: 'New folder name' },
   'files.newFileTooltip': { ja: '新規ファイル', en: 'New file' },
   'files.newFolderTooltip': { ja: '新規フォルダー', en: 'New folder' },
+  'files.createFileMenuItem': { ja: 'ファイルの作成', en: 'New file...' },
+  'files.createFolderMenuItem': { ja: 'フォルダーの作成', en: 'New folder...' },
+  'files.revealInExplorerMenuItem': { ja: 'Explorer で開く', en: 'Reveal in File Explorer' },
+  'files.copyPathMenuItem': { ja: 'パスのコピー', en: 'Copy path' },
+  'files.copyRelativePathMenuItem': { ja: '相対パスのコピー', en: 'Copy relative path' },
+  'files.renameMenuItem': { ja: '名前の変更', en: 'Rename' },
+  'files.duplicateFileMenuItem': { ja: 'ファイルのコピー', en: 'Duplicate file' },
+  'files.duplicateFolderMenuItem': { ja: 'フォルダーのコピー', en: 'Duplicate folder' },
+  'files.copiedMessage': { ja: '✓ コピーしました', en: '✓ Copied' },
+  'files.deleteMenuItem': { ja: '削除', en: 'Delete' },
+  'files.deleteConfirmTitle': { ja: '削除', en: 'Delete' },
+  'files.deleteFileConfirmMessage': {
+    ja: '{name} を削除しますか? (元に戻せません)',
+    en: 'Delete {name}? This cannot be undone.',
+  },
+  'files.deleteFolderConfirmMessage': {
+    ja: '{name} とその中身をすべて削除しますか? (元に戻せません)',
+    en: 'Delete {name} and all of its contents? This cannot be undone.',
+  },
+  'files.deleteConfirmLabel': { ja: '削除する', en: 'Delete' },
 
   // ---- エディターステータスバー (EditorStatusBar) ----
   'files.indentSpaces': { ja: 'スペース: {n}', en: 'Spaces: {n}' },

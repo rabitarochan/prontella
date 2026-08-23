@@ -3725,39 +3725,18 @@ button.statusbar-item:hover:not(:disabled) {
   padding-bottom: calc(8px + env(safe-area-inset-bottom));
 }
 
-/* ---- VNC ペイン (右ペイン: ホスト端末のリモートデスクトップ) ---- */
+/* ---- VNC ビュー (main 全体: ホスト端末のリモートデスクトップ) ---- */
 
-.vnc-pane {
-  position: relative;
-  flex: none;
-  min-width: 320px;
-  max-width: 80vw;
-  border-left: 1px solid var(--border);
-  background: var(--bg-panel);
-  display: flex;
-}
-
-.vnc-resize-handle {
-  position: absolute;
-  left: -3px;
-  top: 0;
-  bottom: 0;
-  width: 6px;
-  cursor: col-resize;
-  z-index: 10;
-}
-.vnc-resize-handle:hover {
-  background: color-mix(in srgb, var(--primary) 35%, transparent);
-}
-
-.vnc-pane-inner {
+.vnc-view {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  background: var(--bg-panel);
 }
 
-.vnc-pane-header {
+.vnc-view-header {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -3767,7 +3746,7 @@ button.statusbar-item:hover:not(:disabled) {
   font-size: 12px;
 }
 
-.vnc-pane-title {
+.vnc-view-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -3776,7 +3755,7 @@ button.statusbar-item:hover:not(:disabled) {
   color: var(--fg);
 }
 
-.vnc-pane-actions {
+.vnc-view-actions {
   display: flex;
   align-items: center;
   gap: 2px;

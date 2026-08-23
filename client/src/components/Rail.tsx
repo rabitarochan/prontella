@@ -1,5 +1,5 @@
 import { useLang, useT } from '../i18n';
-import { useVncPane } from '../layout/vncPaneStore';
+import { useVncView } from '../layout/vncViewStore';
 import { useDeck } from '../store';
 import AttentionBell from './AttentionBell';
 import Sidebar from './Sidebar';
@@ -15,7 +15,19 @@ export default function Rail({ onOpenPalette }: { onOpenPalette: () => void }) {
   const select = useDeck((s) => s.select);
   const lang = useLang((s) => s.lang);
   const setLang = useLang((s) => s.setLang);
-  const toggleVnc = useVncPane((s) => s.toggle);
+  const vncActive = useVncView((s) => s.active);
+  const setVncActive = useVncView((s) => s.setActive);
+
+  // VNC モードへの出入り。入るときはリポジトリー選択を外して main 全体を VNC にする
+  // (選択が残っていると App 側の「選択優先」effect が即座にモードを解除してしまう)。
+  const toggleVnc = () => {
+    if (vncActive) {
+      setVncActive(false);
+    } else {
+      select(null);
+      setVncActive(true);
+    }
+  };
 
   return (
     <aside className="rail">
@@ -24,7 +36,11 @@ export default function Rail({ onOpenPalette }: { onOpenPalette: () => void }) {
           <span className="rail-logo-mark">◆</span> Claude Deck
         </button>
         <span className="rail-title-actions">
-          <button className="icon-btn" title={t('vnc.railTooltip')} onClick={toggleVnc}>
+          <button
+            className={`icon-btn${vncActive ? ' vnc-btn-active' : ''}`}
+            title={t('vnc.railTooltip')}
+            onClick={toggleVnc}
+          >
             <span className="codicon codicon-vm" />
           </button>
           <AttentionBell />

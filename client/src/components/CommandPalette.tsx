@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 import { findWorktree, resolveAndSelect, useAgentEvents, waitingSessions } from '../agentEvents';
 import { useLang, useT } from '../i18n';
 import { getActiveWorktreeCommands } from '../layout/worktreeCommands';
-import { useVncPane } from '../layout/vncPaneStore';
+import { useVncView } from '../layout/vncViewStore';
 import { isActive } from '../repoSections';
 import { getActiveFilesTab, type FilesTabHandle } from '../search/registry';
 import { useDeck } from '../store';
@@ -41,7 +41,8 @@ export default function CommandPalette({
   const t = useT();
   const setLang = useLang((s) => s.setLang);
   const setThemeMode = useTheme((s) => s.setMode);
-  const toggleVnc = useVncPane((s) => s.toggle);
+  const vncActive = useVncView((s) => s.active);
+  const setVncActive = useVncView((s) => s.setActive);
   const { repos, select } = useDeck();
   const sessions = useAgentEvents((s) => s.sessions);
   const [query, setQuery] = useState('');
@@ -116,7 +117,15 @@ export default function CommandPalette({
       section: 'commands',
       icon: 'vm',
       label: t('vnc.paletteToggle'),
-      run: () => toggleVnc(),
+      run: () => {
+        // Rail のトグルと同じ: 入るときは選択を外す (選択優先 effect との競合回避)
+        if (vncActive) {
+          setVncActive(false);
+        } else {
+          select(null);
+          setVncActive(true);
+        }
+      },
     });
     all.push(
       {
@@ -159,7 +168,7 @@ export default function CommandPalette({
     return fuzzysort
       .go(query, all, { keys: ['label', 'sub'], limit: 50 })
       .map((r) => r.obj);
-  }, [sessions, repos, query, t, select, setThemeMode, setLang, onOpenQuickOpen, onAddWorktree]);
+  }, [sessions, repos, query, t, select, setThemeMode, setLang, onOpenQuickOpen, onAddWorktree, vncActive, setVncActive]);
 
   useEffect(() => setSelected(0), [items]);
   useEffect(() => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyDisconnect, sanitizePaneWidth } from './vncState';
+import { classifyDisconnect } from './vncState';
 
 describe('classifyDisconnect', () => {
   it('maps security failure to authFailed regardless of other flags', () => {
@@ -29,20 +29,5 @@ describe('classifyDisconnect', () => {
         classifyDisconnect({ everConnected: false, securityReason: null, probeReachable }),
       ).toEqual({ phase: 'disconnected', messageKey: 'vnc.connectFailed' });
     }
-  });
-});
-
-describe('sanitizePaneWidth', () => {
-  it('returns the fallback for garbage input', () => {
-    for (const raw of [null, undefined, 'abc', '', NaN, Infinity, {}, []]) {
-      expect(sanitizePaneWidth(raw)).toBe(560);
-    }
-  });
-
-  it('clamps to [320, 2000] and rounds', () => {
-    expect(sanitizePaneWidth(100)).toBe(320);
-    expect(sanitizePaneWidth('5000')).toBe(2000);
-    expect(sanitizePaneWidth(640.6)).toBe(641);
-    expect(sanitizePaneWidth('800')).toBe(800);
   });
 });

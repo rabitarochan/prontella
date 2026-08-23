@@ -10,9 +10,9 @@ import CommandPalette from './components/CommandPalette';
 import DeckView from './components/DeckView';
 import QuickOpenModal from './components/QuickOpenModal';
 import Rail from './components/Rail';
-import VncPane from './components/VncPane';
+import VncView from './components/VncView';
 import WorktreeView from './components/WorktreeView';
-import { useVncPane } from './layout/vncPaneStore';
+import { useVncView } from './layout/vncViewStore';
 
 const POLL_MS = 4000;
 
@@ -23,7 +23,9 @@ export default function App() {
   const [quickOpenTarget, setQuickOpenTarget] = useState<FilesTabHandle | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [worktreeTarget, setWorktreeTarget] = useState<ActiveRepo | null>(null);
-  const vncVisited = useVncPane((s) => s.visited);
+  const vncActive = useVncView((s) => s.active);
+  const vncVisited = useVncView((s) => s.visited);
+  const setVncActive = useVncView((s) => s.setActive);
   useSearchHotkeys(setQuickOpenTarget);
 
   // Ctrl+K = グローバルコマンドパレット。Ctrl+P (ファイル検索) と同じ流儀:
@@ -81,6 +83,14 @@ export default function App() {
 
   const current = findSelection(repos, selected);
 
+  // リポジトリー/worktree を選択したら VNC モードを抜ける (左ツリーの選択が常に優先)。
+  // VncView 自体は visited 維持で display:none にするだけなので RFB 接続は生存する。
+  useEffect(() => {
+    if (current && vncActive) setVncActive(false);
+  }, [current, vncActive, setVncActive]);
+
+  const vncVisible = loaded && vncActive && !current;
+
   return (
     <div className="app">
       <Rail onOpenPalette={() => setPaletteOpen(true)} />
@@ -94,13 +104,14 @@ export default function App() {
           <div className="placeholder">{t('common.loading')}</div>
         ) : current ? (
           <WorktreeView key={current.worktree.path} repo={current.repo} worktree={current.worktree} />
-        ) : (
+        ) : vncActive ? null : (
           <DeckView />
         )}
+        {/* VNC ビューは worktree 切替 (WorktreeView の key remount) の影響を受けない
+            main 直下の兄弟に置き、一度入ったらモードを抜けても unmount しない
+            (display:none 保持が RFB 接続の生存条件)。 */}
+        {vncVisited && <VncView visible={vncVisible} />}
       </main>
-      {/* VNC ペインは worktree 切替 (WorktreeView の key remount) の影響を受けない
-          App 直下に置き、一度開いたら閉じても unmount しない (RFB 接続の生存条件)。 */}
-      {vncVisited && <VncPane />}
       {quickOpenTarget && (
         <QuickOpenModal target={quickOpenTarget} onClose={() => setQuickOpenTarget(null)} />
       )}

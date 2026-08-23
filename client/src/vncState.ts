@@ -46,17 +46,3 @@ export function classifyDisconnect(input: DisconnectInput): DisconnectResult {
   return { phase: 'disconnected', messageKey: 'vnc.connectFailed' };
 }
 
-/** ペイン幅の永続値の検証つき復元。不正値・範囲外は既定値へ。 */
-export function sanitizePaneWidth(raw: unknown, fallback = 560): number {
-  // Number('') は 0 になるため、空文字列は明示的に不正扱いする
-  const n =
-    typeof raw === 'string'
-      ? raw.trim() === ''
-        ? NaN
-        : Number(raw)
-      : typeof raw === 'number'
-        ? raw
-        : NaN;
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(Math.max(Math.round(n), 320), 2000);
-}

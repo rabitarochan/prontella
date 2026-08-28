@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import * as pty from 'node-pty';
 import type { WebSocket } from 'ws';
+import { terminalEnv } from './childEnv.js';
 import { claudeCommand } from './hooks.js';
 import { broadcastEvent, registerSnapshotProvider } from './sessionEvents.js';
 
@@ -106,7 +107,7 @@ function defaultShell(): { file: string; args: string[] } {
   if (process.platform === 'win32') {
     return { file: 'powershell.exe', args: ['-NoLogo'] };
   }
-  return { file: process.env.SHELL || 'bash', args: [] };
+  return { file: terminalEnv().SHELL || 'bash', args: [] };
 }
 
 export class PtyManager {
@@ -127,13 +128,14 @@ export class PtyManager {
       cols: 120,
       rows: 32,
       cwd,
+      // terminalEnv(): deck の process.env ではなく「OS で新規に端末を開いた」環境。
+      // deck の起動元シェルの汚染 (NODE_ENV/PORT/NO_COLOR/GIT_EDITOR ...) を持ち込まない。
       // CLAUDE_DECK_* は deck-hook.mjs がイベントの届け先とセッションを
       // 特定するための変数。claude 経由でフックの子プロセスまで届く。
-      env: {
-        ...process.env,
+      env: terminalEnv({
         CLAUDE_DECK_PORT: String(this.port),
         CLAUDE_DECK_TERM: id,
-      } as Record<string, string>,
+      }),
     });
     const session: Session = {
       id,

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer } from 'ws';
+import { childEnv, warmTerminalEnv } from './childEnv.js';
 import * as config from './config.js';
 import * as git from './git.js';
 import * as files from './files.js';
@@ -32,6 +33,11 @@ process.on('unhandledRejection', (reason) => {
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
+
+// ターミナル/Agent SDK に渡す「OS 既定の環境」をここで一度だけ構築してキャッシュする。
+// セッション生成は同期処理なので、遅延構築にすると起動直後の 1 本目だけ
+// フォールバック env になるレースが生まれる。実測で約 2 秒の同期コスト。
+warmTerminalEnv();
 
 const ptyManager = new PtyManager(PORT);
 const agentManager = new AgentSessionManager();
@@ -1174,12 +1180,13 @@ app.post('/api/fs/reveal', (req, res) => {
     res.status(result.status).json({ error: result.error });
     return;
   }
+  const opts = { detached: true, stdio: 'ignore' as const, env: childEnv() };
   const child =
     process.platform === 'win32'
-      ? spawn('explorer.exe', ['/select,' + result.abs], { detached: true, stdio: 'ignore' })
+      ? spawn('explorer.exe', ['/select,' + result.abs], opts)
       : process.platform === 'darwin'
-        ? spawn('open', ['-R', result.abs], { detached: true, stdio: 'ignore' })
-        : spawn('xdg-open', [path.dirname(result.abs)], { detached: true, stdio: 'ignore' });
+        ? spawn('open', ['-R', result.abs], opts)
+        : spawn('xdg-open', [path.dirname(result.abs)], opts);
   child.on('error', () => {}); // ENOENT 等でサーバーを巻き込まない
   child.unref();
   res.json({ ok: true });

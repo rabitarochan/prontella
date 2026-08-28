@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { childEnv } from './childEnv.js';
 import { decodeBuffer, decodeWithEncoding } from './encoding.js';
 import { MAX_FILE_SIZE } from './files.js';
 
@@ -29,7 +30,7 @@ export function runGit(
         // Fail fast instead of hanging when a remote asks for credentials.
         // extraEnv: 呼び出し元が個別コマンド向けに env を上書きしたいケース用
         // (例: operationAction の GIT_EDITOR=true でエディター起動を抑止)。
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...extraEnv },
+        env: { ...childEnv({ GIT_TERMINAL_PROMPT: '0' }), ...extraEnv },
       },
       (err, stdout, stderr) => {
         if (err) reject(new Error(stderr.trim() || err.message));
@@ -50,7 +51,7 @@ export function runGitInput(cwd: string, args: string[], input: Buffer, timeoutM
     const child = spawn('git', ['-c', 'core.quotepath=false', ...args], {
       cwd,
       windowsHide: true,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      env: childEnv({ GIT_TERMINAL_PROMPT: '0' }),
     });
 
     const stdoutChunks: Buffer[] = [];

@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import readline from 'node:readline';
 import { rgPath } from '@vscode/ripgrep';
+import { childEnv } from './childEnv.js';
 
 export interface SearchMatch {
   line: number; // 1-based
@@ -101,6 +102,7 @@ export function searchText(
     cwd: root,
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
+    env: childEnv(),
   });
 
   const byFile = new Map<string, SearchFileResult>();
@@ -201,7 +203,7 @@ export function listFilesRg(root: string): Promise<string[]> {
     execFile(
       rgPath,
       ['--files', '--hidden', '--glob', '!**/.git/**'],
-      { cwd: root, maxBuffer: 64 * 1024 * 1024, windowsHide: true },
+      { cwd: root, maxBuffer: 64 * 1024 * 1024, windowsHide: true, env: childEnv() },
       (err, stdout) => {
         if (err && stdout === '') {
           resolve([]); // rg --files は該当 0 件時に exit 1 になり得る

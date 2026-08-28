@@ -12,6 +12,7 @@ import {
   type PermissionUpdate,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { WebSocket } from 'ws';
+import { terminalEnv } from './childEnv.js';
 import { writeJsonAtomic } from './config.js';
 import { normalizePath, type AgentStatus, type SessionInfo } from './pty.js';
 import { broadcastEvent, registerSnapshotProvider } from './sessionEvents.js';
@@ -263,7 +264,9 @@ export class AgentSessionManager {
 
   constructor() {
     registerSnapshotProvider(() => this.list());
-    if (process.env.ANTHROPIC_API_KEY) {
+    // 判定は実際に SDK へ渡す env (terminalEnv) で行う。process.env を見ると
+    // deck の起動元にだけ設定された鍵を誤検知/見落としする。
+    if (terminalEnv().ANTHROPIC_API_KEY) {
       console.warn(
         '[claude-deck3] 警告: ANTHROPIC_API_KEY が設定されています。' +
           'chat セッションはサブスクリプションではなく API キーで従量課金されます。',
@@ -279,6 +282,10 @@ export class AgentSessionManager {
       options: {
         cwd: path.resolve(cwd),
         includePartialMessages: true,
+        // env を指定するとサブプロセスの環境は「マージではなく完全置換」になる (SDK 仕様)。
+        // terminalEnv() は env のフルセットを返すのでそのまま渡してよい。deck の
+        // 起動元シェル由来の汚染 (NODE_ENV=production 等) を claude に持ち込まないため。
+        env: terminalEnv(),
         // settingSources は未指定 = CLI と同じ (user/project/local を読む)。
         ...(resume ? { resume: resume.sdkSessionId } : {}),
         canUseTool: (toolName, toolInput, options) =>

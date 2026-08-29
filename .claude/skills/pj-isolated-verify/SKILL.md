@@ -148,11 +148,14 @@ description: claude-deck3 の動作検証を、原則としてユーザーの実
     すり抜け、ユーザー報告で発覚した)。1 文字ずつ trusted なキーイベント
     (`Input.dispatchKeyEvent` / MCP press_key)で打ち、**既存要素名と前方一致する
     文字を意図的に選ぶ**(タイプアヘッド・ショートカット衝突を能動的に踏みにいく)
-13. **後始末の `rm -rf` は先にシェルの cwd を `vt/` の外へ移す**: Bash セッションの
-    作業ディレクトリーは呼び出しをまたいで永続するため、フィクスチャ作成時の
-    `cd vt/<sub>/repo1` が残っていると自分自身が対象を掴んでいて
-    `Device or resource busy` で削除に失敗する(実測。プロセス探索では見つからず
-    切り分けに時間を溶かした)。`cd <リポジトリールート> && rm -rf vt/<sub>` の形にする
+13. **フィクスチャ用に `vt/` へ `cd` しない**: Bash セッションの作業ディレクトリーは
+    呼び出しをまたいで永続するため、`cd vt/<sub>/repo1` が残っていると自分自身が対象を
+    掴んで `Device or resource busy` で削除に失敗する(実測。プロセス探索では見つからない)。
+    **cwd をルートへ戻しても解放されないことがある**(2026-08-29 実測: ルートへ戻し、
+    隔離サーバーも kill した後も空ディレクトリーが数分間ロックされたまま残った)ので、
+    「戻せば直る」を当てにせず**最初から `cd` しない** — `git -C <path> ...` /
+    絶対パス指定で作る。それでも残った空ディレクトリーは深追いせず、報告して終える
+    (`vt/` は gitignored で実害がない。切り分けに時間を溶かす方が損)
 14. **PTY の出力からマーカーで結果を回収しない — 偽 PASS が出る**: ターミナルに
     `console.log('MARK'); ...; console.log('END')` を打ち込んで出力を拾う方式は、
     **シェルがコマンド行をエコーした時点でマーカーが先に現れる**ため、本来の出力より前に
@@ -184,7 +187,14 @@ description: claude-deck3 の動作検証を、原則としてユーザーの実
 ## 代替パターン(状況で使い分け)
 
 - **本体アプリが重い/不要なとき**: 対象コンポーネントだけを単独マウントする使い捨て Vite ページ
-  (client/*.html + entry.tsx)を立て、evaluate_script で DOM を直接アサートする方が速い
+  (client/*.html + entry.tsx)を立て、evaluate_script で DOM を直接アサートする方が速い。
+  **ただし既定の `vite.config.ts` では起動できない** — dep 事前バンドルが `client/index.html` を
+  走査して noVNC の top-level await に当たり、`Top-level await is not available in the configured
+  target environment` で dev サーバーが即死する(build の `target: es2022` は optimizeDeps に
+  効かない。2026-08-29 実測)。**使い捨て設定ファイルを別に作る**:
+  `optimizeDeps: { entries: ['<使い捨て>.html'], esbuildOptions: { target: 'es2022' } }` +
+  `server.port` を実インスタンスと別に。**ライブラリー単体の挙動を測る用途にも有効**
+  (実測: react-resizable-panels の内部順序を対照条件込みで測って製品バグを特定した)
 - **PTY・クリップボード系**: 別ポートにテストサーバーを立て、ページ内から side-WebSocket で
   PTY 入力を注入 + `navigator.clipboard` / `WebSocket.send` をモンキーパッチして観測する
   (キーボードシミュレーション不要で E2E 検証できる)

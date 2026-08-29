@@ -130,6 +130,8 @@ export const FILES_STRINGS = {
   'term.newShellButton': { ja: '＋ シェル', en: '+ Shell' },
   'term.launchClaudeButton': { ja: '✦ Claude 起動', en: '✦ Launch Claude' },
   'term.processExited': { ja: '[プロセスが終了しました]', en: '[Process exited]' },
+  'term.reconnecting': { ja: '再接続中…', en: 'Reconnecting…' },
+  'term.sessionLost': { ja: 'セッションは失われました', en: 'Session lost' },
 
   // ---- エージェント (ChatPanel / ChatView — Agent SDK セッション) ----
   'chat.newSession': { ja: '新しいセッション', en: 'New session' },

@@ -1,10 +1,11 @@
 import { Fragment, useEffect, useRef, type JSX } from 'react';
 import { createPortal } from 'react-dom';
-import { Group, Panel, Separator } from 'react-resizable-panels';
+import { Group, Separator } from 'react-resizable-panels';
 import { useT } from '../../i18n';
 import type { ActiveRepo, TerminalSession, Worktree } from '../../types';
 import { leaves, type TileNode } from '../../layout/tileTree';
 import type { TileActions } from '../../layout/useTileLayout';
+import SplitPanel from '../SplitPanel';
 import TilePane from './TilePane';
 import TileWorkspace from './TileWorkspace';
 
@@ -75,7 +76,8 @@ export default function TileGrid({
       node.dir === 'row' ? 'pane-separator-h' : 'pane-separator-v';
     return (
       // Key by structure: adding/removing panels remounts the Group cleanly so
-      // defaultSize reapplies from the tree (the single source of truth).
+      // the sizes reapply from the tree (the single source of truth). This is
+      // also why SplitPanel may freeze its defaultSize — see SplitPanel.tsx.
       <Group
         key={`${node.id}:${node.children.map((c) => c.id).join(',')}`}
         orientation={node.dir === 'row' ? 'horizontal' : 'vertical'}
@@ -91,15 +93,13 @@ export default function TileGrid({
         {node.children.map((child, i) => (
           <Fragment key={child.id}>
             {i > 0 && <Separator className={`pane-separator ${separatorClass}`} />}
-            <Panel
+            <SplitPanel
               id={child.id}
-              defaultSize={`${node.sizes[i] ?? 100 / node.children.length}%`}
-              minSize="120px"
+              initialSize={`${node.sizes[i] ?? 100 / node.children.length}%`}
               className="tile-panel"
-              style={{ overflow: 'hidden' }}
             >
               {renderNode(child)}
-            </Panel>
+            </SplitPanel>
           </Fragment>
         ))}
       </Group>

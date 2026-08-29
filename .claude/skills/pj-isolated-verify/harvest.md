@@ -87,3 +87,24 @@
 - result: 汚染 env から起動した実測で漏洩ゼロ・必須変数の到達・日本語値のバイト一致・
   コマンド解決・Agent SDK 疎通・フォールバックを確認。実データ側 (`~/.claude-deck3`) は
   agent-sessions に残骸なし、config.json は 19 リポジトリーで健全。
+
+## 006: 使い捨て Vite ページは専用 config が要る + cwd は最初から動かさない (罠 13 の改訂)
+
+- date: 2026-08-29
+- context: パネルリサイズの不具合調査で、代替パターンの「使い捨て Vite ページ」を使おうとした
+  ところ、既定 `vite.config.ts` のまま `npx vite` すると dep 事前バンドルが `client/index.html`
+  を走査して noVNC の top-level await に当たり、dev サーバーが起動直後に落ちた
+  (`Top-level await is not available in the configured target environment`)。build 側の
+  `target: es2022` は optimizeDeps には効かない。さらに後始末で罠 13 の手順どおり cwd を
+  リポジトリールートへ戻したにもかかわらず、隔離サーバー kill 後も `vt/<sub>/repo1` が
+  数分間 `Device or resource busy` で削除できなかった。
+- change: 代替パターンに「使い捨て設定ファイルを別に作る (`optimizeDeps.entries` を
+  使い捨て HTML に限定 + `esbuildOptions.target: 'es2022'`)」を追記し、この手法が
+  コンポーネント単体だけでなく**サードパーティライブラリー単体の挙動測定**にも使えることを
+  明記した。罠 13 は「cwd を戻す」から「**最初から cd しない** (`git -C` / 絶対パス)」に
+  改訂し、戻しても解放されない実測を根拠として付けた。残った空ディレクトリーは深追いせず
+  報告して終える、という打ち切り規律も追加した (`vt/` は gitignored で実害がないため)。
+- supersedes: 003 (罠 13 の打ち手のみ。cwd 永続が原因という機構の記述は据え置き)
+- result: 専用 config で dev サーバーが安定起動し、react-resizable-panels の内部順序を
+  対照条件込みの真理値表で測って製品バグの成立条件を特定できた。後始末は空ディレクトリー
+  1 つを残して報告で終え、切り分けに時間を溶かさずに済んだ。

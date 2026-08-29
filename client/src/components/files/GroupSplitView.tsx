@@ -5,7 +5,8 @@
 // 実機で分割時のスクロール飛び等が出た場合はここに host-div パターンを閉じて導入する)。
 
 import { Fragment, type JSX } from 'react';
-import { Group, Panel, Separator } from 'react-resizable-panels';
+import { Group, Separator } from 'react-resizable-panels';
+import SplitPanel from '../SplitPanel';
 import type { EditorGroup, GroupNode } from './editorGroups';
 
 export default function GroupSplitView({
@@ -22,7 +23,8 @@ export default function GroupSplitView({
     const separatorClass = n.dir === 'row' ? 'pane-separator-h' : 'pane-separator-v';
     return (
       // Key by structure: adding/removing panels remounts the Group cleanly so
-      // defaultSize reapplies from the tree (the single source of truth).
+      // the sizes reapply from the tree (the single source of truth). This is
+      // also why SplitPanel may freeze its defaultSize — see SplitPanel.tsx.
       <Group
         key={`${n.id}:${n.children.map((c) => c.id).join(',')}`}
         orientation={n.dir === 'row' ? 'horizontal' : 'vertical'}
@@ -38,15 +40,13 @@ export default function GroupSplitView({
         {n.children.map((child, i) => (
           <Fragment key={child.id}>
             {i > 0 && <Separator className={`pane-separator ${separatorClass}`} />}
-            <Panel
+            <SplitPanel
               id={child.id}
-              defaultSize={`${n.sizes[i] ?? 100 / n.children.length}%`}
-              minSize="120px"
+              initialSize={`${n.sizes[i] ?? 100 / n.children.length}%`}
               className="editor-group-panel"
-              style={{ overflow: 'hidden' }}
             >
               {render(child)}
-            </Panel>
+            </SplitPanel>
           </Fragment>
         ))}
       </Group>

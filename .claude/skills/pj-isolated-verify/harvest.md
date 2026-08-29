@@ -108,3 +108,33 @@
 - result: 専用 config で dev サーバーが安定起動し、react-resizable-panels の内部順序を
   対照条件込みの真理値表で測って製品バグの成立条件を特定できた。後始末は空ディレクトリー
   1 つを残して報告で終え、切り分けに時間を溶かさずに済んだ。
+
+## 007: ブラウザー検証の 3 手法が現行仕様で通らない + PTY 内の node 解決 (罠 16-19)
+
+- date: 2026-08-29
+- context: ターミナル WebSocket の自動再接続を実装し、隔離実機 (server 単体 4799 +
+  専用プロファイルの Chrome + 生 CDP) で検証したところ、想定していた手法が 3 つ続けて
+  空振りした。(1) `Network.emulateNetworkConditions {offline:true}` で切断を作ろうとしたが
+  既存 WebSocket は OPEN のままで、バッジも再接続も出ず**危うく製品バグと誤判定しかけた**。
+  (2) `Emulation.setPageVisibilityState` が Chrome 151 に存在せず (`wasn't found`)、
+  可視性復帰の検証ができなかった。(3) 計測スクリプトを別プロセスに分けたら
+  `Page.addScriptToEvaluateOnNewDocument` の登録が失効し `window.__wsProbe` が undefined に
+  なった。さらに、隔離ホーム下では**ターミナルへ打ち込んだ `node` も** Volta シムが
+  LocalAppData を見失って解決できなかった (罠 2 はサーバー起動の話だけだった)。
+- change: 罠に 16-19 を追加。16 = offline エミュレーションは既存 WS を閉じない
+  (半死の再現には好都合だが、クリーンな切断には使えない — ページ内から `ws.close()` か
+  サーバー停止で作る)。17 = `setPageVisibilityState` は削除済み、`Target.createTarget` +
+  `Target.activateTarget` で実タブを切り替える (`visibilitychange` の合成では
+  `document.hidden` が変わらず遷移を測れない)。18 = 注入スクリプトの登録は CDP セッションと
+  寿命を共にするので、リロードを挟む側で登録し直す。19 = PTY 内でも Volta の node は
+  解決できないので実体を絶対パスで叩く。あわせて代替パターンの「PTY・クリップボード系」を
+  WebSocket ラッパー注入の具体レシピ (生成履歴・種別別送信数・生ソケット参照・
+  ping 握り潰しによる半死再現) に書き下し、xterm は WebGL レンダラーなので画面内容を
+  DOM から読めず**サーバーの snapshot を別ソケットで取って確認する**ことを明記した。
+  代替案「offline エミュレーションだけで切断系を賄う」は退けた — 上記 16 のとおり
+  作れる切断の種類が限られ、しかも空振りが「正常」と区別できない形で出るため。
+- supersedes: 002 (ブラウザー検証手順の CDP 節を拡張。生 CDP 第一候補の方針自体は据え置き)
+- result: 7 シナリオ (クリーン切断 / 半死 / リサイズ追従 / セッション消失 / 可視性復帰 /
+  DEC モード復元 / 150 秒の無操作対照) を全て実測 PASS。特にリサイズ追従は PTY の実桁数を
+  ファイル経由で 319 → 86 → 319 と観測でき、対照の 150 秒放置では再接続 0 件・
+  コンソールエラー 0 件だった。

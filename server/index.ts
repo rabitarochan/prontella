@@ -15,6 +15,7 @@ import { PtyManager, aggregateStatus } from './pty.js';
 import { AgentSessionManager } from './agentSession.js';
 import { attachEvents } from './sessionEvents.js';
 import { attachVncBridge, getVncTarget, probeVncTarget } from './vnc.js';
+import { keepAlive } from './wsKeepAlive.js';
 
 const PORT = Number(process.env.PORT) || 3711;
 // 既定はループバックのみ。deck は認証を持たないため、LAN へ公開するときは
@@ -1350,7 +1351,9 @@ server.on('upgrade', (req, socket, head) => {
       if (!ptyManager.attach(id, ws)) {
         ws.send(JSON.stringify({ type: 'error', message: 'ターミナルが見つかりません' }));
         ws.close();
+        return;
       }
+      keepAlive(ws);
     });
   } else if (url.pathname === '/ws/agent') {
     wss.handleUpgrade(req, socket, head, (ws) => {
@@ -1358,15 +1361,21 @@ server.on('upgrade', (req, socket, head) => {
       if (!agentManager.attach(id, ws)) {
         ws.send(JSON.stringify({ type: 'error', message: 'セッションが見つかりません' }));
         ws.close();
+        return;
       }
+      keepAlive(ws);
     });
   } else if (url.pathname === '/ws/events') {
     // 全セッションのステータス変化を購読するグローバルチャンネル (通知・要対応キュー用)。
     // PTY と chat の両マネージャーが sessionEvents 経由で流す
-    wss.handleUpgrade(req, socket, head, (ws) => attachEvents(ws));
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      attachEvents(ws);
+      keepAlive(ws);
+    });
   } else if (url.pathname === '/ws/vnc') {
     // noVNC → ホストの VNC サーバーへの生 RFB ブリッジ。接続先はサーバー側設定のみで
     // 決まり、クエリパラメーターは意図的に読まない (読んだらオープンプロキシになる)。
+    // 生バイナリを流すので keepAlive は付けない (JSON の pong が RFB を壊す)。
     wss.handleUpgrade(req, socket, head, (ws) => attachVncBridge(ws));
   } else {
     socket.destroy();

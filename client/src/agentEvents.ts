@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { t } from './i18n';
 import { chime, desktopNotify } from './notify';
+import { openLiveSocket } from './lib/liveSocket';
 import { locateSession, normPath } from './sessionLocate';
 import { useDeck } from './store';
 import type { ActiveRepo, TerminalSession, Worktree } from './types';
@@ -9,7 +10,6 @@ import type { ActiveRepo, TerminalSession, Worktree } from './types';
 // 「要対応」への遷移 (→waiting, busy→idle) で通知を出すストア。
 // デッキ一覧の 4 秒ポーリングとは独立に、遷移を即座に受け取る。
 
-const RECONNECT_MS = 3_000;
 // ヒューリスティック検知の揺れ (スピナー停止→再開) による busy/idle の
 // フリップで完了通知が乱発しないよう、idle が少し続いてから通知する。
 const DONE_SETTLE_MS = 4_000;
@@ -168,25 +168,25 @@ function handleRemoved(id: string): void {
 
 let started = false;
 
-/** /ws/events への接続を開始する (アプリで一度だけ呼ぶ)。切断時は自動再接続。 */
+/**
+ * /ws/events への接続を開始する (アプリで一度だけ呼ぶ)。
+ *
+ * 切断時の再接続とハートビートは openLiveSocket が持つ。ここは表示していない
+ * ターミナルのステータスが届く唯一の経路なので、close が飛ばない半死ソケット
+ * (スリープ・Wi-Fi 切替) を検知できないと「通知が来ない」に直結する。
+ */
 export function connectAgentEvents(): void {
   if (started) return;
   started = true;
-  const open = () => {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/ws/events`);
-    ws.onmessage = (ev) => {
-      let msg: {
-        type: string;
+  openLiveSocket({
+    path: '/ws/events',
+    onMessage: (raw) => {
+      const msg = raw as {
+        type?: string;
         sessions?: TerminalSession[];
         session?: TerminalSession;
         id?: string;
       };
-      try {
-        msg = JSON.parse(String(ev.data));
-      } catch {
-        return;
-      }
       if (msg.type === 'snapshot' && Array.isArray(msg.sessions)) {
         for (const id of doneTimers.keys()) cancelDoneTimer(id);
         useAgentEvents.setState({
@@ -197,10 +197,6 @@ export function connectAgentEvents(): void {
       } else if (msg.type === 'removed' && typeof msg.id === 'string') {
         handleRemoved(msg.id);
       }
-    };
-    ws.onclose = () => {
-      setTimeout(open, RECONNECT_MS);
-    };
-  };
-  open();
+    },
+  });
 }

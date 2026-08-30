@@ -172,6 +172,29 @@ description: claude-deck3 の動作検証を、原則としてユーザーの実
     表示されたが実体は全部揃っていた)。**末尾を正規化して比較するか、`where.exe <cmd>` で
     実際に解決できるかを見る**
 
+16. **`Network.emulateNetworkConditions {offline:true}` は既存の WebSocket を閉じない**:
+    `readyState` は OPEN のまま通信だけが死ぬ。**半死ソケットの再現には好都合だが、
+    「クリーンな切断」を作る用途では空振りする** — 切断も再接続も起きないのに、
+    見た目は「テストが素通りした」と同じになるので**正常な実装を誤って不合格にしかける**
+    (2026-08-29 実測)。クリーンな切断は**ページ内でソケット参照を掴んで `ws.close()` を呼ぶ**
+    か、サーバープロセスを落として作る
+17. **`Emulation.setPageVisibilityState` は現行 Chrome (151) に存在しない** (`wasn't found`)。
+    `document.hidden` を本当に切り替えるには **`Target.createTarget` で別タブを作り
+    `Target.activateTarget` で前面を入れ替える**(ブラウザー側 CDP エンドポイントに接続する)。
+    `document.dispatchEvent(new Event('visibilitychange'))` の合成では `document.hidden` が
+    false のままなので、「非表示 → 表示」の遷移に依存する実装を測れない
+18. **`Page.addScriptToEvaluateOnNewDocument` の登録は CDP セッションと寿命を共にする**:
+    接続を閉じると失効する。検証を複数のスクリプトに分けて実行するなら、
+    **リロードを挟む側のスクリプトで毎回登録し直す**(実測: 再登録せずに `Page.reload` して
+    注入した計測オブジェクトが undefined になった)。逆に**同一セッションで 2 回登録すると
+    二重に包まれる**ので、登録は 1 スクリプト 1 回に保つ
+19. **隔離ホーム下では PTY の中でも Volta の `node` が解決できない**: 罠 2 はサーバー起動の
+    話だが、**ターミナルへ打ち込むコマンドも同じ**。子プロセスの env は `terminalEnv()` が
+    OS 既定から再構成するが `USERPROFILE` は隔離ホームを指すため、Volta が
+    「Updating your Volta directory...」の後に `'node' は認識されていません` で落ちる。
+    **node の実体を絶対パスで叩く**
+    (`& 'C:/Users/<user>/AppData/Local/Volta/tools/image/node/<ver>/node.exe' -e "..."`)
+
 ## フィクスチャの作り方
 
 - **敵対的フィクスチャは実装前に Conductor が作る**。builder の自己検証で拾えなかった欠陥が統合
@@ -198,3 +221,14 @@ description: claude-deck3 の動作検証を、原則としてユーザーの実
 - **PTY・クリップボード系**: 別ポートにテストサーバーを立て、ページ内から side-WebSocket で
   PTY 入力を注入 + `navigator.clipboard` / `WebSocket.send` をモンキーパッチして観測する
   (キーボードシミュレーション不要で E2E 検証できる)
+- **WebSocket の接続そのものを測る**: `Page.addScriptToEvaluateOnNewDocument` で
+  `window.WebSocket` を**ラッパーに差し替える**(prototype と静的定数 OPEN/CLOSED 等を
+  引き継がせる)。これ 1 つで **①生成 URL の履歴 = 再接続回数 ②種別ごとの送信数
+  (ping / input / resize) ③生ソケット参照からの `readyState` ④外部からの `close()`** が
+  すべて測れる。**半死ソケット (FIN が来ない切断) は `{"type":"ping"}` フレームだけを
+  握り潰して再現する** — ソケットは OPEN のままアプリ層の応答だけが途絶えるので、
+  実機のスリープ復帰と同じ状態になる (ページ内から半死 TCP は作れないので、この方法しかない)
+- **xterm の画面内容は DOM から読めない**(WebGL レンダラー使用時は `.xterm-rows` が空)。
+  ターミナルの状態を確認したいときは **`/ws/term?id=` へ検証側から別ソケットを張り、
+  サーバーが返す snapshot を読む**。再アタッチ時の DEC モード再生 (bracketed paste 等) も
+  この snapshot の先頭プレフィックスで検証できる

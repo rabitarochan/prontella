@@ -2250,10 +2250,44 @@ button.statusbar-item:hover:not(:disabled) {
   color: var(--primary);
   border-color: var(--primary-dim);
 }
+/* xterm 本体と接続バッジを重ねるためのラッパー。表示/非表示 (display) の
+   担い手はこちら側で、.xterm-container は中で絶対配置のまま。 */
+.xterm-host {
+  position: absolute;
+  inset: 0;
+}
+
 .xterm-container {
   position: absolute;
   inset: 0;
   padding: 0 0 0 8px;
+}
+
+/* 再接続中バッジ。切断が続いたときだけ出す (XTermView の showBadge)。 */
+.term-conn-badge {
+  position: absolute;
+  top: 6px;
+  right: 12px;
+  z-index: 5;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.6;
+  pointer-events: none;
+  box-shadow: var(--card-shadow);
+}
+
+.term-conn-badge.is-gone {
+  border-color: color-mix(in srgb, var(--destructive) 45%, var(--border));
+  color: var(--destructive);
+}
+
+.chat-reconnecting {
+  font-size: 11px;
+  color: var(--muted-foreground);
 }
 
 /* ---- agent panel (Agent SDK セッション — VS Code 拡張風トランスクリプト) ---- */

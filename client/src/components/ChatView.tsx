@@ -11,6 +11,7 @@ import {
 import { api } from '../api';
 import { useT, type StringKey } from '../i18n';
 import { useSubmitKey, type SubmitKeyMode } from '../layout/submitKeyStore';
+import { openLiveSocket, type LinkPhase, type LiveSocket } from '../lib/liveSocket';
 import { highlightInto } from '../markdown/highlight';
 import { renderMarkdownToFragment } from '../markdown/render';
 import type {
@@ -530,7 +531,10 @@ export default function ChatView({
   const [completeIndex, setCompleteIndex] = useState(0);
   // Esc で閉じたら同じ draft のままでは再表示しない (draft 変更で解除)
   const [completionDismissed, setCompletionDismissed] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
+  const wsRef = useRef<LiveSocket | null>(null);
+  const [linkPhase, setLinkPhase] = useState<LinkPhase>('connecting');
+  // 一瞬の再接続で明滅させないよう、切断が続いたときだけ出す (XTermView と同じ)。
+  const [showReconnect, setShowReconnect] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   // 末尾に張り付いているときだけ自動スクロールする (履歴を遡り中は動かさない)
@@ -540,128 +544,136 @@ export default function ChatView({
   const setSubmitKey = useSubmitKey((s) => s.setMode);
 
   useEffect(() => {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/ws/agent?id=${id}`);
-    wsRef.current = ws;
-    ws.onmessage = (e) => {
-      let msg: {
-        type?: string;
-        events?: AgentChatEvent[];
-        event?: AgentChatEvent;
-        live?: { text?: string; thinking?: string };
-        meta?: AgentSessionMeta;
-        channel?: string;
-        text?: string;
-        status?: AgentStatus;
-        requests?: AgentPermissionRequest[];
-        commands?: AgentSlashCommand[];
-        models?: AgentModelInfo[];
-        stats?: AgentSessionStats;
-        subagents?: AgentSubagent[];
-        requestId?: string;
-        tool?: string;
-        input?: unknown;
-        title?: string | null;
-        description?: string | null;
-        canAlways?: boolean;
-        message?: string;
-      };
-      try {
-        msg = JSON.parse(String(e.data));
-      } catch {
-        return;
-      }
-      switch (msg.type) {
-        case 'snapshot':
-          setEvents(msg.events ?? []);
-          setLive({ text: msg.live?.text ?? '', thinking: msg.live?.thinking ?? '' });
-          if (msg.meta) setMeta(msg.meta);
-          if (msg.status) setStatus(msg.status);
-          setRequests(msg.requests ?? []);
-          if (Array.isArray(msg.commands)) setCommands(msg.commands);
-          if (Array.isArray(msg.models)) setModels(msg.models);
-          if (msg.stats) setStats(msg.stats);
-          if (Array.isArray(msg.subagents)) setSubagents(msg.subagents);
-          break;
-        case 'commands':
-          if (Array.isArray(msg.commands)) setCommands(msg.commands);
-          break;
-        case 'models':
-          if (Array.isArray(msg.models)) setModels(msg.models);
-          break;
-        case 'stats':
-          if (msg.stats) setStats(msg.stats);
-          break;
-        case 'subagents':
-          if (Array.isArray(msg.subagents)) setSubagents(msg.subagents);
-          break;
-        case 'event':
-          if (msg.event) {
-            const event = msg.event;
-            setEvents((prev) => [...prev, event]);
-            if (event.kind === 'assistant') setLive((prev) => ({ ...prev, text: '' }));
-            if (event.kind === 'thinking') setLive((prev) => ({ ...prev, thinking: '' }));
-            if (event.kind === 'result') setLive({ text: '', thinking: '' });
-            // 別タブで応答された許可要求はイベント側から回収する
-            if (event.kind === 'permission') {
-              setRequests((prev) => {
-                const idx = prev.findIndex((r) => r.tool === event.tool);
-                return idx === -1 ? prev : prev.filter((_, i) => i !== idx);
-              });
+    // 切断は自動で張り直す (lib/liveSocket.ts)。再接続時はサーバーが snapshot を
+    // 送り直し、下の 'snapshot' 分岐が state を丸ごと差し替えるので整合は保たれる。
+    const link = openLiveSocket({
+      path: `/ws/agent?id=${id}`,
+      onPhase: setLinkPhase,
+      onMessage: (raw) => {
+        const msg = raw as {
+          type?: string;
+          events?: AgentChatEvent[];
+          event?: AgentChatEvent;
+          live?: { text?: string; thinking?: string };
+          meta?: AgentSessionMeta;
+          channel?: string;
+          text?: string;
+          status?: AgentStatus;
+          requests?: AgentPermissionRequest[];
+          commands?: AgentSlashCommand[];
+          models?: AgentModelInfo[];
+          stats?: AgentSessionStats;
+          subagents?: AgentSubagent[];
+          requestId?: string;
+          tool?: string;
+          input?: unknown;
+          title?: string | null;
+          description?: string | null;
+          canAlways?: boolean;
+          message?: string;
+        };
+        switch (msg.type) {
+          case 'snapshot':
+            setEvents(msg.events ?? []);
+            setLive({ text: msg.live?.text ?? '', thinking: msg.live?.thinking ?? '' });
+            if (msg.meta) setMeta(msg.meta);
+            if (msg.status) setStatus(msg.status);
+            setRequests(msg.requests ?? []);
+            if (Array.isArray(msg.commands)) setCommands(msg.commands);
+            if (Array.isArray(msg.models)) setModels(msg.models);
+            if (msg.stats) setStats(msg.stats);
+            if (Array.isArray(msg.subagents)) setSubagents(msg.subagents);
+            break;
+          case 'commands':
+            if (Array.isArray(msg.commands)) setCommands(msg.commands);
+            break;
+          case 'models':
+            if (Array.isArray(msg.models)) setModels(msg.models);
+            break;
+          case 'stats':
+            if (msg.stats) setStats(msg.stats);
+            break;
+          case 'subagents':
+            if (Array.isArray(msg.subagents)) setSubagents(msg.subagents);
+            break;
+          case 'event':
+            if (msg.event) {
+              const event = msg.event;
+              setEvents((prev) => [...prev, event]);
+              if (event.kind === 'assistant') setLive((prev) => ({ ...prev, text: '' }));
+              if (event.kind === 'thinking') setLive((prev) => ({ ...prev, thinking: '' }));
+              if (event.kind === 'result') setLive({ text: '', thinking: '' });
+              // 別タブで応答された許可要求はイベント側から回収する
+              if (event.kind === 'permission') {
+                setRequests((prev) => {
+                  const idx = prev.findIndex((r) => r.tool === event.tool);
+                  return idx === -1 ? prev : prev.filter((_, i) => i !== idx);
+                });
+              }
             }
-          }
-          break;
-        case 'delta':
-          if (typeof msg.text === 'string') {
-            const text = msg.text;
-            if (msg.channel === 'thinking') {
-              setLive((prev) => ({ ...prev, thinking: prev.thinking + text }));
-            } else {
-              setLive((prev) => ({ ...prev, text: prev.text + text }));
+            break;
+          case 'delta':
+            if (typeof msg.text === 'string') {
+              const text = msg.text;
+              if (msg.channel === 'thinking') {
+                setLive((prev) => ({ ...prev, thinking: prev.thinking + text }));
+              } else {
+                setLive((prev) => ({ ...prev, text: prev.text + text }));
+              }
             }
-          }
-          break;
-        case 'meta':
-          if (msg.meta) setMeta(msg.meta);
-          break;
-        case 'status':
-          if (msg.status) setStatus(msg.status);
-          break;
-        case 'permission_request':
-          if (typeof msg.requestId === 'string' && typeof msg.tool === 'string') {
-            const req: AgentPermissionRequest = {
-              requestId: msg.requestId,
-              tool: msg.tool,
-              input: msg.input ?? {},
-              title: msg.title ?? null,
-              description: msg.description ?? null,
-              canAlways: msg.canAlways === true,
-            };
-            setRequests((prev) => [...prev, req]);
-          }
-          break;
-        case 'exit':
-          setEnded(true);
-          break;
-        case 'error':
-          setEnded(true);
-          if (typeof msg.message === 'string') {
-            const errorEvent: AgentChatEvent = { kind: 'error', message: msg.message, ts: Date.now() };
-            setEvents((prev) => [...prev, errorEvent]);
-          }
-          break;
-        default:
-          break;
-      }
-    };
-    ws.onclose = () => {
-      if (wsRef.current === ws) wsRef.current = null;
-    };
+            break;
+          case 'meta':
+            if (msg.meta) setMeta(msg.meta);
+            break;
+          case 'status':
+            if (msg.status) setStatus(msg.status);
+            break;
+          case 'permission_request':
+            if (typeof msg.requestId === 'string' && typeof msg.tool === 'string') {
+              const req: AgentPermissionRequest = {
+                requestId: msg.requestId,
+                tool: msg.tool,
+                input: msg.input ?? {},
+                title: msg.title ?? null,
+                description: msg.description ?? null,
+                canAlways: msg.canAlways === true,
+              };
+              setRequests((prev) => [...prev, req]);
+            }
+            break;
+          case 'exit':
+            setEnded(true);
+            // セッションは破棄済み。繋ぎ直しても「見つかりません」を取りに行くだけ。
+            link.stop('gone');
+            break;
+          case 'error':
+            setEnded(true);
+            if (typeof msg.message === 'string') {
+              const errorEvent: AgentChatEvent = { kind: 'error', message: msg.message, ts: Date.now() };
+              setEvents((prev) => [...prev, errorEvent]);
+            }
+            link.stop('gone');
+            break;
+          default:
+            break;
+        }
+      },
+    });
+    wsRef.current = link;
     return () => {
       wsRef.current = null;
-      ws.close();
+      link.stop();
     };
   }, [id]);
+
+  useEffect(() => {
+    if (linkPhase === 'open' || linkPhase === 'gone') {
+      setShowReconnect(false);
+      return;
+    }
+    const timer = setTimeout(() => setShowReconnect(true), 1_000);
+    return () => clearTimeout(timer);
+  }, [linkPhase]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -695,8 +707,7 @@ export default function ChatView({
   }, [subagents.length]);
 
   const send = (obj: object) => {
-    const ws = wsRef.current;
-    if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
+    wsRef.current?.send(obj);
   };
 
   const submit = () => {
@@ -992,6 +1003,7 @@ export default function ChatView({
       <div className="chat-statusbar">
         {/* [インジケーター] [Mode] [Model] [Context] [Price] | [サブエージェント...] */}
         <StatusBadge status={status} dot />
+        {showReconnect && <span className="chat-reconnecting">{t('term.reconnecting')}</span>}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button

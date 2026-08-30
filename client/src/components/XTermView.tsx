@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { t } from '../i18n';
+import { openLiveSocket, type LinkPhase } from '../lib/liveSocket';
 import { useTheme } from '../theme/themeStore';
 import { terminalTheme } from '../theme/terminalTheme';
 
@@ -11,6 +12,10 @@ import { terminalTheme } from '../theme/terminalTheme';
  * One xterm.js instance bound to a PTY session (/ws/term). Mounted once per
  * session and kept alive across tab switches — hide with `visible` instead of
  * unmounting, so scrollback and the WebSocket connection survive.
+ *
+ * The socket auto-reconnects (lib/liveSocket.ts). The server keeps the PTY
+ * alive across socket loss and replays scrollback + tracked DEC modes on
+ * reattach, so recovery only needs the client to come back.
  *
  * WebGL is loaded only while `visible` is true. Each terminal's WebGL addon
  * owns its own GPU context, and a browser tab has a hard cap on how many
@@ -31,6 +36,9 @@ export default function XTermView({
   visible?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [phase, setPhase] = useState<LinkPhase>('connecting');
+  // 一瞬の再接続で毎回明滅する方が実害が大きいので、切断が続いたときだけ出す。
+  const [showBadge, setShowBadge] = useState(false);
   const claudeModeRef = useRef(claudeMode);
   claudeModeRef.current = claudeMode;
   const termRef = useRef<Terminal | null>(null);
@@ -134,39 +142,43 @@ export default function XTermView({
 
     syncWebgl(visible);
 
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/ws/term?id=${id}`);
-
     const sendResize = () => {
       try {
         fit.fit();
       } catch {
         return;
       }
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-      }
+      link.send({ type: 'resize', cols: term.cols, rows: term.rows });
     };
 
-    ws.onopen = sendResize;
-    ws.onmessage = (event) => {
-      let msg: { type: string; data?: string; message?: string };
-      try {
-        msg = JSON.parse(String(event.data));
-      } catch {
-        return;
-      }
-      if (msg.type === 'snapshot') {
-        term.reset();
-        term.write(msg.data ?? '');
-      } else if (msg.type === 'data') {
-        term.write(msg.data ?? '');
-      } else if (msg.type === 'exit') {
-        term.write(`\r\n\x1b[90m${t('term.processExited')}\x1b[0m\r\n`);
-      } else if (msg.type === 'error') {
-        term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
-      }
-    };
+    // link の identity は再接続をまたいで不変なので、下の入力ハンドラーは
+    // これを捕まえておけばよい (差し替わるのは内部の WebSocket だけ)。
+    const link = openLiveSocket({
+      path: `/ws/term?id=${id}`,
+      onPhase: setPhase,
+      // 再接続のたびに今のサイズを送り直す。これが無いと、繋ぎ直っても PTY の
+      // winsize が切断前のままで「リサイズが追従しない」症状が残る。
+      onOpen: sendResize,
+      onMessage: (raw) => {
+        const msg = raw as { type?: string; data?: string; message?: string };
+        if (msg.type === 'snapshot') {
+          // 再アタッチ時はサーバーが追跡中の DEC モード (bracketed paste・
+          // マウス) をプレフィックスに付けて送り直す (server/pty.ts の attach)。
+          term.reset();
+          term.write(msg.data ?? '');
+        } else if (msg.type === 'data') {
+          term.write(msg.data ?? '');
+        } else if (msg.type === 'exit') {
+          term.write(`\r\n\x1b[90m${t('term.processExited')}\x1b[0m\r\n`);
+          // プロセスが終わればサーバーはセッションを破棄する。繋ぎ直しても
+          // 「見つかりません」を取りに行くだけなので、ここで打ち切る。
+          link.stop('gone');
+        } else if (msg.type === 'error') {
+          term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
+          link.stop('gone');
+        }
+      },
+    });
 
     // Claude Code submits on plain Enter (\r). Translate Shift+Enter to
     // Meta+Enter (ESC CR), which Claude Code treats as "insert newline".
@@ -175,18 +187,14 @@ export default function XTermView({
     // but the translated sequence is sent only once (on keydown).
     term.attachCustomKeyEventHandler((e) => {
       if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.altKey && claudeModeRef.current) {
-        if (e.type === 'keydown' && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'input', data: '\x1b\r' }));
-        }
+        if (e.type === 'keydown') link.send({ type: 'input', data: '\x1b\r' });
         return false;
       }
       return true;
     });
 
     const dataDisposable = term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'input', data }));
-      }
+      link.send({ type: 'input', data });
     });
 
     const observer = new ResizeObserver(() => {
@@ -197,7 +205,7 @@ export default function XTermView({
     return () => {
       observer.disconnect();
       dataDisposable.dispose();
-      ws.close();
+      link.stop();
       // Pass the effect-local `container` explicitly — on unmount,
       // containerRef.current is already null by the time this cleanup runs
       // (see the comment on disposeWebgl).
@@ -212,6 +220,20 @@ export default function XTermView({
     if (visible) containerRef.current?.querySelector('textarea')?.focus();
   }, [visible]);
 
+  // 復帰したら即座に消し、落ちたときだけ 1 秒待ってから出す。
+  useEffect(() => {
+    if (phase === 'open') {
+      setShowBadge(false);
+      return;
+    }
+    if (phase === 'gone') {
+      setShowBadge(true);
+      return;
+    }
+    const timer = setTimeout(() => setShowBadge(true), 1_000);
+    return () => clearTimeout(timer);
+  }, [phase]);
+
   // テーマ切り替えは options.theme の実行時代入で即再描画される。
   // インスタンスは保持されるためスクロールバックも WebSocket も無傷。
   const resolvedTheme = useTheme((s) => s.resolved);
@@ -221,10 +243,15 @@ export default function XTermView({
   }, [resolvedTheme]);
 
   return (
-    <div
-      ref={containerRef}
-      className="xterm-container"
-      style={{ display: visible ? 'block' : 'none' }}
-    />
+    // xterm は自分の DOM を container の中に append するため、React の子要素
+    // (バッジ) は同じ親に混ぜず 1 枚外側のラッパーに置く。
+    <div className="xterm-host" style={{ display: visible ? 'block' : 'none' }}>
+      <div ref={containerRef} className="xterm-container" />
+      {showBadge && (
+        <div className={`term-conn-badge${phase === 'gone' ? ' is-gone' : ''}`}>
+          {t(phase === 'gone' ? 'term.sessionLost' : 'term.reconnecting')}
+        </div>
+      )}
+    </div>
   );
 }

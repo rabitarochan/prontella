@@ -7,3 +7,6 @@ dist/
 # 検証・テスト用の一時作業領域 (verify test)。中身はコミットしない
 /vt/*
 !/vt/README.md
+
+# 実装の参考にするための他リポジトリー配置ディレクトリー
+.reference-git-projects/

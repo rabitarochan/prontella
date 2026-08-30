@@ -4,6 +4,15 @@ import { randomUUID } from 'node:crypto';
 import * as pty from 'node-pty';
 import type { WebSocket } from 'ws';
 import { terminalEnv } from './childEnv.js';
+import {
+  applyClaudeHookEvent,
+  clearWork,
+  createHookState,
+  isClaudeHookPayload,
+  subagentList,
+  type ClaudeHookState,
+  type HookSubagent,
+} from './claudeHookState.js';
 import { claudeCommand } from './hooks.js';
 import { broadcastEvent, registerSnapshotProvider } from './sessionEvents.js';
 
@@ -11,6 +20,11 @@ export type AgentStatus = 'busy' | 'waiting' | 'idle' | 'shell';
 
 const MAX_SCROLLBACK = 200_000; // chars of raw output kept for reattach
 const BUSY_HOLD_MS = 3_000; // spinner redraw gap tolerance
+// hook セッションが busy のまま無音でいられる上限。超えたら作業状態を捨てて idle に
+// 落とす (hook 断で永久 busy に固着させないための保険)。バックグラウンドのサブ
+// エージェントは分単位で無音になりうるので、スピナー用の 3 秒とは桁が違う。
+const HOOK_STALE_MS = 10 * 60_000;
+const ACTIVITY_FLUSH_MS = 250; // activity 変化の broadcastEvent 合体窓
 const CARRY_MAX = 400; // stripped chars carried over to match across chunk splits
 const FLUSH_MS = 16; // ws 'data' broadcast coalescing window (~1 frame)
 const MAX_PENDING = 64 * 1024; // chars; burst guard — flush immediately past this
@@ -56,6 +70,16 @@ function lastMatchEnd(text: string, re: RegExp): number {
   return end;
 }
 
+/** hook 由来の「いま何をしているか」。hook が 1 度も届いていないセッションは null。 */
+export interface AgentActivity {
+  /** リードが実行中のツールの要約 ("Bash: npm test")。無ければ null。 */
+  tool: string | null;
+  toolSince: number | null;
+  subagents: HookSubagent[];
+  /** background_tasks にサブエージェント以外の走行中タスクが載っている。 */
+  backgroundTask: boolean;
+}
+
 export interface SessionInfo {
   id: string;
   cwd: string;
@@ -67,6 +91,7 @@ export interface SessionInfo {
   createdAt: number;
   lastOutputAt: number;
   statusSince: number;
+  activity: AgentActivity | null;
 }
 
 /** Aggregate agent status for a set of sessions: most attention-needing wins. */
@@ -101,6 +126,9 @@ interface Session {
   createdAt: number;
   statusSince: number;
   exited: boolean;
+  /** hook を 1 度でも受けたら生える。非 null = このセッションは hook が権威。 */
+  hook: ClaudeHookState | null;
+  activityTimer: NodeJS.Timeout | null;
 }
 
 function defaultShell(): { file: string; args: string[] } {
@@ -156,12 +184,16 @@ export class PtyManager {
       createdAt: Date.now(),
       statusSince: Date.now(),
       exited: false,
+      hook: null,
+      activityTimer: null,
     };
     this.sessions.set(session.id, session);
 
     proc.onData((data) => this.onData(session, data));
     proc.onExit(() => {
       this.flush(session);
+      if (session.activityTimer) clearTimeout(session.activityTimer);
+      session.activityTimer = null;
       session.exited = true;
       this.broadcast(session, { type: 'exit' });
       for (const ws of session.sockets) ws.close();
@@ -171,7 +203,7 @@ export class PtyManager {
 
     if (run) {
       // "claude" は hooks 設定つきの完全なコマンドラインに展開する。
-      const command = run === 'claude' ? claudeCommand() : run;
+      const command = run === 'claude' ? claudeCommand(this.port) : run;
       // Let the shell finish initializing before injecting the command, so it
       // lands on a ready prompt across PowerShell / bash / zsh.
       const eol = '\r';
@@ -217,7 +249,9 @@ export class PtyManager {
       if (msg.type === 'input' && typeof msg.data === 'string') {
         // Answering a dialog leaves "waiting"; the next spinner frame promotes
         // to busy again, otherwise the session settles on idle.
-        if (session.status === 'waiting') this.setStatus(session, 'idle');
+        // hook セッションでは撃たない: 次の hook イベントが正しい状態を運ぶので、
+        // ここで idle に落とすと走行中のサブエージェントを消してしまう。
+        if (session.status === 'waiting' && !session.hook) this.setStatus(session, 'idle');
         session.proc.write(msg.data);
       } else if (msg.type === 'resize' && msg.cols && msg.rows) {
         try {
@@ -232,54 +266,51 @@ export class PtyManager {
   }
 
   /**
-   * Claude Code の hook イベントを反映する (deck-hook.mjs からの POST)。
-   * TUI ヒューリスティックと同じ状態機械に「確度の高い信号」として注入する:
-   * 遷移が即時・正確になる一方、hooks が届かないセッションでは従来どおり
-   * ヒューリスティックだけで動く。
+   * Claude Code の hook イベントを反映する (HTTP hook からの POST)。
+   *
+   * 状態の決定は claudeHookState.ts の純関数に委ねる。ここは「どのセッションか」を
+   * 引き当てて、返ってきたステータスと表示内容を配信するだけ。
+   *
+   * hook を 1 度でも受けたセッションは **hook が権威**になり、TUI ヒューリスティック
+   * (スピナー/ダイアログ検出と 3 秒タイムアウト) をステータス決定から降ろす。
+   * ヒューリスティックはサブエージェントの走行を知らないので、長時間ツールや
+   * バックグラウンドの子を「待ち」に落としてしまうため。
    */
-  applyHookEvent(id: string, event: string, message: string, notificationType: string): boolean {
+  applyHookEvent(id: string, payload: Record<string, unknown>): boolean {
     const session = this.sessions.get(id);
     if (!session) return false;
-    switch (event) {
-      case 'SessionStart':
-        session.claudeDetected = true;
-        if (session.status === 'shell') this.setStatus(session, 'idle');
-        break;
-      case 'UserPromptSubmit':
-      case 'PreToolUse':
-      case 'PostToolUse':
-        session.claudeDetected = true;
-        session.lastBusyAt = Date.now();
-        this.setStatus(session, 'busy');
-        break;
-      case 'Notification':
-        // ユーザーの判断が必要な通知 (許可要求・質問ダイアログ) のみ waiting。
-        // アイドル通知は idle。notification_type が無い旧バージョンは message で判定。
-        session.claudeDetected = true;
-        if (
-          /^(permission_prompt|elicitation_dialog|agent_needs_input)$/.test(notificationType) ||
-          (!notificationType && /permission|needs your/i.test(message))
-        ) {
-          this.setStatus(session, 'waiting');
-        } else if (
-          notificationType === 'idle_prompt' ||
-          (!notificationType && /waiting for .*input|ready for your input/i.test(message))
-        ) {
-          this.setStatus(session, 'idle');
-        }
-        break;
-      case 'Stop':
-        session.claudeDetected = true;
-        this.setStatus(session, 'idle');
-        break;
-      case 'SessionEnd':
-        session.claudeDetected = false;
-        this.setStatus(session, 'shell');
-        break;
-      default:
-        break;
+    // hook として解釈できない本文でセッションを hook 権威に切り替えない
+    // (切り替えるとヒューリスティックが降り、ゴミ POST 1 発で検知を殺せる)。
+    if (!isClaudeHookPayload(payload)) return false;
+    if (!session.hook) session.hook = createHookState(Date.now());
+    session.claudeDetected = true;
+    const { status, changed } = applyClaudeHookEvent(session.hook, payload, Date.now());
+    if (status === 'shell') {
+      session.claudeDetected = false;
+      session.hook = null;
+      this.setStatus(session, 'shell');
+      return true;
     }
+    if (status === 'busy') session.lastBusyAt = Date.now();
+    if (status) this.setStatus(session, status);
+    // ステータスが据え置きでもツール/サブエージェントは動く。status 側の早期 return に
+    // 巻き込まれないよう、表示内容の変化は別経路で配信する。
+    if (changed) this.scheduleActivityPublish(session);
     return true;
+  }
+
+  /**
+   * activity 変化の配信。1 ツールにつき Pre/Post の 2 発 × サブエージェント本数
+   * まで増えるので、短い窓で合体させてから 1 回だけ流す。
+   */
+  private scheduleActivityPublish(session: Session): void {
+    if (session.activityTimer) return;
+    session.activityTimer = setTimeout(() => {
+      session.activityTimer = null;
+      if (session.exited) return;
+      broadcastEvent({ type: 'session', session: this.toInfo(session) });
+    }, ACTIVITY_FLUSH_MS);
+    session.activityTimer.unref();
   }
 
   kill(id: string): boolean {
@@ -343,20 +374,28 @@ export class PtyManager {
     // means the question was answered and work resumed.
     const busyEnd = lastMatchEnd(scan, BUSY_RE);
     const promptEnd = session.claudeDetected ? lastMatchEnd(scan, PROMPT_RE) : 0;
-    if (promptEnd > busyEnd) {
+    // hook が権威のセッションでは、スピナー/ダイアログからステータスを決めない。
+    // PROMPT_RE ("❯ 1." 等) はエージェントの出力本文にも当たり、実行中を誤って
+    // waiting に落とす。シェル復帰の検出だけは残す (プロセスが消えた事実は
+    // hook からは分からないため)。
+    const heuristicOwnsStatus = session.hook === null;
+    if (heuristicOwnsStatus && promptEnd > busyEnd) {
       this.setStatus(session, 'waiting');
-    } else if (busyEnd > 0) {
+    } else if (heuristicOwnsStatus && busyEnd > 0) {
       session.lastBusyAt = Date.now();
       session.claudeDetected = true; // a spinner implies an agent TUI
       this.setStatus(session, 'busy');
     } else if (
       session.claudeDetected &&
-      session.status !== 'busy' &&
+      // hook セッションは busy 中でも見る: claude が SessionEnd を出せずに落ちた場合
+      // (クラッシュ・強制終了)、これを塞ぐと stale ガードの 10 分間 busy に居座る。
+      (session.status !== 'busy' || session.hook !== null) &&
       SHELL_RETURN_RE.test(scan)
     ) {
       // Claude exited and the shell prompt is back. If this is a false hit
       // (prompt-like text inside Claude output), the footer redraw re-detects.
       session.claudeDetected = false;
+      session.hook = null;
       this.setStatus(session, 'shell');
     }
 
@@ -365,8 +404,22 @@ export class PtyManager {
   }
 
   private tick(): void {
+    const now = Date.now();
     for (const session of this.sessions.values()) {
-      if (session.status === 'busy' && Date.now() - session.lastBusyAt > BUSY_HOLD_MS) {
+      if (session.status !== 'busy') continue;
+      if (session.hook) {
+        // hook が権威のセッションは 3 秒のスピナー猶予では降格させない
+        // (バックグラウンドのサブエージェントは分単位で無音になる)。
+        // 代わりに、hook も PTY 出力も長時間途絶えたときだけ作業状態を捨てる。
+        const quietFor = now - Math.max(session.hook.lastEventAt, session.lastOutputAt);
+        if (quietFor > HOOK_STALE_MS) {
+          clearWork(session.hook);
+          this.setStatus(session, 'idle');
+          this.scheduleActivityPublish(session);
+        }
+        continue;
+      }
+      if (now - session.lastBusyAt > BUSY_HOLD_MS) {
         this.setStatus(session, session.claudeDetected ? 'idle' : 'shell');
       }
     }
@@ -410,6 +463,14 @@ export class PtyManager {
       createdAt: session.createdAt,
       lastOutputAt: session.lastOutputAt,
       statusSince: session.statusSince,
+      activity: session.hook
+        ? {
+            tool: session.hook.tool ? session.hook.tool.detail : null,
+            toolSince: session.hook.tool ? session.hook.tool.since : null,
+            subagents: subagentList(session.hook),
+            backgroundTask: session.hook.runningBackgroundTask,
+          }
+        : null,
     };
   }
 }

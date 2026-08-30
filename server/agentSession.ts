@@ -978,6 +978,14 @@ export class AgentSessionManager {
       createdAt: session.createdAt,
       lastOutputAt: session.lastOutputAt,
       statusSince: session.statusSince,
+      // PTY 側 (hook 由来) と同じ形で「いま何をしているか」を載せ、セッション一覧の
+      // UI を 1 つに保つ。SDK 側は tool_use を直接見ているので tool は持たない。
+      activity: {
+        tool: null,
+        toolSince: null,
+        subagents: [...session.subagents.values()].map((sub) => ({ ...sub, state: 'working' as const })),
+        backgroundTask: false,
+      },
     };
   }
 }

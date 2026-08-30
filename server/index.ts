@@ -12,6 +12,7 @@ import * as files from './files.js';
 import * as search from './search.js';
 import { buildPartialPatchLines, checkApplyHunksRequest, hashHunk, splitDiffHunks, type ApplyDirection } from './diffPatch.js';
 import { PtyManager, aggregateStatus } from './pty.js';
+import { warnIfHooksBlocked } from './hooks.js';
 import { AgentSessionManager } from './agentSession.js';
 import { attachEvents } from './sessionEvents.js';
 import { attachVncBridge, getVncTarget, probeVncTarget } from './vnc.js';
@@ -1277,29 +1278,38 @@ app.post('/api/agents/resumable/:id/discard', asyncHandler(async (req, res) => {
   res.json({ ok: agentManager.discardRecord(req.params.id) });
 }));
 
-// Claude Code の hooks (deck-hook.mjs) からのイベント通知。既定の 127.0.0.1 バインド
+// Claude Code の hooks (HTTP hook) からのイベント通知。既定の 127.0.0.1 バインド
 // ではローカルプロセスのみ到達できる (CLAUDE_DECK_HOST で公開した場合は LAN からも
 // 届くが、未知のターミナル id は黙って無視するため実害は誤ステータス表示まで)。
 // 未知 id の無視はセッション終了とフック POST のレースで普通に起きるための仕様。
+//
+// **必ず 200 + JSON を返す**。Claude Code は hook のレスポンスが JSON でないと
+// エラー扱いにするため、未知 id でもエラーにしてはいけない (エージェントを
+// 止めてしまう)。ボディは生の hook ペイロードで、セッション id はヘッダーで来る。
 app.post('/api/agent-events', asyncHandler(async (req, res) => {
-  const { term, event, message, notificationType } = req.body as {
-    term?: string;
-    event?: string;
-    message?: string;
-    notificationType?: string;
-  };
-  if (typeof term !== 'string' || typeof event !== 'string') {
-    throw new Error('term と event が必要です');
-  }
-  res.json({
-    ok: ptyManager.applyHookEvent(
-      term,
-      event,
-      typeof message === 'string' ? message : '',
-      typeof notificationType === 'string' ? notificationType : '',
-    ),
-  });
+  const header = req.get('X-Deck-Term');
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  // 旧 deck-hook.mjs 形式 (body.term) も当面受ける。設定 JSON はデッキ起動時に
+  // 上書きされるが、更新前に起動していた claude プロセスが残ることがある。
+  const term = header || (typeof body.term === 'string' ? body.term : '');
+  if (term) ptyManager.applyHookEvent(term, body);
+  res.json({});
 }));
+
+// hook のリクエストが本文の時点で壊れていても (JSON 不正・サイズ超過)、エージェント側には
+// 正常なレスポンスを返す。ここでエラーを返すと、deck の都合で Claude Code の hook が
+// 失敗扱いになる。ステータス表示が 1 イベント欠けるだけで済ませる。
+// パス限定のエラーハンドラーなので、他のルートは従来どおり共通ハンドラーへ流れる。
+app.use('/api/agent-events', ((
+  err: unknown,
+  _req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) => {
+  if (res.headersSent) return next(err);
+  console.warn('[claude-deck3] agent-events の本文を解釈できませんでした:', err);
+  res.json({});
+}) as express.ErrorRequestHandler);
 
 // ---- vnc ---------------------------------------------------------------------
 
@@ -1385,6 +1395,9 @@ server.on('upgrade', (req, socket, head) => {
 server.listen(PORT, HOST, () => {
   console.log(`[claude-deck3] server: http://localhost:${PORT}`);
   console.log(`[claude-deck3] mode: ${process.env.NODE_ENV ?? 'development'}`);
+  // hooks が丸ごと無効化される設定を早めに気づけるようにする (無音で
+  // ヒューリスティック検知のみに落ちるのが一番わかりにくい)。
+  warnIfHooksBlocked(PORT, (message) => console.warn(`[claude-deck3] ${message}`));
   if (HOST !== '127.0.0.1' && HOST !== 'localhost' && HOST !== '::1') {
     console.warn(
       `[claude-deck3] ******************************************************************\n` +

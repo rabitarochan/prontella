@@ -2227,6 +2227,21 @@ button.statusbar-item:hover:not(:disabled) {
   position: relative;
   background: var(--terminal-bg);
 }
+/* ターミナル下部のエージェントアクティビティバー。chat の統計バーと同じ寸法・
+   同じチップ (.chat-sub*) を使い、2 経路で見た目が割れないようにしてある。 */
+.term-statusbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  font-size: 11px;
+  color: var(--fg-dim);
+  min-height: 24px;
+  overflow: hidden;
+}
 .term-empty {
   position: absolute;
   inset: 0;
@@ -2796,6 +2811,11 @@ button.statusbar-item:hover:not(:disabled) {
   border-radius: 999px;
   background: var(--yellow);
   animation: chat-pulse 1.2s ease-in-out infinite;
+}
+/* ターン待ちの teammate: 生きているが実行中ではないので点滅させない */
+.chat-sub-dot.is-idle {
+  animation: none;
+  background: var(--fg-dim);
 }
 .chat-sub-name {
   font-weight: 600;

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useAgentEvents } from '../agentEvents';
 import { api } from '../api';
 import { useDeck } from '../store';
 import type { TerminalSession } from '../types';
@@ -10,10 +11,16 @@ const POLL_MS = 3000;
  * Polls terminal sessions for a worktree and exposes create/kill.
  * `sessions` is null until the first successful fetch; on fetch errors the
  * previous list is kept so a transient server hiccup does not flash dead UI.
+ *
+ * ポーリングが決めるのは**セッションの顔ぶれ**(作成/終了)だけ。個々のセッションの
+ * 中身は /ws/events のプッシュ (useAgentEvents) を被せて返す。3 秒間隔ではエージェントの
+ * ステータスと実行中ツールの表示が最大 3 秒古くなり、実行中ツールのほうが短命なため
+ * 「終わったツールを表示し続ける」状態が常態化する (実測で確認)。
  */
 export function useTerminalSessions(cwd: string) {
   const refreshDeck = useDeck((s) => s.refresh);
   const [sessions, setSessions] = useState<TerminalSession[] | null>(null);
+  const live = useAgentEvents((s) => s.sessions);
 
   const reload = useCallback(async () => {
     try {
@@ -56,6 +63,12 @@ export function useTerminalSessions(cwd: string) {
     };
   }, [reload]);
 
+  // 顔ぶれはポーリング、中身はプッシュ。プッシュに無い id はポーリングの値のまま。
+  const merged = useMemo(
+    () => (sessions === null ? null : sessions.map((session) => live[session.id] ?? session)),
+    [sessions, live],
+  );
+
   const create = useCallback(
     async (run?: string, place?: (session: TerminalSession) => void) => {
       const session = await api.createTerminal(cwd, run);
@@ -92,5 +105,5 @@ export function useTerminalSessions(cwd: string) {
     [reload, refreshDeck],
   );
 
-  return { sessions, reload, create, createAgent, kill };
+  return { sessions: merged, reload, create, createAgent, kill };
 }

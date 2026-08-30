@@ -5,6 +5,7 @@ import { useTileBarSlots } from '../layout/tileBarSlots';
 import type { TerminalSession } from '../types';
 import { useConfirm } from './ConfirmDialog';
 import { middleClickAutoscrollGuard, middleClickClose } from './editorTabs';
+import AgentActivityStrip from './AgentActivityStrip';
 import StatusBadge from './StatusBadge';
 import XTermView from './XTermView';
 
@@ -65,6 +66,11 @@ export default function TermPanel({
   // スロット未登録時のみパネル内へインライン描画するフォールバック。
   const barSlot = useTileBarSlots((s) => s.slots[leafId] ?? null);
   const inBar = visible && barSlot !== null;
+  // アクティブなターミナルの hook 由来アクティビティ (実行中ツール + サブエージェント)。
+  // hook が届かないセッションでは activity が null になり、バー自体を出さない。
+  const activity = (active ? liveMap.get(active)?.activity : null) ?? null;
+  const showActivity =
+    activity !== null && (activity.tool !== null || activity.subagents.length > 0);
 
   const tabsRow = (
     <div className={`editor-tabs${inBar ? ' in-bar' : ''}`} {...middleClickAutoscrollGuard}>
@@ -153,6 +159,15 @@ export default function TermPanel({
           />
         ))}
       </div>
+      {showActivity && activity && (
+        <div className="term-statusbar">
+          <AgentActivityStrip
+            tool={activity.tool}
+            toolSince={activity.toolSince}
+            subagents={activity.subagents}
+          />
+        </div>
+      )}
       {dialog}
     </div>
   );

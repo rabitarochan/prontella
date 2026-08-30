@@ -32,6 +32,11 @@ const CORE_STRINGS = {
   'status.shell': { ja: 'シェル', en: 'Shell' },
   'status.none': { ja: '未起動', en: 'Not started' },
   'status.agentTooltip': { ja: 'エージェント: {status}', en: 'Agent: {status}' },
+  'activity.toolTooltip': { ja: '実行中のツール', en: 'Tool in progress' },
+  'activity.subagentTooltip': {
+    ja: 'サブエージェント: {name}',
+    en: 'Subagent: {name}',
+  },
 
   // ---- アプリ / タブタイトル ----
   'app.titleWaiting': { ja: '({n}) 確認待ち — Claude Deck', en: '({n}) needs input — Claude Deck' },

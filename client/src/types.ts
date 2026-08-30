@@ -234,6 +234,19 @@ export interface SearchTextResponse {
   limitHit: boolean;
 }
 
+/**
+ * hook 由来の「いま何をしているか」。server/pty.ts の AgentActivity と手動同期
+ * (共有型機構がないため)。hook が 1 度も届いていないセッションは null。
+ */
+export interface AgentActivity {
+  /** リードが実行中のツールの要約 ("Bash: npm test")。無ければ null。 */
+  tool: string | null;
+  toolSince: number | null;
+  subagents: AgentSubagent[];
+  /** background_tasks にサブエージェント以外の走行中タスクが載っている。 */
+  backgroundTask: boolean;
+}
+
 export interface TerminalSession {
   id: string;
   cwd: string;
@@ -245,6 +258,7 @@ export interface TerminalSession {
   createdAt: number;
   lastOutputAt: number;
   statusSince: number;
+  activity: AgentActivity | null;
 }
 
 // chat (Agent SDK) セッションの構造化イベント。server/agentSession.ts と手動同期
@@ -284,13 +298,19 @@ export interface AgentSessionStats {
   contextWindow: number | null;
 }
 
-/** 稼働中のサブエージェント (server/agentSession.ts subagents と手動同期) */
+/**
+ * 稼働中のサブエージェント。PTY (hook 由来) と Agent SDK チャットの両方が同じ形を返す。
+ * server/claudeHookState.ts の HookSubagent / server/agentSession.ts subagents と手動同期。
+ */
 export interface AgentSubagent {
   id: string;
   name: string;
   description: string;
   startedAt: number;
+  /** 子の最新ツール ("Grep: hooks")。無ければ空文字。 */
   activity: string;
+  /** 'idle' = 生きているがターン待ち (実行中の判定には数えない)。PTY 経路のみ。 */
+  state?: 'working' | 'idle';
 }
 
 export interface AgentSlashCommand {

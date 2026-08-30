@@ -12,7 +12,7 @@ import * as files from './files.js';
 import * as search from './search.js';
 import { buildPartialPatchLines, checkApplyHunksRequest, hashHunk, splitDiffHunks, type ApplyDirection } from './diffPatch.js';
 import { PtyManager, aggregateStatus } from './pty.js';
-import { warnIfHooksBlocked } from './hooks.js';
+import { ensureHookAssets, warnIfHooksBlocked } from './hooks.js';
 import { AgentSessionManager } from './agentSession.js';
 import { attachEvents } from './sessionEvents.js';
 import { attachVncBridge, getVncTarget, probeVncTarget } from './vnc.js';
@@ -1395,6 +1395,17 @@ server.on('upgrade', (req, socket, head) => {
 server.listen(PORT, HOST, () => {
   console.log(`[claude-deck3] server: http://localhost:${PORT}`);
   console.log(`[claude-deck3] mode: ${process.env.NODE_ENV ?? 'development'}`);
+  // フック資材を起動時に書き出す。「✦ Claude 起動」でも生成されるが、それを待つと
+  // 更新直後の設定ファイルが旧版のまま残り、(1) 新版が有効なのか設定を見ても
+  // 確認できない (2) 旧転送スクリプト deck-hook.mjs が掃除されない
+  // (3) `claude --settings ~/.claude-deck3/hook-settings.json` を手で叩くと
+  // 旧設定で起動する、の 3 つが起きる。ポートは起動時点で確定しているので待つ理由もない。
+  try {
+    ensureHookAssets(PORT);
+  } catch (err) {
+    // 書けなくても起動は続ける (検知が TUI ヒューリスティックのみに落ちるだけ)。
+    console.warn('[claude-deck3] フック資材を書き出せませんでした:', err);
+  }
   // hooks が丸ごと無効化される設定を早めに気づけるようにする (無音で
   // ヒューリスティック検知のみに落ちるのが一番わかりにくい)。
   warnIfHooksBlocked(PORT, (message) => console.warn(`[claude-deck3] ${message}`));

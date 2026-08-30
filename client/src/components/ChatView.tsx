@@ -24,6 +24,7 @@ import type {
   AgentStatus,
   AgentSubagent,
 } from '../types';
+import AgentActivityStrip from './AgentActivityStrip';
 import StatusBadge from './StatusBadge';
 
 // TUI の Shift+Tab 巡回と同じ並び。bypassPermissions / dontAsk は UI に出さない
@@ -57,12 +58,6 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
-function fmtElapsed(startedAt: number): string {
-  const sec = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return m > 0 ? `${m}m${String(s).padStart(2, '0')}s` : `${s}s`;
-}
 
 /**
  * chat (Agent SDK) セッション 1 つ分のビュー。/ws/agent?id= に接続し、
@@ -698,14 +693,6 @@ export default function ChatView({
     el.style.overflowY = wanted > maxH ? 'auto' : 'hidden';
   }, [draft, visible]);
 
-  // サブエージェントの経過時間表示を 1 秒ごとに更新する
-  const [, setElapsedTick] = useState(0);
-  useEffect(() => {
-    if (subagents.length === 0) return;
-    const timer = setInterval(() => setElapsedTick((n) => n + 1), 1_000);
-    return () => clearInterval(timer);
-  }, [subagents.length]);
-
   const send = (obj: object) => {
     wsRef.current?.send(obj);
   };
@@ -1089,16 +1076,7 @@ export default function ChatView({
         {subagents.length > 0 && (
           <>
             <span className="chat-statusbar-sep" />
-            <span className="chat-subagents">
-              {subagents.map((sub) => (
-                <span key={sub.id} className="chat-sub" title={sub.description}>
-                  <span className="chat-sub-dot" />
-                  <span className="chat-sub-name">{sub.name}</span>
-                  <span className="chat-sub-elapsed">{fmtElapsed(sub.startedAt)}</span>
-                  {sub.activity && <span className="chat-sub-activity">{sub.activity}</span>}
-                </span>
-              ))}
-            </span>
+            <AgentActivityStrip subagents={subagents} />
           </>
         )}
         <span className="chat-statusbar-spacer" />

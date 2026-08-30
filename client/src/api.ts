@@ -23,6 +23,7 @@ import type {
   TerminalSession,
   TreeEntry,
   TreeStatusEntry,
+  UsageSnapshot,
 } from './types';
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -271,6 +272,7 @@ export const api = {
     return request<SearchTextResponse>(`/api/search/text?${params}`, { signal });
   },
 
+  usage: () => request<UsageSnapshot>('/api/usage'),
   terminals: (cwd?: string) =>
     request<TerminalSession[]>(`/api/terminals${cwd ? `?cwd=${q(cwd)}` : ''}`),
   createTerminal: (cwd: string, run?: string) => post<TerminalSession>('/api/terminals', { cwd, run }),

@@ -132,6 +132,26 @@ export const FILES_STRINGS = {
   'term.processExited': { ja: '[プロセスが終了しました]', en: '[Process exited]' },
   'term.reconnecting': { ja: '再接続中…', en: 'Reconnecting…' },
   'term.sessionLost': { ja: 'セッションは失われました', en: 'Session lost' },
+  'term.splitTerminalTooltip': {
+    ja: 'アクティブなターミナルを右隣へ分割',
+    en: 'Split the active terminal to the right',
+  },
+
+  // ---- Claude 使用量 (ターミナルタイルのヘッダー) ----
+  'usage.loading': { ja: '使用量を取得中…', en: 'Loading usage…' },
+  'usage.fiveHour': { ja: '5h', en: '5h' },
+  'usage.weekly': { ja: '週', en: 'Week' },
+  'usage.refresh': { ja: '使用量を再取得', en: 'Refresh usage' },
+  'usage.refreshHint': {
+    ja: 'クリックで再取得',
+    en: 'Click to refresh',
+  },
+  'usage.tooltipLine': { ja: '{label}: {pct}% 使用', en: '{label}: {pct}% used' },
+  'usage.tooltipLineReset': {
+    ja: '{label}: {pct}% 使用 (リセットまで {remaining})',
+    en: '{label}: {pct}% used (resets in {remaining})',
+  },
+  'usage.tooltipUpdated': { ja: '最終取得: {time}', en: 'Updated: {time}' },
 
   // ---- エージェント (ChatPanel / ChatView — Agent SDK セッション) ----
   'chat.newSession': { ja: '新しいセッション', en: 'New session' },

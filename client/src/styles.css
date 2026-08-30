@@ -2221,11 +2221,51 @@ button.statusbar-item:hover:not(:disabled) {
   border: none;
   background: transparent;
 }
+/* ターミナルグループツリーのコンテナ。中身は SplitTreeView の再帰 */
 .term-body {
   flex: 1;
+  min-width: 0;
   min-height: 0;
-  position: relative;
+  display: flex;
   background: var(--terminal-bg);
+}
+.term-body > * {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.term-group-grid {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.term-group-panel {
+  display: flex;
+}
+.term-group-panel > * {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+/* 1 グループ = タブ列 + 本文 (+ アクティビティバー) */
+.term-group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+/* 本文。xterm ホスト (絶対配置) と DnD ドロップオーバーレイの基準 */
+.term-group-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--terminal-bg);
+}
+/* セッションごとの安定ホスト。中身は createPortal された XTermView で、
+   表示/非表示は XTermView 側の .xterm-host が持つ */
+.term-host {
+  position: absolute;
+  inset: 0;
 }
 /* ターミナル下部のエージェントアクティビティバー。chat の統計バーと同じ寸法・
    同じチップ (.chat-sub*) を使い、2 経路で見た目が割れないようにしてある。 */
@@ -2265,6 +2305,55 @@ button.statusbar-item:hover:not(:disabled) {
   color: var(--primary);
   border-color: var(--primary-dim);
 }
+/* ---- Claude 使用量バー (ターミナルタイルのヘッダー) ---- */
+
+.usage-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 26px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.usage-bar:hover {
+  background: var(--bg-hover);
+}
+.usage-bar.is-loading {
+  cursor: default;
+  opacity: 0.7;
+}
+.usage-slot {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.usage-slot-label {
+  opacity: 0.75;
+}
+.usage-slot-pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+.usage-slot-reset {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.6;
+}
+.usage-slot.is-warn .usage-slot-pct {
+  color: var(--orange);
+}
+.usage-slot.is-danger .usage-slot-pct {
+  color: var(--red);
+  font-weight: 600;
+}
+
 /* xterm 本体と接続バッジを重ねるためのラッパー。表示/非表示 (display) の
    担い手はこちら側で、.xterm-container は中で絶対配置のまま。 */
 .xterm-host {

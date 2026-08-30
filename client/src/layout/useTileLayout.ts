@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useT } from '../i18n';
 import type { TerminalSession } from '../types';
 import { pruneEditorState, TILE_LAYOUT_STORAGE_PREFIX } from '../editorState';
+import { pruneTermState } from './termState';
 import {
   adoptSessions,
   appendSession,
@@ -98,8 +99,11 @@ export function useTileLayout(
     } catch {
       // storage full / unavailable — layout just won't persist
     }
-    // タイル閉鎖やレイアウト初期化(reset)で消えた leaf の editorState スライスを回収する
-    pruneEditorState(worktreePath, layout.root ? leaves(layout.root).map((l) => l.id) : []);
+    // タイル閉鎖やレイアウト初期化(reset)で消えた leaf の editorState /
+    // termState スライスを回収する
+    const liveLeafIds = layout.root ? leaves(layout.root).map((l) => l.id) : [];
+    pruneEditorState(worktreePath, liveLeafIds);
+    pruneTermState(worktreePath, liveLeafIds);
   }, [worktreePath, layout]);
 
   // Handlers read the latest tree through a ref so rapid successive actions

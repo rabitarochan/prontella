@@ -3,18 +3,17 @@
 // 購読者が 0 → 1 になったとき即時 fetch + インターバル開始、1 → 0 で停止する
 // (参照カウント方式)。
 //
-// 残り時間の表示は resetsAt からクライアント側で計算する。時計は別
-// (useUsageClock) で、再取得はしない。
+// リセットまでの残り時間は resetsAt からクライアント側で計算する。表示先は
+// ツールチップだけなので専用の時計は持たない — ポーリングごとの再描画
+// (最大 60 秒遅れ) で分単位の表示には十分。
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { create } from 'zustand';
 import { api } from '../api';
 import type { UsageSnapshot } from '../types';
 
 /** 再取得の間隔。サーバー側にも 60 秒の TTL キャッシュがある。 */
 const POLL_MS = 60_000;
-/** 残り時間表示の再描画間隔。 */
-const CLOCK_MS = 30_000;
 
 interface UsageState {
   usage: UsageSnapshot | null;
@@ -75,16 +74,4 @@ export function useUsage(): { usage: UsageSnapshot | null; loading: boolean } {
     return unsubscribe;
   }, []);
   return { usage, loading };
-}
-
-/** 残り時間表示を進めるためだけの時計。返り値そのものに意味は無く、
- *  一定間隔で変化して再描画を促すためだけに購読する。 */
-export function useUsageClock(enabled: boolean): number {
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    if (!enabled) return;
-    const id = setInterval(() => setTick((n) => n + 1), CLOCK_MS);
-    return () => clearInterval(id);
-  }, [enabled]);
-  return tick;
 }

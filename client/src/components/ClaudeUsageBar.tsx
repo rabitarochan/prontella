@@ -4,12 +4,17 @@
 // 表示するのは server/usage.ts が SDK の型定義から拾った枠だけ:
 // 5 時間枠 / 週枠 / モデル別週枠 (Fable 等)。データはアカウント全体で共通なので
 // 取得は usageStore の参照カウント付き共有ポーリング (タイルが何枚でも HTTP 1 本)。
+//
+// 見た目の方針: 文字は常にテーマの前景色 (--fg) で、ヘッダーの中で色を持つのは
+// ゲージだけ。通常時のゲージは中立色にしてあるので、注意 (黄) / 警告 (赤) が
+// 出たときだけヘッダーに色が現れる = 目に留まる。リセットまでの残り時間は
+// 常時表示すると桁が動いてうるさいので、ツールチップ側にだけ残す。
 
 import { useT } from '../i18n';
-import { useUsage, useUsageClock, useUsageStore } from '../layout/usageStore';
+import { useUsage, useUsageStore } from '../layout/usageStore';
 import type { UsageWindow } from '../types';
 
-/** 使用率がここを超えたら注意色にする。 */
+/** 使用率がここを超えたら注意 (黄) / 警告 (赤) にする。 */
 const WARN_PCT = 80;
 const DANGER_PCT = 95;
 
@@ -32,23 +37,22 @@ function level(pct: number): string {
   return '';
 }
 
-function Slot({
-  label,
-  window: w,
-  now,
-}: {
-  label: string;
-  window: UsageWindow | null;
-  now: number;
-}) {
+function Slot({ label, window: w }: { label: string; window: UsageWindow | null }) {
   if (!w || w.utilization === null) return null;
   const pct = Math.round(w.utilization);
-  const remaining = formatRemaining(w.resetsAt, now);
   return (
     <span className={`usage-slot ${level(pct)}`}>
       <span className="usage-slot-label">{label}</span>
+      {/* ゲージは % の視覚的な言い換えなので、読み上げからは外す。
+          0% は空のまま、1% 以上は最低 2px 出して「わずかに使っている」と
+          「まったく使っていない」を見分けられるようにする */}
+      <span className="usage-gauge" aria-hidden="true">
+        <span
+          className="usage-gauge-fill"
+          style={{ width: pct <= 0 ? 0 : `max(2px, ${Math.min(100, pct)}%)` }}
+        />
+      </span>
       <span className="usage-slot-pct">{pct}%</span>
-      {remaining && <span className="usage-slot-reset">{remaining}</span>}
     </span>
   );
 }
@@ -57,8 +61,6 @@ export default function ClaudeUsageBar() {
   const t = useT();
   const { usage, loading } = useUsage();
   const refresh = useUsageStore((s) => s.refresh);
-  // 残り時間だけを進める時計。値は使わず、再描画のトリガーとして購読する。
-  useUsageClock(usage !== null);
   const now = Date.now();
 
   if (loading && usage === null) {
@@ -79,6 +81,7 @@ export default function ClaudeUsageBar() {
 
   if (slots.length === 0) return null;
 
+  // 残り時間はここだけに出す (常時表示すると分単位で桁が動いてヘッダーが騒がしい)
   const tooltip = [
     ...slots.map((s) => {
       const remaining = formatRemaining(s.window!.resetsAt, now);
@@ -105,7 +108,7 @@ export default function ClaudeUsageBar() {
       aria-label={t('usage.refresh')}
     >
       {slots.map((s) => (
-        <Slot key={s.key} label={s.label} window={s.window} now={now} />
+        <Slot key={s.key} label={s.label} window={s.window} />
       ))}
     </button>
   );

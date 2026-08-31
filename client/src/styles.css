@@ -2310,13 +2310,15 @@ button.statusbar-item:hover:not(:disabled) {
 .usage-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   height: 26px;
   padding: 0 6px;
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--fg-dim);
+  /* 文字はすべてテーマの前景色で揃える (ダークテーマでは白)。ヘッダーの中で
+     色を持つのはゲージだけにして、注意/警告のときだけ色が現れるようにする */
+  color: var(--fg);
   font-size: 11px;
   line-height: 1;
   cursor: pointer;
@@ -2332,22 +2334,48 @@ button.statusbar-item:hover:not(:disabled) {
 }
 .usage-slot {
   display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
-}
-.usage-slot-label {
-  opacity: 0.75;
+  align-items: center;
+  gap: 5px;
 }
 .usage-slot-pct {
   font-variant-numeric: tabular-nums;
-  color: var(--fg);
+  /* 桁が増えても右隣のスロットがずれないよう "100%" 分の幅を確保する */
+  min-width: 2.6em;
+  text-align: right;
 }
-.usage-slot-reset {
-  font-variant-numeric: tabular-nums;
-  opacity: 0.6;
+/* 使用率のゲージ。通常時の塗りは中立色 (--fg-dim) にしてあるので、
+   ヘッダーの中で色が付くのは注意 (黄) / 警告 (赤) のときだけになる */
+.usage-gauge {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 6px;
+  border-radius: 3px;
+  /* トラックは前景色の混色で作る。--bg-active だとタイルの地色との差が小さく、
+     使用率が数 % のときに「空のメーター」ではなく「ただの余白」に見えてしまう
+     (両テーマで実測)。前景基準なのでライト/ダークどちらでも同じ見え方になる */
+  background: color-mix(in srgb, var(--fg) 28%, transparent);
+  overflow: hidden;
+}
+.usage-gauge-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 3px;
+  background: var(--fg-dim);
+  transition:
+    width 0.3s ease,
+    background-color 0.3s ease;
+}
+.usage-slot.is-warn .usage-gauge-fill {
+  background: var(--yellow);
 }
 .usage-slot.is-warn .usage-slot-pct {
-  color: var(--orange);
+  color: var(--yellow);
+}
+.usage-slot.is-danger .usage-gauge-fill {
+  background: var(--red);
 }
 .usage-slot.is-danger .usage-slot-pct {
   color: var(--red);

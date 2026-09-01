@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeJsonAtomic } from './config.js';
 
 // writeJsonAtomic は os.tmpdir() 配下の使い捨てディレクトリーに対してのみテストする。
-// 実 `~/.claude-deck3/config.json` には絶対に触れない(loadConfig/saveConfig 自体はここでは
+// 実 `~/.prontella/config.json` には絶対に触れない(loadConfig/saveConfig 自体はここでは
 // テストしない — CONFIG_FILE がモジュールスコープの定数で os.homedir() 固定のため、テストで
 // 呼ぶと実設定を読み書きしてしまう)。
 describe('writeJsonAtomic', () => {
@@ -13,7 +13,7 @@ describe('writeJsonAtomic', () => {
   let file: string;
 
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deck3-writeJsonAtomic-'));
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prontella-writeJsonAtomic-'));
     file = path.join(dir, 'config.json');
   });
 
@@ -58,7 +58,7 @@ describe('writeJsonAtomic', () => {
   });
 });
 
-// loadConfig/saveConfig は CONFIG_FILE = os.homedir()/.claude-deck3/config.json をモジュール
+// loadConfig/saveConfig は CONFIG_FILE = os.homedir()/.prontella/config.json をモジュール
 // スコープの定数として固定しているため、実 config に触れずにテストするには os.homedir() の
 // 解決先そのものを差し替える必要がある。Windows の os.homedir() は process.env.USERPROFILE を
 // 都度読むため(実測済み)、それを隔離ディレクトリーに差し替えたうえで vi.resetModules() +
@@ -73,8 +73,8 @@ describe('loadConfig / saveConfig (隔離 home, 実 config 非接触)', () => {
   let originalHome: string | undefined;
 
   beforeEach(() => {
-    isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'deck3-config-home-'));
-    configDir = path.join(isolatedHome, '.claude-deck3');
+    isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'prontella-config-home-'));
+    configDir = path.join(isolatedHome, '.prontella');
     configFile = path.join(configDir, 'config.json');
     originalUserProfile = process.env.USERPROFILE;
     originalHome = process.env.HOME;

@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
@@ -13,7 +12,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import type { WebSocket } from 'ws';
 import { terminalEnv } from './childEnv.js';
-import { writeJsonAtomic } from './config.js';
+import { CONFIG_DIR, writeJsonAtomic } from './config.js';
 import { normalizePath, type AgentStatus, type SessionInfo } from './pty.js';
 import { broadcastEvent, registerSnapshotProvider } from './sessionEvents.js';
 
@@ -69,10 +68,10 @@ const IMAGE_MAX_BASE64 = 7_000_000; // 1 枚あたり base64 で約 5MB 相当
 const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const PERSIST_DEBOUNCE_MS = 500;
 
-// resume 用の永続化レコード (~/.claude-deck3/agent-sessions/<deckId>.json)。
+// resume 用の永続化レコード (~/.prontella/agent-sessions/<deckId>.json)。
 // サーバー再起動でメモリー上のセッションが消えても、SDK 側の session_id と
 // deck 側のトランスクリプトを保存しておけば query({resume}) で再開できる。
-const SESSIONS_DIR = path.join(os.homedir(), '.claude-deck3', 'agent-sessions');
+const SESSIONS_DIR = path.join(CONFIG_DIR, 'agent-sessions');
 
 export interface AgentSessionRecord {
   deckId: string;
@@ -268,7 +267,7 @@ export class AgentSessionManager {
     // deck の起動元にだけ設定された鍵を誤検知/見落としする。
     if (terminalEnv().ANTHROPIC_API_KEY) {
       console.warn(
-        '[claude-deck3] 警告: ANTHROPIC_API_KEY が設定されています。' +
+        '[prontella] 警告: ANTHROPIC_API_KEY が設定されています。' +
           'chat セッションはサブスクリプションではなく API キーで従量課金されます。',
       );
     }
@@ -501,7 +500,7 @@ export class AgentSessionManager {
       };
       writeJsonAtomic(recordFile(session.id), record);
     } catch (err) {
-      console.warn('[claude-deck3] agent session persist failed:', err);
+      console.warn('[prontella] agent session persist failed:', err);
     }
   }
 
@@ -553,7 +552,7 @@ export class AgentSessionManager {
         this.broadcast(session, { type: 'meta', meta: session.meta });
       })
       .catch((err: unknown) => {
-        console.warn('[claude-deck3] setModel failed:', err);
+        console.warn('[prontella] setModel failed:', err);
         this.broadcast(session, { type: 'meta', meta: session.meta });
       });
   }
@@ -567,7 +566,7 @@ export class AgentSessionManager {
         this.broadcast(session, { type: 'meta', meta: session.meta });
       })
       .catch((err: unknown) => {
-        console.warn('[claude-deck3] setEffort failed:', err);
+        console.warn('[prontella] setEffort failed:', err);
         this.broadcast(session, { type: 'meta', meta: session.meta });
       });
   }
@@ -581,7 +580,7 @@ export class AgentSessionManager {
         this.broadcast(session, { type: 'meta', meta: session.meta });
       })
       .catch((err: unknown) => {
-        console.warn('[claude-deck3] setThinking failed:', err);
+        console.warn('[prontella] setThinking failed:', err);
         this.broadcast(session, { type: 'meta', meta: session.meta });
       });
   }
@@ -600,7 +599,7 @@ export class AgentSessionManager {
       })
       .catch((err: unknown) => {
         // 失敗時は meta を変えない (クライアント表示が実状態と乖離しないように)
-        console.warn('[claude-deck3] setPermissionMode failed:', err);
+        console.warn('[prontella] setPermissionMode failed:', err);
         this.broadcast(session, { type: 'meta', meta: session.meta });
       });
   }

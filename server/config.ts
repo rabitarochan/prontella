@@ -17,7 +17,37 @@ interface DeckConfig {
   [key: string]: unknown; // トップレベルの未知キーも loadConfig→saveConfig で往復させる
 }
 
-const CONFIG_DIR = path.join(os.homedir(), '.claude-deck3');
+/** 改名前 (Claude Deck 3) の設定ディレクトリー名。移行のためだけに参照する。 */
+const LEGACY_DIR_NAME = '.claude-deck3';
+
+/**
+ * 設定ディレクトリーを解決し、必要なら旧名から 1 回だけ移行する。
+ *
+ * 「新が無く、旧がある」ときだけ rename する。rename に失敗したとき (他プロセスが
+ * ファイルを開いている等) は**旧ディレクトリーを使い続ける** — 新規作成に倒すと、
+ * 登録リポジトリー一覧と resume 用セッションが消えたように見えるため。
+ * 本体は agent-sessions/ を含むディレクトリーごと移すので、hooks.ts や
+ * agentSession.ts も自前で homedir() を組み立てず、この CONFIG_DIR を使うこと。
+ */
+function resolveConfigDir(): string {
+  const home = os.homedir();
+  const next = path.join(home, '.prontella');
+  const legacy = path.join(home, LEGACY_DIR_NAME);
+  if (fs.existsSync(next) || !fs.existsSync(legacy)) return next;
+  try {
+    fs.renameSync(legacy, next);
+    console.log(`[prontella] 設定ディレクトリーを ${legacy} から ${next} へ移行しました。`);
+    return next;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[prontella] 設定ディレクトリーの移行に失敗したため ${legacy} を使い続けます: ${message}`,
+    );
+    return legacy;
+  }
+}
+
+export const CONFIG_DIR = resolveConfigDir();
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 export function repoId(repoPath: string): string {
@@ -116,7 +146,7 @@ export function loadConfig(): DeckConfig {
       fs.renameSync(CONFIG_FILE, corruptFile);
       corruptedThisProcess = corruptFile;
       console.error(
-        `[claude-deck3] config.json の解析に失敗したため ${corruptFile} に退避しました。` +
+        `[prontella] config.json の解析に失敗したため ${corruptFile} に退避しました。` +
         `内容を確認・修復して ${CONFIG_FILE} に戻したうえで、サーバーを再起動してください。` +
         `このプロセスは復旧まで config の読み書きができません。`,
       );

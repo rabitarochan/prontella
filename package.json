@@ -1,11 +1,11 @@
 {
-  "name": "@rabitarochan/claude-deck",
+  "name": "prontella",
   "version": "0.2.0",
   "type": "module",
   "description": "Deck for managing git repos, worktrees, and Claude Code agents in terminals",
   "license": "MIT",
   "bin": {
-    "claude-deck": "bin/claude-deck.js"
+    "prontella": "bin/prontella.js"
   },
   "files": [
     "bin",
@@ -24,7 +24,7 @@
     "dev:server": "tsx watch server/index.ts",
     "dev:client": "vite",
     "build": "vite build && tsc -p server/tsconfig.build.json",
-    "start": "node bin/claude-deck.js",
+    "start": "node bin/prontella.js",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p server/tsconfig.json",
     "test": "vitest run",
     "prepublishOnly": "npm run build"

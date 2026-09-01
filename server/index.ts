@@ -21,17 +21,17 @@ import { keepAlive } from './wsKeepAlive.js';
 
 const PORT = Number(process.env.PORT) || 3711;
 // 既定はループバックのみ。deck は認証を持たないため、LAN へ公開するときは
-// CLAUDE_DECK_HOST=0.0.0.0 等を明示的に指定する (起動時に警告を出す)。
-const HOST = process.env.CLAUDE_DECK_HOST || '127.0.0.1';
+// PRONTELLA_HOST=0.0.0.0 等を明示的に指定する (起動時に警告を出す)。
+const HOST = process.env.PRONTELLA_HOST || '127.0.0.1';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // 単発の未捕捉例外でサーバープロセス全体が落ちるのを防ぐ。ローカル開発ツールとして、
 // ログだけ出してプロセスは生かし続け、個別リクエストが 500 を返すだけに留める。
 process.on('uncaughtException', (err) => {
-  console.error('[claude-deck3] uncaughtException:', err);
+  console.error('[prontella] uncaughtException:', err);
 });
 process.on('unhandledRejection', (reason) => {
-  console.error('[claude-deck3] unhandledRejection:', reason);
+  console.error('[prontella] unhandledRejection:', reason);
 });
 
 const app = express();
@@ -1287,7 +1287,7 @@ app.post('/api/agents/resumable/:id/discard', asyncHandler(async (req, res) => {
 }));
 
 // Claude Code の hooks (HTTP hook) からのイベント通知。既定の 127.0.0.1 バインド
-// ではローカルプロセスのみ到達できる (CLAUDE_DECK_HOST で公開した場合は LAN からも
+// ではローカルプロセスのみ到達できる (PRONTELLA_HOST で公開した場合は LAN からも
 // 届くが、未知のターミナル id は黙って無視するため実害は誤ステータス表示まで)。
 // 未知 id の無視はセッション終了とフック POST のレースで普通に起きるための仕様。
 //
@@ -1315,7 +1315,7 @@ app.use('/api/agent-events', ((
   next: express.NextFunction,
 ) => {
   if (res.headersSent) return next(err);
-  console.warn('[claude-deck3] agent-events の本文を解釈できませんでした:', err);
+  console.warn('[prontella] agent-events の本文を解釈できませんでした:', err);
   res.json({});
 }) as express.ErrorRequestHandler);
 
@@ -1350,7 +1350,7 @@ if (clientDist) {
 // 認識される条件のため _next を省略しない。
 app.use(
   (err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    console.error('[claude-deck3] request error:', err);
+    console.error('[prontella] request error:', err);
     if (res.headersSent) return;
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   },
@@ -1401,29 +1401,29 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`[claude-deck3] server: http://localhost:${PORT}`);
-  console.log(`[claude-deck3] mode: ${process.env.NODE_ENV ?? 'development'}`);
+  console.log(`[prontella] server: http://localhost:${PORT}`);
+  console.log(`[prontella] mode: ${process.env.NODE_ENV ?? 'development'}`);
   // フック資材を起動時に書き出す。「✦ Claude 起動」でも生成されるが、それを待つと
   // 更新直後の設定ファイルが旧版のまま残り、(1) 新版が有効なのか設定を見ても
   // 確認できない (2) 旧転送スクリプト deck-hook.mjs が掃除されない
-  // (3) `claude --settings ~/.claude-deck3/hook-settings.json` を手で叩くと
+  // (3) `claude --settings ~/.prontella/hook-settings.json` を手で叩くと
   // 旧設定で起動する、の 3 つが起きる。ポートは起動時点で確定しているので待つ理由もない。
   try {
     ensureHookAssets(PORT);
   } catch (err) {
     // 書けなくても起動は続ける (検知が TUI ヒューリスティックのみに落ちるだけ)。
-    console.warn('[claude-deck3] フック資材を書き出せませんでした:', err);
+    console.warn('[prontella] フック資材を書き出せませんでした:', err);
   }
   // hooks が丸ごと無効化される設定を早めに気づけるようにする (無音で
   // ヒューリスティック検知のみに落ちるのが一番わかりにくい)。
-  warnIfHooksBlocked(PORT, (message) => console.warn(`[claude-deck3] ${message}`));
+  warnIfHooksBlocked(PORT, (message) => console.warn(`[prontella] ${message}`));
   if (HOST !== '127.0.0.1' && HOST !== 'localhost' && HOST !== '::1') {
     console.warn(
-      `[claude-deck3] ******************************************************************\n` +
-      `[claude-deck3] 警告: ${HOST} にバインドしています。deck は認証を持たず、到達できる\n` +
-      `[claude-deck3] 相手すべてにフルアクセスのターミナル・ファイル編集・VNC 操作を許します。\n` +
-      `[claude-deck3] 信頼できるネットワーク (VPN/トンネル内など) でのみ使用してください。\n` +
-      `[claude-deck3] ******************************************************************`,
+      `[prontella] ******************************************************************\n` +
+      `[prontella] 警告: ${HOST} にバインドしています。deck は認証を持たず、到達できる\n` +
+      `[prontella] 相手すべてにフルアクセスのターミナル・ファイル編集・VNC 操作を許します。\n` +
+      `[prontella] 信頼できるネットワーク (VPN/トンネル内など) でのみ使用してください。\n` +
+      `[prontella] ******************************************************************`,
     );
   }
 });

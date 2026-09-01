@@ -1,11 +1,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { CONFIG_DIR } from './config.js';
 
 // Claude Code の hooks でステータスを検知するための仕組み。
 // 「✦ Claude 起動」時に `claude --settings <hook-settings.json>` を注入し、
 // 各フックイベントを **HTTP hook** で直接デッキサーバーへ POST させる。
-// どのセッションからのイベントかは、PTY に載せた環境変数 CLAUDE_DECK_TERM を
+// どのセッションからのイベントかは、PTY に載せた環境変数 PRONTELLA_TERM を
 // リクエストヘッダーへ補間して識別する。
 //
 // Why HTTP hook (2026-08-30 実測で採用):
@@ -18,7 +19,8 @@ import path from 'node:path';
 // TUI 文言ヒューリスティック (pty.ts) は、手動起動した claude や hooks が届かない
 // ケースのフォールバックとして残してある。
 
-const ASSET_DIR = path.join(os.homedir(), '.claude-deck3');
+// 旧名からの移行を 1 箇所に閉じ込めるため、ディレクトリーは config.ts の解決結果を使う。
+const ASSET_DIR = CONFIG_DIR;
 const SETTINGS_PATH = path.join(ASSET_DIR, 'hook-settings.json');
 /** 旧実装の転送スクリプト。HTTP hook 化で不要になったので起動時に掃除する。 */
 const LEGACY_SCRIPT_PATH = path.join(ASSET_DIR, 'deck-hook.mjs');
@@ -48,7 +50,7 @@ const HOOK_EVENTS = [
 
 let cached: { port: number; path: string } | null = null;
 
-/** フック設定 JSON を ~/.claude-deck3 に書き出し、そのパスを返す。 */
+/** フック設定 JSON を ~/.prontella に書き出し、そのパスを返す。 */
 export function ensureHookAssets(port: number): string {
   if (cached && cached.port === port) return cached.path;
   fs.mkdirSync(ASSET_DIR, { recursive: true });
@@ -69,7 +71,7 @@ export function ensureHookAssets(port: number): string {
 
 /**
  * HTTP hook 1 個ぶんの定義。
- * `${CLAUDE_DECK_TERM}` の補間には allowedEnvVars への明示列挙が必要
+ * `${PRONTELLA_TERM}` の補間には allowedEnvVars への明示列挙が必要
  * (未列挙の $VAR は空文字に潰される)。`${VAR}` `$VAR` どちらの書式も実測で通る。
  */
 function buildHttpHook(port: number): Record<string, unknown> {
@@ -77,8 +79,8 @@ function buildHttpHook(port: number): Record<string, unknown> {
     type: 'http',
     url: `http://127.0.0.1:${port}/api/agent-events`,
     timeout: HOOK_TIMEOUT_SEC,
-    headers: { 'X-Deck-Term': '${CLAUDE_DECK_TERM}' },
-    allowedEnvVars: ['CLAUDE_DECK_TERM'],
+    headers: { 'X-Deck-Term': '${PRONTELLA_TERM}' },
+    allowedEnvVars: ['PRONTELLA_TERM'],
   };
 }
 
@@ -119,9 +121,9 @@ export function warnIfHooksBlocked(port: number, warn: (message: string) => void
     );
   }
   const envVars = config.allowedEnvVars;
-  if (Array.isArray(envVars) && !envVars.includes('CLAUDE_DECK_TERM')) {
+  if (Array.isArray(envVars) && !envVars.includes('PRONTELLA_TERM')) {
     warn(
-      '~/.claude/settings.json の allowedEnvVars に CLAUDE_DECK_TERM が含まれていません。' +
+      '~/.claude/settings.json の allowedEnvVars に PRONTELLA_TERM が含まれていません。' +
         'hook のセッション識別ができず、ステータス検知は TUI ヒューリスティックのみになります。',
     );
   }

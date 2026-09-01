@@ -5,7 +5,7 @@ import path from 'node:path';
  * deck が起動する子プロセスへ渡す環境変数の構築点。ここ以外で `process.env` を
  * そのまま spawn に渡さない。
  *
- * 背景: bin/claude-deck.js は自分のために `process.env` へ PORT / NODE_ENV を書く。
+ * 背景: bin/prontella.js は自分のために `process.env` へ PORT / NODE_ENV を書く。
  * さらに deck をどの端末から起動したかによって NO_COLOR・GIT_EDITOR・CLAUDECODE 等が
  * 紛れ込む。それらがそのまま PTY へ流れると、ターミナル内の `npm install` が
  * devDependencies を削除する (NODE_ENV=production)、dev サーバーが deck のポートを
@@ -18,10 +18,10 @@ import path from 'node:path';
  *                   「OS で新規に端末を開いた」状態を再構成した env。
  */
 
-// bin/claude-deck.js が process.env を書き換える前のスナップショット。
+// bin/prontella.js が process.env を書き換える前のスナップショット。
 let inherited: NodeJS.ProcessEnv | null = null;
 
-/** bin/claude-deck.js から、process.env を書き換える前に一度だけ呼ぶ。 */
+/** bin/prontella.js から、process.env を書き換える前に一度だけ呼ぶ。 */
 export function captureInheritedEnv(env: NodeJS.ProcessEnv = process.env): void {
   inherited = { ...env };
 }
@@ -258,7 +258,7 @@ export function warmTerminalEnv(): void {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(
-      `[claude-deck3] OS 既定の環境変数を再構成できませんでした。deck が継承した環境で代用します: ${message}`,
+      `[prontella] OS 既定の環境変数を再構成できませんでした。deck が継承した環境で代用します: ${message}`,
     );
     terminalBase = null;
   }

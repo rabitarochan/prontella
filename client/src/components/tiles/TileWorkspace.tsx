@@ -57,6 +57,7 @@ export default function TileWorkspace({
         <div className="tile-view" style={{ display: leaf.view === 'term' ? undefined : 'none' }}>
           <TermPanel
             leafId={leaf.id}
+            root={worktree.path}
             sessions={sessions}
             ownedIds={leaf.sessions.filter((id) => sessionKind(id) !== 'sdk')}
             activeId={leaf.activeSession}

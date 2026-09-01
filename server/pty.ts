@@ -1,9 +1,10 @@
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import * as pty from 'node-pty';
 import type { WebSocket } from 'ws';
-import { terminalEnv } from './childEnv.js';
+import { envGet, terminalEnv, windowsExecutableCandidates } from './childEnv.js';
 import {
   applyClaudeHookEvent,
   clearWork,
@@ -131,10 +132,64 @@ interface Session {
   activityTimer: NodeJS.Timeout | null;
 }
 
-function defaultShell(): { file: string; args: string[] } {
-  if (process.platform === 'win32') {
-    return { file: 'powershell.exe', args: ['-NoLogo'] };
+/** PATH / PATHEXT を辿って実行ファイルの実体を探す (Windows)。無ければ null。 */
+function findWindowsExecutable(exe: string, env: Record<string, string>): string | null {
+  const pathValue = envGet(env, 'PATH') ?? '';
+  const pathExt = envGet(env, 'PATHEXT') ?? '.COM;.EXE;.BAT;.CMD';
+  for (const candidate of windowsExecutableCandidates(exe, pathValue, pathExt)) {
+    try {
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      // 次の候補へ
+    }
   }
+  return null;
+}
+
+/** 解決済みの Windows 既定シェル。プロセスで一度だけ決める。 */
+let windowsShellCache: { file: string; args: string[] } | null = null;
+
+/**
+ * Windows の既定シェル: pwsh (PowerShell 7+) があればそちら、無ければ
+ * Windows PowerShell 5.1 (`powershell.exe`) にフォールバックする。
+ * `CLAUDE_DECK_SHELL` を指定するとそれを優先する (解決できなければ警告して既定へ)。
+ *
+ * なぜ pwsh を優先するか (2026-09-01 実測):
+ * 5.1 に同梱の PSReadLine は 2.0.0 で、予測入力 (Predictive IntelliSense) が
+ * 実装されていない (`Set-PSReadLineOption` に `-PredictionSource` が無い)。
+ * childEnv.ts で PTY の env を「新規端末相当」に再構成する前は、deck を pwsh から
+ * 起動していると PTY が PS7 の PSModulePath を継承し、5.1 が PS7 同梱の
+ * PSReadLine 2.4.5 を拾って予測が効いていた — が、これは起動元シェルに依存する
+ * 偶然で、素の powershell.exe を開いた状態では元々効かない。
+ * PS7 ユーザーにとっての「新規端末」は pwsh なので、env を戻すのではなく
+ * シェル側を合わせる。実測: pwsh 7.6.5 / PSReadLine 2.4.5 /
+ * PredictionSource=HistoryAndPlugin / InlineView。
+ */
+function windowsShell(): { file: string; args: string[] } {
+  if (windowsShellCache) return windowsShellCache;
+  const env = terminalEnv();
+  const args = ['-NoLogo'];
+  const override = process.env.CLAUDE_DECK_SHELL?.trim();
+  if (override) {
+    // 絶対パス指定と PATH 上の名前指定の両方を受ける
+    const resolved = path.isAbsolute(override)
+      ? (fs.existsSync(override) ? override : null)
+      : findWindowsExecutable(override, env);
+    if (resolved) {
+      windowsShellCache = { file: resolved, args };
+      return windowsShellCache;
+    }
+    console.warn(
+      `[claude-deck3] CLAUDE_DECK_SHELL=${override} が見つかりません。既定のシェルを使います。`,
+    );
+  }
+  const pwsh = findWindowsExecutable('pwsh.exe', env);
+  windowsShellCache = { file: pwsh ?? 'powershell.exe', args };
+  return windowsShellCache;
+}
+
+function defaultShell(): { file: string; args: string[] } {
+  if (process.platform === 'win32') return windowsShell();
   return { file: terminalEnv().SHELL || 'bash', args: [] };
 }
 

@@ -2221,11 +2221,51 @@ button.statusbar-item:hover:not(:disabled) {
   border: none;
   background: transparent;
 }
+/* ターミナルグループツリーのコンテナ。中身は SplitTreeView の再帰 */
 .term-body {
   flex: 1;
+  min-width: 0;
   min-height: 0;
-  position: relative;
+  display: flex;
   background: var(--terminal-bg);
+}
+.term-body > * {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.term-group-grid {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.term-group-panel {
+  display: flex;
+}
+.term-group-panel > * {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+/* 1 グループ = タブ列 + 本文 (+ アクティビティバー) */
+.term-group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+/* 本文。xterm ホスト (絶対配置) と DnD ドロップオーバーレイの基準 */
+.term-group-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--terminal-bg);
+}
+/* セッションごとの安定ホスト。中身は createPortal された XTermView で、
+   表示/非表示は XTermView 側の .xterm-host が持つ */
+.term-host {
+  position: absolute;
+  inset: 0;
 }
 /* ターミナル下部のエージェントアクティビティバー。chat の統計バーと同じ寸法・
    同じチップ (.chat-sub*) を使い、2 経路で見た目が割れないようにしてある。 */
@@ -2265,6 +2305,83 @@ button.statusbar-item:hover:not(:disabled) {
   color: var(--primary);
   border-color: var(--primary-dim);
 }
+/* ---- Claude 使用量バー (ターミナルタイルのヘッダー) ---- */
+
+.usage-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 26px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  /* 文字はすべてテーマの前景色で揃える (ダークテーマでは白)。ヘッダーの中で
+     色を持つのはゲージだけにして、注意/警告のときだけ色が現れるようにする */
+  color: var(--fg);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.usage-bar:hover {
+  background: var(--bg-hover);
+}
+.usage-bar.is-loading {
+  cursor: default;
+  opacity: 0.7;
+}
+.usage-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.usage-slot-pct {
+  font-variant-numeric: tabular-nums;
+  /* 桁が増えても右隣のスロットがずれないよう "100%" 分の幅を確保する */
+  min-width: 2.6em;
+  text-align: right;
+}
+/* 使用率のゲージ。通常時の塗りは中立色 (--fg-dim) にしてあるので、
+   ヘッダーの中で色が付くのは注意 (黄) / 警告 (赤) のときだけになる */
+.usage-gauge {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 6px;
+  border-radius: 3px;
+  /* トラックは前景色の混色で作る。--bg-active だとタイルの地色との差が小さく、
+     使用率が数 % のときに「空のメーター」ではなく「ただの余白」に見えてしまう
+     (両テーマで実測)。前景基準なのでライト/ダークどちらでも同じ見え方になる */
+  background: color-mix(in srgb, var(--fg) 28%, transparent);
+  overflow: hidden;
+}
+.usage-gauge-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 3px;
+  background: var(--fg-dim);
+  transition:
+    width 0.3s ease,
+    background-color 0.3s ease;
+}
+.usage-slot.is-warn .usage-gauge-fill {
+  background: var(--yellow);
+}
+.usage-slot.is-warn .usage-slot-pct {
+  color: var(--yellow);
+}
+.usage-slot.is-danger .usage-gauge-fill {
+  background: var(--red);
+}
+.usage-slot.is-danger .usage-slot-pct {
+  color: var(--red);
+  font-weight: 600;
+}
+
 /* xterm 本体と接続バッジを重ねるためのラッパー。表示/非表示 (display) の
    担い手はこちら側で、.xterm-container は中で絶対配置のまま。 */
 .xterm-host {

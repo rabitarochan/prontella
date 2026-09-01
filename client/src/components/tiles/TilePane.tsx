@@ -123,9 +123,10 @@ export default function TilePane({
   // ドロップダウンのセッション数は kind で振り分ける (term = pty / chat = sdk)
   const ptyCount = leaf.sessions.filter((id) => sessionKind(id) !== 'sdk').length;
   const chatCount = leaf.sessions.length - ptyCount;
-  // term / chat ビューではセッションタブ自体がバーに入る (ドット付き) ため、
-  // 先頭ゾーンの集約カウント / ステータスドットは他ビュー表示中のみ出す
-  const tabsInBar = leaf.view === 'term' || leaf.view === 'chat';
+  // chat ビューではセッションタブ自体がバーに入る (ドット付き) ため、先頭ゾーンの
+  // 集約カウント / ステータスドットは他ビュー表示中のみ出す。term ビューのタブは
+  // グループごとに 1 段下がった (バーには使用量表示が入る) ので対象外。
+  const tabsInBar = leaf.view === 'chat';
   const current = VIEWS.find((v) => v.view === leaf.view) ?? VIEWS[0];
   const CurrentIcon = current.Icon;
 

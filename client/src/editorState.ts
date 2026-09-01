@@ -411,6 +411,9 @@ export const EDITOR_STATE_STORAGE_PREFIX = 'claude-deck.editorState.';
 // layout/useTileLayout.ts のレイアウト永続化キー。依存方向を一方向に保つため
 // (useTileLayout.ts → editorState.ts)、定数の定義はこちらに置く。
 export const TILE_LAYOUT_STORAGE_PREFIX = 'claude-deck.tileLayout.';
+// layout/termState.ts のターミナルグループ永続化キー。TILE_LAYOUT_STORAGE_PREFIX と
+// 同じ理由でこちらに置く (layout/* → editorState.ts の一方向依存を保つため)。
+export const TERM_STATE_STORAGE_PREFIX = 'claude-deck.termState.';
 
 function emptyDoc(): WorktreeEditorState {
   return { version: 2, leaves: {} };
@@ -456,6 +459,7 @@ export function removeWorktreeLocalState(worktreePath: string): void {
   try {
     localStorage.removeItem(EDITOR_STATE_STORAGE_PREFIX + worktreePath);
     localStorage.removeItem(TILE_LAYOUT_STORAGE_PREFIX + worktreePath);
+    localStorage.removeItem(TERM_STATE_STORAGE_PREFIX + worktreePath);
   } catch {
     // storage unavailable
   }

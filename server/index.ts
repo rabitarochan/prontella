@@ -15,6 +15,7 @@ import { PtyManager, aggregateStatus } from './pty.js';
 import { ensureHookAssets, warnIfHooksBlocked } from './hooks.js';
 import { AgentSessionManager } from './agentSession.js';
 import { attachEvents } from './sessionEvents.js';
+import { getUsage } from './usage.js';
 import { attachVncBridge, getVncTarget, probeVncTarget } from './vnc.js';
 import { keepAlive } from './wsKeepAlive.js';
 
@@ -1238,6 +1239,13 @@ app.get('/api/search/text', asyncHandler(async (req, res) => {
 }));
 
 // ---- terminals ---------------------------------------------------------------
+
+// Claude のプラン使用量 (5 時間枠 / 週枠 / モデル別枠)。取得不可 (API キー運用・
+// Bedrock/Vertex・SDK 未対応・CLI 起動失敗) は 500 ではなく available:false で返す —
+// 使用量はあくまで補助表示で、失敗が UI のエラーになるべきものではない。
+app.get('/api/usage', asyncHandler(async (_req, res) => {
+  res.json(await getUsage());
+}));
 
 app.get('/api/terminals', asyncHandler(async (req, res) => {
   const cwd = typeof req.query.cwd === 'string' ? req.query.cwd : undefined;

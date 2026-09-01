@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import path from 'node:path';
 
 /**
  * deck が起動する子プロセスへ渡す環境変数の構築点。ここ以外で `process.env` を
@@ -81,6 +82,45 @@ function getCaseInsensitive(src: Record<string, string>, key: string): string | 
     if (k.toUpperCase() === upper) return v;
   }
   return undefined;
+}
+
+/** Windows の環境変数名は大文字小文字を区別しないので、名前で引くときは無視する。 */
+export function envGet(
+  env: Record<string, string> | NodeJS.ProcessEnv,
+  name: string,
+): string | undefined {
+  return getCaseInsensitive(env as Record<string, string>, name);
+}
+
+/**
+ * Windows で `exe` を PATH から探すときに試す絶対パスを、探索順に返す (純関数)。
+ * 拡張子付きの名前ならそのまま試し、無ければ PATHEXT の各拡張子を順に付ける。
+ *
+ * 実ファイルの存在確認は呼び出し側の責務。ここを純関数にしてあるのは、
+ * PATH の分解 (引用符・空要素・区切り) を単体テストで固定するため。
+ */
+export function windowsExecutableCandidates(
+  exe: string,
+  pathValue: string,
+  pathExt: string,
+): string[] {
+  const dirs = pathValue
+    .split(';')
+    .map((d) => d.trim().replace(/^"(.*)"$/, '$1'))
+    .filter((d) => d.length > 0);
+  // 既に拡張子が付いている名前に PATHEXT を足さない (pwsh.exe.EXE を作らない)
+  const hasExt = /\.[^\\/.]+$/.test(exe);
+  const exts = hasExt
+    ? ['']
+    : pathExt
+        .split(';')
+        .map((e) => e.trim())
+        .filter((e) => e.length > 0);
+  const out: string[] = [];
+  for (const dir of dirs) {
+    for (const ext of exts) out.push(path.join(dir, exe + ext));
+  }
+  return out;
 }
 
 /**

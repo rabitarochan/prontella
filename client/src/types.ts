@@ -261,6 +261,30 @@ export interface TerminalSession {
   activity: AgentActivity | null;
 }
 
+// Claude のプラン使用量。server/usage.ts の UsageSnapshot と手動同期
+// (共有型機構がないため)。
+export interface UsageWindow {
+  /** 枠の使用率 0-100。取得できないときは null。 */
+  utilization: number | null;
+  /** ISO 8601。枠が未アクティブのときは null になりうる。 */
+  resetsAt: string | null;
+}
+
+export interface UsageModelWindow extends UsageWindow {
+  /** サーバー supplied のラベル ('Fable' 等)。 */
+  displayName: string;
+}
+
+export interface UsageSnapshot {
+  subscriptionType: string | null;
+  /** false = プラン制限が適用されない (API キー / Bedrock / Vertex) か取得失敗。 */
+  available: boolean;
+  fiveHour: UsageWindow | null;
+  sevenDay: UsageWindow | null;
+  modelScoped: UsageModelWindow[];
+  fetchedAt: number;
+}
+
 // chat (Agent SDK) セッションの構造化イベント。server/agentSession.ts と手動同期
 // (共有型機構がないため)。
 export type AgentChatEvent =

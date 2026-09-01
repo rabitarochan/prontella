@@ -100,6 +100,11 @@ Worktree を開き「✦ Claude 起動」でそのディレクトリーをカレ
   macOS/Linux: ログインシェルから取得)。deck をどの端末から起動しても中身が変わらず、
   `NODE_ENV` や `PORT` のような deck 側の変数が紛れ込みません。ターミナルへ渡したい変数は
   シェルの export ではなく OS のユーザー環境変数に設定してください
+- Windows のターミナルは `pwsh` (PowerShell 7 以降) があればそれを、無ければ
+  `powershell.exe` (Windows PowerShell 5.1) を起動します。5.1 に同梱の PSReadLine は 2.0.0 で
+  予測入力 (Predictive IntelliSense) が使えないため、既定を PowerShell 7 側に寄せています。
+  明示したい場合は環境変数 `CLAUDE_DECK_SHELL` にコマンド名か絶対パスを指定してください
+  (例: `CLAUDE_DECK_SHELL=powershell.exe`)。指定が見つからないときは警告を出して既定に戻ります
 - `scripts/ws-debug.mjs` はターミナル出力とステータス検知のデバッグ用ヘルパー
 - 「✦ Claude 起動」以外で起動した claude (ターミナルに手打ちなど) は hooks が入らないため、
   TUI 文言ヒューリスティックのみで検知します。文言変更で精度が落ちた場合は `server/pty.ts` の

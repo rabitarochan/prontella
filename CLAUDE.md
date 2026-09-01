@@ -1,4 +1,4 @@
-## Project Rules (claude-deck3)
+## Project Rules (prontella)
 
 > Added by `/fable-team:grow`. Outside the fable markers so `init` does not overwrite it.
 

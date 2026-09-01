@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { composeWindowsEnv, parseEnvNul } from './childEnv.js';
+import {
+  composeWindowsEnv,
+  envGet,
+  parseEnvNul,
+  windowsExecutableCandidates,
+} from './childEnv.js';
 
 // composeWindowsEnv / parseEnvNul は副作用のない純関数なので、実際の PowerShell や
 // ログインシェルを起動せずに合成規則だけを検証する。
@@ -151,5 +156,44 @@ describe('captureInheritedEnv / childEnv', () => {
     } finally {
       delete process.env[key];
     }
+  });
+});
+
+describe('windowsExecutableCandidates', () => {
+  const EXT = '.COM;.EXE;.BAT;.CMD';
+
+  it('PATH の順を保ち、各ディレクトリーで PATHEXT を順に試す', () => {
+    const out = windowsExecutableCandidates('pwsh', 'C:\\a;C:\\b', '.EXE;.CMD');
+    expect(out).toEqual(['C:\\a\\pwsh.EXE', 'C:\\a\\pwsh.CMD', 'C:\\b\\pwsh.EXE', 'C:\\b\\pwsh.CMD']);
+  });
+
+  it('既に拡張子が付いていれば PATHEXT を足さない', () => {
+    const out = windowsExecutableCandidates('pwsh.exe', 'C:\\a;C:\\b', EXT);
+    expect(out).toEqual(['C:\\a\\pwsh.exe', 'C:\\b\\pwsh.exe']);
+  });
+
+  it('空要素と前後の空白を捨て、引用符で囲まれた要素を剥がす', () => {
+    const out = windowsExecutableCandidates('x.exe', ' C:\\a ;;"C:\\Program Files\\b";', EXT);
+    expect(out).toEqual(['C:\\a\\x.exe', 'C:\\Program Files\\b\\x.exe']);
+  });
+
+  it('PATH が空なら候補も空 (探索して見つからない、と区別しない)', () => {
+    expect(windowsExecutableCandidates('pwsh.exe', '', EXT)).toEqual([]);
+  });
+
+  it('PATHEXT が空なら拡張子無しの名前は候補を作れない', () => {
+    expect(windowsExecutableCandidates('pwsh', 'C:\\a', '')).toEqual([]);
+  });
+});
+
+describe('envGet', () => {
+  it('大文字小文字を無視して引く', () => {
+    const env = { Path: 'C:\\a', PATHEXT: '.EXE' };
+    expect(envGet(env, 'PATH')).toBe('C:\\a');
+    expect(envGet(env, 'pathext')).toBe('.EXE');
+  });
+
+  it('無ければ undefined', () => {
+    expect(envGet({}, 'PATH')).toBeUndefined();
   });
 });

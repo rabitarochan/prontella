@@ -126,7 +126,7 @@ describe('captureInheritedEnv / childEnv', () => {
   it('capture 時点の値を返し、その後の process.env 書き換えは混ざらない', async () => {
     const mod = await freshModule();
     mod.captureInheritedEnv({ FOO: 'captured' });
-    // bin/claude-deck.js が capture 後に PORT/NODE_ENV を書く状況の再現
+    // bin/prontella.js が capture 後に PORT/NODE_ENV を書く状況の再現
     const injected = 'DECK_TEST_INJECTED_AFTER_CAPTURE';
     process.env[injected] = 'leaked';
     try {

@@ -39,10 +39,10 @@ const CORE_STRINGS = {
   },
 
   // ---- アプリ / タブタイトル ----
-  'app.titleWaiting': { ja: '({n}) 確認待ち — Claude Deck', en: '({n}) needs input — Claude Deck' },
+  'app.titleWaiting': { ja: '({n}) 確認待ち — Prontella', en: '({n}) needs input — Prontella' },
 
   // ---- モバイル (/m) ----
-  'mobile.title': { ja: 'Claude Deck', en: 'Claude Deck' },
+  'mobile.title': { ja: 'Prontella', en: 'Prontella' },
   'mobile.back': { ja: '一覧', en: 'List' },
   'mobile.refresh': { ja: '更新', en: 'Refresh' },
   'mobile.activeTitle': { ja: '稼働中のエージェント', en: 'Active agents' },
@@ -225,8 +225,8 @@ const CORE_STRINGS = {
     en: 'Linux: run x11vnc (X11) / wayvnc (Wayland) / gnome-remote-desktop, etc.',
   },
   'vnc.configHint': {
-    ja: '接続先は ~/.claude-deck3/config.json の "vnc" キー (例: {"vnc": {"host": "127.0.0.1", "port": 5900}}) か、環境変数 CLAUDE_DECK_VNC_HOST / CLAUDE_DECK_VNC_PORT で変更できます。',
-    en: 'The target can be changed via the "vnc" key in ~/.claude-deck3/config.json (e.g. {"vnc": {"host": "127.0.0.1", "port": 5900}}) or the CLAUDE_DECK_VNC_HOST / CLAUDE_DECK_VNC_PORT environment variables.',
+    ja: '接続先は ~/.prontella/config.json の "vnc" キー (例: {"vnc": {"host": "127.0.0.1", "port": 5900}}) か、環境変数 PRONTELLA_VNC_HOST / PRONTELLA_VNC_PORT で変更できます。',
+    en: 'The target can be changed via the "vnc" key in ~/.prontella/config.json (e.g. {"vnc": {"host": "127.0.0.1", "port": 5900}}) or the PRONTELLA_VNC_HOST / PRONTELLA_VNC_PORT environment variables.',
   },
   'vnc.retryProbe': { ja: '再確認', en: 'Check again' },
 } as const satisfies Record<string, Record<Lang, string>>;

@@ -78,7 +78,7 @@ export default function App() {
   const waitingCount = useMemo(() => waitingSessions(sessions).length, [sessions]);
   useEffect(() => {
     document.title =
-      waitingCount > 0 ? t('app.titleWaiting', { n: waitingCount }) : 'Claude Deck';
+      waitingCount > 0 ? t('app.titleWaiting', { n: waitingCount }) : 'Prontella';
   }, [waitingCount, t]);
 
   const current = findSelection(repos, selected);

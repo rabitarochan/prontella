@@ -1,9 +1,9 @@
 ---
 name: pj-client-ui-state
-description: claude-deck3 のクライアント(React / Monaco / react-arborist)で、再レンダーや状態の寿命、設定(.editorconfig 等)の適用に触れるときの落とし穴と切り分け手順。エディター・ファイルツリー・ステータスバー・保存経路を変更する実装/調査タスクを委任するとき、brief の References にこのファイルのパスを入れる。
+description: prontella のクライアント(React / Monaco / react-arborist)で、再レンダーや状態の寿命、設定(.editorconfig 等)の適用に触れるときの落とし穴と切り分け手順。エディター・ファイルツリー・ステータスバー・保存経路を変更する実装/調査タスクを委任するとき、brief の References にこのファイルのパスを入れる。
 ---
 
-# pj-client-ui-state — クライアント状態・再レンダー・設定適用の定石(claude-deck3)
+# pj-client-ui-state — クライアント状態・再レンダー・設定適用の定石(prontella)
 
 ## 収録基準
 
@@ -262,3 +262,21 @@ description: claude-deck3 のクライアント(React / Monaco / react-arborist)
   「1 人目かどうか」は remount の往復で簡単に破れる前提に立つ
 - **検証**: `fetch` をラップして呼び出し回数を数え、**タイルを分割した前後で増えないこと**を
   測る。「同時に 2 本走っていないこと」だけでは往復ごとの 1 発を見逃す
+
+## 16. 永続化キーの移行・書き換えはバンドルより前に走らせる
+
+- **症状**: 起動時に localStorage のキーを書き換える処理(改名に伴う移行、既定値の注入)を
+  `main.tsx` の本体に置くと、**何も移行されない**
+- **原理**: 各ストア(`theme/themeStore.ts`・`editorState.ts`・`i18n/langStore.ts`・
+  `layout/*Store.ts` 等)は**モジュール初期化時**に `localStorage` を読む。ESM は import を
+  先に評価するので、`main.tsx` の本体が動く頃には**全ストアが旧キー(= 存在しないキー)を
+  読み終えて既定値で確定している**
+- **打ち手**: `client/index.html` のインライン script で行う。FOUC 対策のテーマ読み出しより
+  **前**に置く(でないと初回ペイントだけ既定テーマになる)。走査は `localStorage.length - 1`
+  から**末尾方向へ**(途中でキーを消すため)。新キーが既にあれば旧キーは捨てる
+- **やらない**: 「移行モジュールを `main.tsx` の先頭で import する」は、import 並べ替えの
+  整形ツールやリンターで簡単に壊れる。**評価順序を人間の規律に頼らせない**
+- **検証**: 実ブラウザーで「旧キーを仕込む → ロード → ダンプ」。仕込みは
+  `Page.addScriptToEvaluateOnNewDocument`(ページスクリプトより前に走る)。
+  **移行が先に走った証拠は「移行後の値でテーマが初回ペイントから適用されていること」で取る** —
+  キーの中身だけ見ても順序は分からない

@@ -152,7 +152,7 @@ let windowsShellCache: { file: string; args: string[] } | null = null;
 /**
  * Windows の既定シェル: pwsh (PowerShell 7+) があればそちら、無ければ
  * Windows PowerShell 5.1 (`powershell.exe`) にフォールバックする。
- * `CLAUDE_DECK_SHELL` を指定するとそれを優先する (解決できなければ警告して既定へ)。
+ * `PRONTELLA_SHELL` を指定するとそれを優先する (解決できなければ警告して既定へ)。
  *
  * なぜ pwsh を優先するか (2026-09-01 実測):
  * 5.1 に同梱の PSReadLine は 2.0.0 で、予測入力 (Predictive IntelliSense) が
@@ -169,7 +169,7 @@ function windowsShell(): { file: string; args: string[] } {
   if (windowsShellCache) return windowsShellCache;
   const env = terminalEnv();
   const args = ['-NoLogo'];
-  const override = process.env.CLAUDE_DECK_SHELL?.trim();
+  const override = process.env.PRONTELLA_SHELL?.trim();
   if (override) {
     // 絶対パス指定と PATH 上の名前指定の両方を受ける
     const resolved = path.isAbsolute(override)
@@ -180,7 +180,7 @@ function windowsShell(): { file: string; args: string[] } {
       return windowsShellCache;
     }
     console.warn(
-      `[claude-deck3] CLAUDE_DECK_SHELL=${override} が見つかりません。既定のシェルを使います。`,
+      `[prontella] PRONTELLA_SHELL=${override} が見つかりません。既定のシェルを使います。`,
     );
   }
   const pwsh = findWindowsExecutable('pwsh.exe', env);
@@ -213,11 +213,11 @@ export class PtyManager {
       cwd,
       // terminalEnv(): deck の process.env ではなく「OS で新規に端末を開いた」環境。
       // deck の起動元シェルの汚染 (NODE_ENV/PORT/NO_COLOR/GIT_EDITOR ...) を持ち込まない。
-      // CLAUDE_DECK_* は deck-hook.mjs がイベントの届け先とセッションを
+      // PRONTELLA_* は deck-hook.mjs がイベントの届け先とセッションを
       // 特定するための変数。claude 経由でフックの子プロセスまで届く。
       env: terminalEnv({
-        CLAUDE_DECK_PORT: String(this.port),
-        CLAUDE_DECK_TERM: id,
+        PRONTELLA_PORT: String(this.port),
+        PRONTELLA_TERM: id,
       }),
     });
     const session: Session = {

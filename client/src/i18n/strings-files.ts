@@ -260,8 +260,8 @@ export const FILES_STRINGS = {
   },
 
   // ---- デスクトップ通知 (agentEvents.ts → notify.ts) ----
-  'notify.waitingTitle': { ja: '確認待ち — Claude Deck', en: 'Needs input — Claude Deck' },
-  'notify.doneTitle': { ja: '完了 — Claude Deck', en: 'Done — Claude Deck' },
+  'notify.waitingTitle': { ja: '確認待ち — Prontella', en: 'Needs input — Prontella' },
+  'notify.doneTitle': { ja: '完了 — Prontella', en: 'Done — Prontella' },
   'notify.waitingBody': {
     ja: '{label}: エージェントが応答を待っています',
     en: '{label}: The agent is waiting for a response',

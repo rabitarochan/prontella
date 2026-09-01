@@ -19,7 +19,7 @@ const RESET_MODES: readonly ResetMode[] = ['soft', 'mixed', 'hard'];
 const ROW_H = 28;
 const LANE_W = 14;
 const MIN_COL_W = 40;
-const COLS_KEY = 'deck3:historyColumns';
+const COLS_KEY = 'prontella:historyColumns';
 
 type ColKey = 'tree' | 'subject' | 'commit' | 'author' | 'date';
 // tree is null while it tracks the computed graph width; a drag pins it to a number.

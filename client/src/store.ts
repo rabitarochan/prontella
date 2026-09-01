@@ -24,7 +24,7 @@ interface DeckState {
   setRepoArchived: (id: string, archived: boolean) => Promise<boolean>;
 }
 
-const SELECTED_STORAGE_KEY = 'claude-deck.selected';
+const SELECTED_STORAGE_KEY = 'prontella.selected';
 
 function isSelectionLike(value: unknown): value is Selection {
   return (

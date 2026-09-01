@@ -22,7 +22,7 @@ interface AgentEventsState {
   setSoundEnabled: (v: boolean) => void;
 }
 
-// Sidebar のアーカイブ折りたたみ永続化 (deck3.sidebar.archivedOpen) でも再利用する
+// Sidebar のアーカイブ折りたたみ永続化 (prontella.sidebar.archivedOpen) でも再利用する
 // 汎用の boolean pref ヘルパー。notify 専用ではないためここから export する。
 export function loadPref(key: string, fallback: boolean): boolean {
   try {
@@ -43,14 +43,14 @@ export function savePref(key: string, value: boolean): void {
 
 export const useAgentEvents = create<AgentEventsState>((set) => ({
   sessions: {},
-  desktopEnabled: loadPref('deck3.notify.desktop', true),
-  soundEnabled: loadPref('deck3.notify.sound', true),
+  desktopEnabled: loadPref('prontella.notify.desktop', true),
+  soundEnabled: loadPref('prontella.notify.sound', true),
   setDesktopEnabled: (v) => {
-    savePref('deck3.notify.desktop', v);
+    savePref('prontella.notify.desktop', v);
     set({ desktopEnabled: v });
   },
   setSoundEnabled: (v) => {
-    savePref('deck3.notify.sound', v);
+    savePref('prontella.notify.sound', v);
     set({ soundEnabled: v });
   },
 }));
@@ -120,7 +120,7 @@ function notify(kind: 'waiting' | 'done', session: TerminalSession): void {
     desktopNotify(
       t(kind === 'waiting' ? 'notify.waitingTitle' : 'notify.doneTitle'),
       t(kind === 'waiting' ? 'notify.waitingBody' : 'notify.doneBody', { label }),
-      `deck3-${kind}-${session.id}`,
+      `prontella-${kind}-${session.id}`,
       () => focusSession(session),
     );
   }

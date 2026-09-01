@@ -1,9 +1,9 @@
 ---
 name: pj-git-route
-description: claude-deck3 に Git 操作(サーバールート + API + UI メニュー)を安全に追加・変更するときの定石。3 層配線・引数インジェクション防壁(typeof チェック・純関数抽出を含む)・operation/busy ゲート・破壊的操作の確認・git コマンド固有の定石・隔離スモーク+敵対的入力までを 1 枚に。builder への brief の References にこのファイルのパスを入れる。
+description: prontella に Git 操作(サーバールート + API + UI メニュー)を安全に追加・変更するときの定石。3 層配線・引数インジェクション防壁(typeof チェック・純関数抽出を含む)・operation/busy ゲート・破壊的操作の確認・git コマンド固有の定石・隔離スモーク+敵対的入力までを 1 枚に。builder への brief の References にこのファイルのパスを入れる。
 ---
 
-# pj-git-route — Git 操作を追加する定石(claude-deck3)
+# pj-git-route — Git 操作を追加する定石(prontella)
 
 Phase 0〜5 で約 9 本の Git 操作ルートを同一テンプレートで追加し、reviewer が敵対的入力で
 繰り返し検証してきた実績のパターン。新しい Git 操作(タグ/stash/検索/blame など)を足すときは

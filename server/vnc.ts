@@ -89,13 +89,13 @@ export function resolveVncTarget(
   const checked = checkVncConfig(configValue);
   const target = checked.ok ? checked.target : { ...DEFAULT_TARGET };
   if (!checked.ok) {
-    log(`[claude-deck3] config.json の vnc 設定が不正なため既定値を使います: ${checked.error}`);
+    log(`[prontella] config.json の vnc 設定が不正なため既定値を使います: ${checked.error}`);
   }
   if (env.host !== undefined) {
     if (isValidHost(env.host)) {
       target.host = env.host;
     } else {
-      log('[claude-deck3] CLAUDE_DECK_VNC_HOST が不正なため無視します');
+      log('[prontella] PRONTELLA_VNC_HOST が不正なため無視します');
     }
   }
   if (env.port !== undefined) {
@@ -103,7 +103,7 @@ export function resolveVncTarget(
     if (isValidPort(port)) {
       target.port = port;
     } else {
-      log(`[claude-deck3] CLAUDE_DECK_VNC_PORT が不正なため無視します: ${env.port}`);
+      log(`[prontella] PRONTELLA_VNC_PORT が不正なため無視します: ${env.port}`);
     }
   }
   return target;
@@ -119,8 +119,8 @@ export function getVncTarget(): VncTarget {
     configValue = undefined;
   }
   return resolveVncTarget(configValue, {
-    host: process.env.CLAUDE_DECK_VNC_HOST,
-    port: process.env.CLAUDE_DECK_VNC_PORT,
+    host: process.env.PRONTELLA_VNC_HOST,
+    port: process.env.PRONTELLA_VNC_PORT,
   });
 }
 

@@ -1,22 +1,22 @@
 ---
 name: pj-isolated-verify
-description: claude-deck3 の動作検証を、原則としてユーザーの実設定・実リポジトリー・稼働中インスタンスに触れずに行う隔離環境手順(サーバー単体起動+実ブラウザー)と、隔離が観測対象を変えてしまう場合の例外規律。verifier / builder のスモーク・E2E 検証タスクを委任するとき、brief の References にこのファイルのパスを入れる。
+description: prontella の動作検証を、原則としてユーザーの実設定・実リポジトリー・稼働中インスタンスに触れずに行う隔離環境手順(サーバー単体起動+実ブラウザー)と、隔離が観測対象を変えてしまう場合の例外規律。verifier / builder のスモーク・E2E 検証タスクを委任するとき、brief の References にこのファイルのパスを入れる。
 ---
 
-# pj-isolated-verify — 隔離検証環境(claude-deck3)
+# pj-isolated-verify — 隔離検証環境(prontella)
 
 ## 原理
 
-- 設定パスは `server/config.ts` の `os.homedir()/.claude-deck3/config.json`。Windows の
+- 設定パスは `server/config.ts` の `os.homedir()/.prontella/config.json`。Windows の
   `os.homedir()` は環境変数 `USERPROFILE` に従うため、**これを差し替えるだけで設定が完全隔離**される
-- ユーザーは本物の claude-deck3 を常用中(vite 8110 / server 3711)。**ポートは必ず別にする**
+- ユーザーは本物の prontella を常用中(vite 8110 / server 3711)。**ポートは必ず別にする**
   (慣例: 4711 または 3799)。vite dev の proxy は 3711 固定なので、隔離検証では vite dev を使わず
   ビルド済み client を server 単体で配信する
 - **例外: 実ユーザー環境そのものが検証対象のときは USERPROFILE を差し替えない**。
   差し替えると `os.homedir()` だけでなく**子プロセスに渡す env や PATH の再構成結果まで
   変わる**ため、検証が対象を測れなくなる(例: `pj-child-env` の「OS 既定環境を正しく
   再構成できているか」の検証。2026-08-28 実測)。この場合は**ポート分離だけを維持**し、
-  代わりに **(a) 実データへの書き込み経路を事前に洗い出す**(`~/.claude-deck3/config.json`、
+  代わりに **(a) 実データへの書き込み経路を事前に洗い出す**(`~/.prontella/config.json`、
   `agent-sessions/`、`hook-settings.json`)**(b) 終了後に残骸の不在とファイルの健全性を確認して
   報告する**。隔離を外したことは所見に明記する
 
@@ -59,7 +59,7 @@ description: claude-deck3 の動作検証を、原則としてユーザーの実
    - **HTML5 ネイティブ DnD は、判定がアプリ内ストア駆動なら untrusted DragEvent の合成で
      実経路ごと検証できる**(2026-08-22 実測: タブ DnD の並べ替え/分割/クロス leaf 転送を全て
      これで検証)。`new DataTransfer()` を作って dragstart → dragover → drop → dragend を
-     `dispatchEvent` する。claude-deck3 の DnD は「dragover 中に dataTransfer.getData が読めない
+     `dispatchEvent` する。prontella の DnD は「dragover 中に dataTransfer.getData が読めない
      (protected mode)ため zustand ストアを正とする」設計なので、dataTransfer の中身が空でも
      製品コードと同じ分岐を通る。**dragstart の後はドロップオーバーレイ等の React 再レンダーを
      待ってから (実測 250ms) dragover を撃つ** — 即時に撃つとオーバーレイ未描画で空振りする
@@ -78,7 +78,7 @@ description: claude-deck3 の動作検証を、原則としてユーザーの実
      状態を先に疑う
 6. **終了時の後始末(必須)**: サーバープロセス kill → ポート解放を確認 / ブラウザーページをクローズ /
    自分が使った `vt/<サブディレクトリー>` を削除(`vt/README.md` は消さない) /
-   実設定 `%USERPROFILE%\.claude-deck3` のタイムスタンプが不変であることを確認して報告
+   実設定 `%USERPROFILE%\.prontella` のタイムスタンプが不変であることを確認して報告
 
 ## 罠(すべて実測済み)
 
@@ -193,10 +193,13 @@ description: claude-deck3 の動作検証を、原則としてユーザーの実
     OS 既定から再構成するが `USERPROFILE` は隔離ホームを指すため、Volta が
     「Updating your Volta directory...」の後に `'node' は認識されていません` で落ちる。
     **node の実体を絶対パスで叩く**
-    (`& 'C:/Users/<user>/AppData/Local/Volta/tools/image/node/<ver>/node.exe' -e "..."`)
+    (`& 'C:/Users/<user>/AppData/Local/Volta/tools/image/node/<ver>/node.exe' -e "..."`)。
+    **env 値を読むだけならシェル組み込みで書けば node 自体が要らない**
+    (`"T=$env:PRONTELLA_TERM" | Out-File -Encoding utf8 <file>`) — こちらの方が短く、
+    Volta のバージョンパスに依存しないぶん壊れにくい
 20. **共有資材を「書き換える」機能は、生成部分だけ隔離ホームの別プロセスに追い出す**:
     原理の例外(実ユーザー環境が検証対象なら `USERPROFILE` を差し替えない)は
-    **読む側の話**。`~/.claude-deck3/hook-settings.json` のようにユーザーと共有する資材を
+    **読む側の話**。`~/.prontella/hook-settings.json` のようにユーザーと共有する資材を
     **書き換える**コードは、ポート分離だけでは守れない — 検証用サーバーが実ファイルを
     上書きし、稼働中の本物の deck を壊す。**生成関数だけを `USERPROFILE`/`HOME` を
     差し替えた別プロセスで呼んで出力を検分し**(`node_modules/tsx/dist/cli.mjs` を
@@ -224,7 +227,7 @@ description: claude-deck3 の動作検証を、原則としてユーザーの実
     罠 20 は「共有資材を**書き換える機能**を検証するとき」の話だが、`ensureHookAssets()` は
     **サーバー起動時に無条件で走り、そのプロセスのポートを埋め込んで実ファイルを上書きする**。
     つまり検証対象が env でもレイアウトでも、実 `USERPROFILE` のまま別ポートで立てた瞬間に
-    `~/.claude-deck3/hook-settings.json` の全 URL が**検証ポート**に書き換わり、ユーザーの
+    `~/.prontella/hook-settings.json` の全 URL が**検証ポート**に書き換わり、ユーザーの
     本番 deck の hook がデッドポートへ飛んで**エージェント状態検知が無言で壊れる**
     (2026-09-01 に実際に壊した。ポート 4805 が 14 イベント全部に残っていた)。
     **撤収時に `ensureHookAssets(<本番ポート>)` を別プロセスで呼んで再生成し、
@@ -250,6 +253,11 @@ description: claude-deck3 の動作検証を、原則としてユーザーの実
 
 ## フィクスチャの作り方
 
+- **フィクスチャの識別子は製品側のバリデーターを通る形で作る**: 合成した id が製品の検証を
+  通らないと読み出しが 0 件になり、**「データが移行されなかった」という別の不合格に化ける**
+  (2026-09-01 実測: `deckId` を `legacy-session` にしたら `recordFile()` の
+  `/^[0-9a-f-]{4,40}$/` に弾かれ、設定ディレクトリー移行の失敗と誤読した)。
+  **「0 件」は不在ではなく弾かれた可能性を先に疑う** — id を決める前に製品側の検証実装を読む
 - **敵対的フィクスチャは実装前に Conductor が作る**。builder の自己検証で拾えなかった欠陥が統合
   段階で確実に出る(実測: 難読化スキームが統合時の実機検証で発火)
 - **フィクスチャの中に合格基準そのものを書き込む**。「〜が着色されること(モノクロなら不合格)」の

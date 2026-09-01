@@ -407,13 +407,13 @@ export function hashText(text: string): string {
   return (hash >>> 0).toString(36);
 }
 
-export const EDITOR_STATE_STORAGE_PREFIX = 'claude-deck.editorState.';
+export const EDITOR_STATE_STORAGE_PREFIX = 'prontella.editorState.';
 // layout/useTileLayout.ts のレイアウト永続化キー。依存方向を一方向に保つため
 // (useTileLayout.ts → editorState.ts)、定数の定義はこちらに置く。
-export const TILE_LAYOUT_STORAGE_PREFIX = 'claude-deck.tileLayout.';
+export const TILE_LAYOUT_STORAGE_PREFIX = 'prontella.tileLayout.';
 // layout/termState.ts のターミナルグループ永続化キー。TILE_LAYOUT_STORAGE_PREFIX と
 // 同じ理由でこちらに置く (layout/* → editorState.ts の一方向依存を保つため)。
-export const TERM_STATE_STORAGE_PREFIX = 'claude-deck.termState.';
+export const TERM_STATE_STORAGE_PREFIX = 'prontella.termState.';
 
 function emptyDoc(): WorktreeEditorState {
   return { version: 2, leaves: {} };

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Launcher for `npx @rabitarochan/claude-deck` — starts the server and opens a browser.
+// Launcher for `npx prontella` — starts the server and opens a browser.
 import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -8,10 +8,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const args = process.argv.slice(2);
 
 if (args.includes('--help') || args.includes('-h')) {
-  console.log(`claude-deck — Git worktree × Claude Code agent deck
+  console.log(`prontella — Git worktree × Claude Code agent deck
 
 使い方:
-  claude-deck [オプション]
+  prontella [オプション]
 
 オプション:
   --port <n>   待ち受けポート (既定: 3711)
@@ -82,7 +82,7 @@ function openBrowser(target) {
 
 if (await waitReady()) {
   if (!args.includes('--no-open')) openBrowser(url);
-  console.log(`[claude-deck] ${url} で起動しました (Ctrl+C で終了)`);
+  console.log(`[prontella] ${url} で起動しました (Ctrl+C で終了)`);
 } else {
-  console.error(`[claude-deck] サーバーの起動を確認できませんでした: ${url}`);
+  console.error(`[prontella] サーバーの起動を確認できませんでした: ${url}`);
 }

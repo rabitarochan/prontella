@@ -1,4 +1,4 @@
-# Claude Deck 3
+# Prontella
 
 複数の Git リポジトリー × 複数の Worktree 上で動く Claude Code エージェントを一元管理するデッキ。
 
@@ -18,10 +18,10 @@ Claude Code の起動方法は 2 系統あり、どちらも**サブスクリプ
     構造化イベント (text delta / tool_use / 許可要求) を中継。ステータスは SDK メッセージストリームから直接生成
     (ヒューリスティック不要)。許可プロンプトは `canUseTool` をクライアントの許可ダイアログへ中継して解決
   - エージェントステータスは 2 系統で検知 (hooks が優先、ヒューリスティックはフォールバック)
-    - **Claude Code hooks**: 「✦ Claude 起動」時に `claude --settings ~/.claude-deck3/hook-settings.json` を注入。
+    - **Claude Code hooks**: 「✦ Claude 起動」時に `claude --settings ~/.prontella/hook-settings.json` を注入。
       各フックイベント (SessionStart / UserPromptSubmit / PreToolUse / PostToolUse / Notification / Stop / SessionEnd) を
-      `~/.claude-deck3/deck-hook.mjs` が `POST /api/agent-events` へ転送する。TUI 文言に依存せず正確・即時
-      (どのセッションかは PTY の環境変数 `CLAUDE_DECK_PORT` / `CLAUDE_DECK_TERM` で識別。
+      `~/.prontella/deck-hook.mjs` が `POST /api/agent-events` へ転送する。TUI 文言に依存せず正確・即時
+      (どのセッションかは PTY の環境変数 `PRONTELLA_PORT` / `PRONTELLA_TERM` で識別。
       ユーザー自身の hooks 設定とはマージされ共存する)
     - **TUI ヒューリスティック** (手動起動した claude 等のフォールバック): PTY 出力を ANSI 除去して監視
       - `esc to interrupt` / スピナーグリフ → **実行中 (busy)**
@@ -29,7 +29,7 @@ Claude Code の起動方法は 2 系統あり、どちらも**サブスクリプ
       - スピナーが 3 秒止まる → **待機中 (idle)**
   - 全セッションのステータス変化は WebSocket (`/ws/events`) でクライアントへ push
 - **クライアント** (`client/`): Vite + React + xterm.js + Zustand
-- 設定は `~/.claude-deck3/config.json` に保存 (登録リポジトリー一覧)
+- 設定は `~/.prontella/config.json` に保存 (登録リポジトリー一覧)
 - Windows / macOS / Linux 対応 (シェルは PowerShell / `$SHELL` を自動選択)
 
 ## 機能
@@ -62,8 +62,8 @@ Claude Code の起動方法は 2 系統あり、どちらも**サブスクリプ
 ### npx で実行 (配布版)
 
 ```sh
-npx @rabitarochan/claude-deck            # 起動してブラウザを開く
-npx @rabitarochan/claude-deck --port 4000 --no-open
+npx prontella            # 起動してブラウザを開く
+npx prontella --port 4000 --no-open
 ```
 
 - 要 Node.js 18+ と git。node-pty は Windows / macOS 向けプレビルドバイナリ同梱のためビルドツール不要 (Linux のみ gcc 等が必要)
@@ -79,7 +79,7 @@ npm run dev          # http://localhost:5173
 
 # 本番相当 (ビルドしてランチャーから起動)
 npm run build
-npm start            # = node bin/claude-deck.js
+npm start            # = node bin/prontella.js
 ```
 
 ### npm への公開
@@ -103,11 +103,11 @@ Worktree を開き「✦ Claude 起動」でそのディレクトリーをカレ
 - Windows のターミナルは `pwsh` (PowerShell 7 以降) があればそれを、無ければ
   `powershell.exe` (Windows PowerShell 5.1) を起動します。5.1 に同梱の PSReadLine は 2.0.0 で
   予測入力 (Predictive IntelliSense) が使えないため、既定を PowerShell 7 側に寄せています。
-  明示したい場合は環境変数 `CLAUDE_DECK_SHELL` にコマンド名か絶対パスを指定してください
-  (例: `CLAUDE_DECK_SHELL=powershell.exe`)。指定が見つからないときは警告を出して既定に戻ります
+  明示したい場合は環境変数 `PRONTELLA_SHELL` にコマンド名か絶対パスを指定してください
+  (例: `PRONTELLA_SHELL=powershell.exe`)。指定が見つからないときは警告を出して既定に戻ります
 - `scripts/ws-debug.mjs` はターミナル出力とステータス検知のデバッグ用ヘルパー
 - 「✦ Claude 起動」以外で起動した claude (ターミナルに手打ちなど) は hooks が入らないため、
   TUI 文言ヒューリスティックのみで検知します。文言変更で精度が落ちた場合は `server/pty.ts` の
   `BUSY_RE` / `PROMPT_RE` を調整してください。手動起動でも hooks 検知を効かせたい場合は
-  `claude --settings ~/.claude-deck3/hook-settings.json` で起動すれば OK です
+  `claude --settings ~/.prontella/hook-settings.json` で起動すれば OK です
 - デスクトップ通知は初回にベル 🔔 のドロップダウンから許可してください (ブラウザの通知許可が必要)

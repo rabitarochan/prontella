@@ -8,7 +8,7 @@ import { create } from 'zustand';
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type ResolvedTheme = 'light' | 'dark';
 
-const STORAGE_KEY = 'deck3.theme';
+const STORAGE_KEY = 'prontella.theme';
 
 // jsdom(vitest)には matchMedia がないため、無い環境ではダーク固定のスタブに落とす
 const media: Pick<MediaQueryList, 'matches' | 'addEventListener'> =

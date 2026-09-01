@@ -6,7 +6,7 @@ import { create } from 'zustand';
 
 export type Lang = 'ja' | 'en';
 
-const STORAGE_KEY = 'deck3.lang';
+const STORAGE_KEY = 'prontella.lang';
 
 function detect(): Lang {
   try {

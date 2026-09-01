@@ -33,7 +33,7 @@ export default function Rail({ onOpenPalette }: { onOpenPalette: () => void }) {
     <aside className="rail">
       <div className="rail-title">
         <button className="rail-logo" title={t('rail.backToDeck')} onClick={() => select(null)}>
-          <span className="rail-logo-mark">◆</span> Claude Deck
+          <span className="rail-logo-mark">◆</span> Prontella
         </button>
         <span className="rail-title-actions">
           <button

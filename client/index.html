@@ -3,14 +3,43 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Claude Deck</title>
+    <title>Prontella</title>
     <script>
+      // 改名 (Claude Deck 3 → Prontella) に伴う localStorage キーの 1 回限りの移行。
+      // 各ストアはモジュール初期化時にキーを読むため、バンドルより先に評価される
+      // この inline script で行う必要がある (main.tsx の本体では手遅れになる)。
+      // 新キーが既にあれば旧キーは捨てる。
+      (function () {
+        var prefixes = [
+          ['claude-deck.', 'prontella.'],
+          ['deck3.', 'prontella.'],
+          ['deck3:', 'prontella:'],
+        ];
+        try {
+          // 途中でキーを消すので、末尾から走査する。
+          for (var i = localStorage.length - 1; i >= 0; i--) {
+            var key = localStorage.key(i);
+            if (!key) continue;
+            for (var p = 0; p < prefixes.length; p++) {
+              var from = prefixes[p][0];
+              if (key.indexOf(from) !== 0) continue;
+              var next = prefixes[p][1] + key.slice(from.length);
+              if (localStorage.getItem(next) === null) {
+                localStorage.setItem(next, localStorage.getItem(key));
+              }
+              localStorage.removeItem(key);
+              break;
+            }
+          }
+        } catch (e) {}
+      })();
+
       // FOUC 対策: React マウント前にテーマを適用する。判定ロジックとキー名は
       // src/theme/themeStore.ts と揃えること。
       (function () {
         var mode = null;
         try {
-          mode = localStorage.getItem('deck3.theme');
+          mode = localStorage.getItem('prontella.theme');
         } catch (e) {}
         var dark =
           mode === 'dark' ||

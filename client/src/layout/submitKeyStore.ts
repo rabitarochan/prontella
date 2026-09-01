@@ -8,7 +8,7 @@ import { create } from 'zustand';
 
 export type SubmitKeyMode = 'enter' | 'ctrlEnter';
 
-const STORAGE_KEY = 'deck3.agentSubmitKey';
+const STORAGE_KEY = 'prontella.agentSubmitKey';
 
 function detect(): SubmitKeyMode {
   try {

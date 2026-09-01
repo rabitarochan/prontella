@@ -9,7 +9,7 @@ import { create } from 'zustand';
 //   なって初めて VncView をマウントし、以後モードを抜けても display:none で保持する
 //   (unmount すると RFB 接続ごと失われるため — タイルの visited-set と同じ不変条件)。
 
-const ACTIVE_KEY = 'deck3.vncActive';
+const ACTIVE_KEY = 'prontella.vncActive';
 
 function detectActive(): boolean {
   try {

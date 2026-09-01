@@ -12,7 +12,7 @@ import { useConfirm } from './ConfirmDialog';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import { usePrompt } from './PromptDialog';
 
-const ARCHIVED_OPEN_KEY = 'deck3.sidebar.archivedOpen';
+const ARCHIVED_OPEN_KEY = 'prontella.sidebar.archivedOpen';
 
 // モジュールスコープ: dragover 中は dataTransfer.getData() が空文字を返す (protected mode) ため、
 // ドラッグ中の repo id はここに持つ (React state だと dragover ハンドラーの外側からは読めるが、

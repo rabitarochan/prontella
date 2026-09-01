@@ -47,7 +47,7 @@ export default function DeckView() {
     const archivedCount = repos.filter(isArchived).length;
     return (
       <div className="placeholder">
-        <h2>Claude Deck</h2>
+        <h2>Prontella</h2>
         {archivedCount > 0 ? (
           <p>{t('deck.emptyArchived', { n: archivedCount })}</p>
         ) : (

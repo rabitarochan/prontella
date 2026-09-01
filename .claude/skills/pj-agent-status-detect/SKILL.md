@@ -1,7 +1,7 @@
 ---
 name: pj-agent-status-detect
 description: >
-  claude-deck3 で Claude Code の hook からエージェントの実行状態・実行中ツール・
+  prontella で Claude Code の hook からエージェントの実行状態・実行中ツール・
   サブエージェントを検知する実装に触れるときの定石。親子の判別器、完了ゲート
   (リードの Stop で終わりにしない)、HTTP hook の契約、TUI ヒューリスティックとの
   優先順位、そして**マッピングを書く前に実ペイロードで真理値表を作る**手順。
@@ -10,7 +10,7 @@ description: >
   委任するとき、brief の References にこのファイルのパスを入れる。
 ---
 
-# pj-agent-status-detect — hook によるエージェント状態検知(claude-deck3)
+# pj-agent-status-detect — hook によるエージェント状態検知(prontella)
 
 ## 収録基準
 
@@ -89,12 +89,20 @@ Agent ツールは**非同期**で、子が終わるとリードが新しいタ�
 
 ```jsonc
 { "type": "http", "url": "http://127.0.0.1:<port>/api/agent-events", "timeout": 3,
-  "headers": { "X-Deck-Term": "${CLAUDE_DECK_TERM}" },
-  "allowedEnvVars": ["CLAUDE_DECK_TERM"] }
+  "headers": { "X-Deck-Term": "${PRONTELLA_TERM}" },
+  "allowedEnvVars": ["PRONTELLA_TERM"] }
 ```
 
 - **env 補間には `allowedEnvVars` への明示列挙が必要**(未列挙の `$VAR` は空文字に潰れる)。
   `${VAR}` `$VAR` どちらの書式も通る
+- **この env 名は「両端」で持つ契約**: 注入側(`server/pty.ts` が PTY に載せる env)と
+  参照側(`server/hooks.ts` が書く header と `allowedEnvVars`)が同じ名前を指している。
+  **片方だけ変えると hook は空文字のヘッダーを送り、受け側は「未知の term」として黙って捨て、
+  TUI ヒューリスティックへ静かに退行する** — 型検査もテストも green のまま、画面のステータス
+  だけが鈍るので気づけない(2026-09-01 の `CLAUDE_DECK_TERM` → `PRONTELLA_TERM` 改名で
+  踏みかけた)。名前を変えるときは両ファイルを同一の変更として扱い、**実測で確かめる**:
+  PTY 側は `$env:<VAR>` をファイルへ書き出させ、hook 側は `X-Deck-Term` 付きの POST を
+  投げてステータスが遷移することを見る
 - **受け側は必ず 200 + JSON を返す。** 未知の term も本文破損(不正 JSON・サイズ超過)も 200。
   deck 都合で hook を失敗させない。**パス限定の express エラーハンドラー**で担保する
   (共通ハンドラーに流すと 500 が返る)
@@ -141,7 +149,7 @@ roster と完了ゲートは分岐が多く、`PtyManager` に直書きすると
 
 隔離手順は [[pj-isolated-verify]]。この領域で特に効くのは:
 
-- 共有資材(`~/.claude-deck3`)の生成は `HOME` を差し替えた別プロセスに追い出し、
+- 共有資材(`~/.prontella`)の生成は `HOME` を差し替えた別プロセスに追い出し、
   実資材の diff で無傷を証明する
 - UI の検証は**実記録ペイロードの再生**で行う(実エージェントの再実行より速く決定的)
 - サーバーの API と DOM を**同一スクリプトで同時に測る**。片方だけ見ると、どちらの層の

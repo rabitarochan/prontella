@@ -1,7 +1,7 @@
 ---
 name: pj-child-env
 description: >
-  claude-deck3 で子プロセス (PTY ターミナル・Agent SDK・git・ripgrep・ファイルマネージャー) に
+  prontella で子プロセス (PTY ターミナル・Agent SDK・git・ripgrep・ファイルマネージャー) に
   渡す環境変数を組み立てる・変更する・spawn を新しく足すときの定石。2 系統の使い分け、
   deny-list が誤りである理由、Windows のレジストリーからの再構成規則、同期ウォームアップと
   フォールバック、汚染検証まで。env / process.env / spawn / PATH / NODE_ENV / node-pty /
@@ -9,7 +9,7 @@ description: >
   このファイルのパスを入れる。
 ---
 
-# pj-child-env — 子プロセスへ渡す環境変数 (claude-deck3)
+# pj-child-env — 子プロセスへ渡す環境変数 (prontella)
 
 ## Overview
 
@@ -33,7 +33,7 @@ Why 2 系統: 内部ツールは deck が動く前提の環境で動いてほし
 git を入れている環境を壊さない)。一方ユーザーのコードは、**deck をどの端末から起動したかで
 挙動が変わってはいけない**。
 
-`bin/claude-deck.js` は `process.env` を書き換える前に `captureInheritedEnv()` を呼ぶ。
+`bin/prontella.js` は `process.env` を書き換える前に `captureInheritedEnv()` を呼ぶ。
 この順序が `childEnv()` の正しさの前提なので、bin の先頭部分を編集するときは順序を壊さない。
 
 ## 決定則: deny-list で消してはいけない
@@ -150,14 +150,14 @@ Why この順序: env を戻すと「deck をどの端末から起動したか�
 
 ```sh
 DECK_LEAK_PROBE=leaked NO_COLOR=1 GIT_EDITOR=true CLAUDECODE=1 \
-  node bin/claude-deck.js --port 3799 --no-open
+  node bin/prontella.js --port 3799 --no-open
 ```
 
 確認項目:
 
 1. **漏れていないこと**: `NODE_ENV` `PORT` `NO_COLOR` `GIT_EDITOR` `GIT_ASKPASS`
    `CLAUDECODE` `DECK_LEAK_PROBE`
-2. **届いていること**: `CLAUDE_DECK_PORT` / `CLAUDE_DECK_TERM`(hooks 検知が依存)、
+2. **届いていること**: `PRONTELLA_PORT` / `PRONTELLA_TERM`(hooks 検知が依存)、
    `APPDATA` `SystemRoot` `USERPROFILE` `TEMP` `Path` `PATHEXT` `ComSpec`
 3. **OS 側の設定が届くこと**: `[Environment]::SetEnvironmentVariable('X','1','User')` を
    設定 → deck 再起動 → ターミナルに届く(**確認後に必ず削除する**)

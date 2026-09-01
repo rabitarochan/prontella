@@ -1,7 +1,7 @@
 ---
 name: pj-agent-sdk-control
 description: >
-  claude-deck3 で Agent SDK の control request (supportedCommands / supportedModels /
+  prontella で Agent SDK の control request (supportedCommands / supportedModels /
   usage_EXPERIMENTAL_* 等、プロンプトを送らずに Query から引くデータ) を使って
   サーバー側に機能を足すときの定石。Query の寿命設計 (常駐 1 本 + single-flight +
   TTL)、EXPERIMENTAL API の縮退規律、型定義より広い実ペイロードの扱い、実資格情報が
@@ -11,7 +11,7 @@ description: >
   パスを入れる。
 ---
 
-# pj-agent-sdk-control — Agent SDK の control request で機能を作る定石(claude-deck3)
+# pj-agent-sdk-control — Agent SDK の control request で機能を作る定石(prontella)
 
 ## 収録基準
 
@@ -21,7 +21,7 @@ SDK の一般的な使い方 (query の呼び方・メッセージの流し方) 
 
 ## 0. 経路の切り分け — hook と control request は別物
 
-claude-deck3 が Claude から情報を得る経路は 2 つあり、**設計上の制約がまったく違う**。
+prontella が Claude から情報を得る経路は 2 つあり、**設計上の制約がまったく違う**。
 
 | | hook (`/api/hooks/*`) | control request (`Query` のメソッド) |
 | --- | --- | --- |
@@ -92,7 +92,7 @@ claude-deck3 が Claude から情報を得る経路は 2 つあり、**設計上
 
 - **問題**: [[pj-isolated-verify]] の隔離ホーム (`USERPROFILE` 差し替え) では
   `~/.claude/.credentials.json` が見えないため、**サーバー → SDK の実データ経路は測れない**。
-  かといって実ホームでサーバーを起動すると `~/.claude-deck3/` の共有資材に触れる
+  かといって実ホームでサーバーを起動すると `~/.prontella/` の共有資材に触れる
 - **打ち手**: **サーバー層とクライアント層を別々に測る**。
   ①**実データ経路**は、サーバーを起動せずに **`tsx` からモジュールを直接 import して関数を叩く**
   (`node_modules/.bin/tsx.cmd --eval 'import("./server/usage.ts").then(...)'`)。

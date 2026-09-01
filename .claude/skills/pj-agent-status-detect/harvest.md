@@ -59,3 +59,18 @@
 - result: コード変更なし。制約として「デッキの `✦ Claude 起動` 以外で立てた claude
   (手打ち・`claude -c`・TUI 内での再起動) には hooks が付かず、サブエージェント表示が
   出ない」が残ることをユーザーに明示して合意した。
+
+## 003: hook の env 名は「両端」で持つ契約として扱う (§5)
+
+- date: 2026-09-01
+- context: 製品名の改名 (claude-deck3 → Prontella) で `CLAUDE_DECK_TERM` を
+  `PRONTELLA_TERM` へ変えた。§5 は hook 設定 JSON の形状と allowedEnvVars の交差までは
+  書いていたが、「その名前を注入する側 (server/pty.ts) と参照する側 (server/hooks.ts) が
+  対である」ことは書いていなかった。
+- change: §5 に「両端で持つ契約」を追加。Why = 片方だけ変えると hook は空文字のヘッダーを
+  送り、受け側は未知の term として黙って捨て、TUI ヒューリスティックへ静かに退行する。
+  型検査もテストも green のままで、鈍るのは画面のステータスだけなので気づけない。
+  How = 名前を変えるときは両ファイルを同一の変更として扱い、PTY 側は `$env:<VAR>` の
+  書き出し、hook 側は `X-Deck-Term` 付き POST でのステータス遷移、の 2 点を実測する。
+- supersedes: —
+- result: 改名の隔離検証で両端 (PTY への注入・hook ヘッダー経由の busy 遷移) を実測し 19/19 PASS。

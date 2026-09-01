@@ -1,9 +1,9 @@
 ---
 name: pj-untrusted-input
-description: claude-deck3 で信頼できない入力(.md の中身・URL・パス・リクエストボディ)を分類/検証するコードを書く・レビューするときの定石。正規化と判定の順序、二重防御の壊し方、依存を足すときの衛生。sanitize / classify / resolve 系の実装タスクを委任するとき、brief の References にこのファイルのパスを入れる。
+description: prontella で信頼できない入力(.md の中身・URL・パス・リクエストボディ)を分類/検証するコードを書く・レビューするときの定石。正規化と判定の順序、二重防御の壊し方、依存を足すときの衛生。sanitize / classify / resolve 系の実装タスクを委任するとき、brief の References にこのファイルのパスを入れる。
 ---
 
-# pj-untrusted-input — 信頼できない入力の分類・検証(claude-deck3)
+# pj-untrusted-input — 信頼できない入力の分類・検証(prontella)
 
 ## 収録基準
 

@@ -414,6 +414,9 @@ export const TILE_LAYOUT_STORAGE_PREFIX = 'prontella.tileLayout.';
 // layout/termState.ts のターミナルグループ永続化キー。TILE_LAYOUT_STORAGE_PREFIX と
 // 同じ理由でこちらに置く (layout/* → editorState.ts の一方向依存を保つため)。
 export const TERM_STATE_STORAGE_PREFIX = 'prontella.termState.';
+// ChangesTab のコミットメッセージ下書き。worktree 単位 (repo 単位ではない — worktree ごとに
+// index が独立しているため)。ここに置くのは removeWorktreeLocalState と同じ寿命だから。
+export const COMMIT_DRAFT_STORAGE_PREFIX = 'prontella.commitDraft.';
 
 function emptyDoc(): WorktreeEditorState {
   return { version: 2, leaves: {} };
@@ -460,7 +463,55 @@ export function removeWorktreeLocalState(worktreePath: string): void {
     localStorage.removeItem(EDITOR_STATE_STORAGE_PREFIX + worktreePath);
     localStorage.removeItem(TILE_LAYOUT_STORAGE_PREFIX + worktreePath);
     localStorage.removeItem(TERM_STATE_STORAGE_PREFIX + worktreePath);
+    localStorage.removeItem(COMMIT_DRAFT_STORAGE_PREFIX + worktreePath);
   } catch {
     // storage unavailable
+  }
+}
+
+// ---- コミットメッセージの下書き -------------------------------------------
+
+/** 入力途中のコミットメッセージ。ChangesTab は GitTab の reloadKey で頻繁に再マウントされる
+ *  (ブランチ切替・stash・pull/push・reset — GitTab.act() が必ず reloadKey を上げる) ため、
+ *  React state だけでは打ちかけの文言が日常的に失われる。 */
+export interface CommitDraft {
+  message: string;
+  /** --amend トグル。ユーザーの明示的な指定により復元対象に含める。 */
+  amend: boolean;
+}
+
+// コミットメッセージにしては十分すぎる上限。壊れた/巨大な値で localStorage を
+// 埋めないための衛生であって、機能的な制約ではない。
+const MAX_COMMIT_DRAFT_LENGTH = 100_000;
+
+const EMPTY_COMMIT_DRAFT: CommitDraft = { message: '', amend: false };
+
+export function loadCommitDraft(worktreePath: string): CommitDraft {
+  try {
+    const raw = localStorage.getItem(COMMIT_DRAFT_STORAGE_PREFIX + worktreePath);
+    if (!raw) return { ...EMPTY_COMMIT_DRAFT };
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return { ...EMPTY_COMMIT_DRAFT };
+    const d = parsed as { message?: unknown; amend?: unknown };
+    const message =
+      typeof d.message === 'string' && d.message.length <= MAX_COMMIT_DRAFT_LENGTH ? d.message : '';
+    return { message, amend: d.amend === true };
+  } catch {
+    // 壊れた JSON / storage unavailable
+  }
+  return { ...EMPTY_COMMIT_DRAFT };
+}
+
+/** 空の下書き (メッセージ無し + amend オフ) はキーごと消す。ゴミを溜めないため。 */
+export function saveCommitDraft(worktreePath: string, draft: CommitDraft): void {
+  const key = COMMIT_DRAFT_STORAGE_PREFIX + worktreePath;
+  try {
+    if (draft.message === '' && !draft.amend) {
+      localStorage.removeItem(key);
+      return;
+    }
+    localStorage.setItem(key, JSON.stringify(draft));
+  } catch {
+    // storage full / unavailable — 下書きが永続化されないだけ
   }
 }

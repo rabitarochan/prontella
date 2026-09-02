@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
+import { loadCommitDraft, saveCommitDraft, type CommitDraft } from '../editorState';
 import { useT } from '../i18n';
 import { useDeck } from '../store';
 import type { StatusFile } from '../types';
@@ -32,10 +33,25 @@ export default function ChangesTab({
   const discardUntrackedRef = useRef(false);
   const [files, setFiles] = useState<StatusFile[]>([]);
   const [merging, setMerging] = useState(false);
-  const [commitMsg, setCommitMsg] = useState('');
-  const [amend, setAmend] = useState(false);
+  // コミットメッセージと amend は localStorage 永続化つき (worktree = dir 単位)。
+  // このコンポーネントは GitTab の reloadKey で頻繁に再マウントされる — ブランチ切替・
+  // stash・pull/push・reset はすべて GitTab.act() を通り、成功も失敗も reloadKey を上げる。
+  // 永続化が無いと、それらの操作のたびに打ちかけの文言が黙って消える。
+  //
+  // 書き込みは setDraft に集約して **同期** で行う (unmount の cleanup で flush しない)。
+  // cleanup flush だと、Sidebar.tsx の removeWorktree が守っている
+  // 「select(null) → refresh() → ローカル掃除」の順序制約に巻き込まれ、削除済みキーを
+  // 復活させうる。同期書き込みならその競合自体が発生しない。
+  const [draft, setDraftState] = useState<CommitDraft>(() => loadCommitDraft(dir));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+
+  // 同じ worktree を 2 タイルで開くと React state は独立なので、storage は最後の書き手が
+  // 勝ち、再マウントした側がもう一方の文言を拾う。害が小さいのでストア化はしない。
+  const setDraft = (next: CommitDraft) => {
+    setDraftState(next);
+    saveCommitDraft(dir, next);
+  };
 
   const load = useCallback(async () => {
     try {
@@ -233,14 +249,20 @@ export default function ChangesTab({
         </div>
         {files.length === 0 && !merging && <div className="placeholder">{t('changes.empty')}</div>}
         <div className="commit-box">
+          {/* 下書きの更新は必ず setDraft を通す。textarea だけ永続化して成功時のクリアを
+              素の setState にすると、storage に古い文言が残って次の再マウントで復活する */}
           <textarea
             placeholder={t('changes.commitMessagePlaceholder')}
-            value={commitMsg}
-            onChange={(e) => setCommitMsg(e.target.value)}
+            value={draft.message}
+            onChange={(e) => setDraft({ ...draft, message: e.target.value })}
             rows={3}
           />
           <label className="amend-toggle">
-            <input type="checkbox" checked={amend} onChange={(e) => setAmend(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={draft.amend}
+              onChange={(e) => setDraft({ ...draft, amend: e.target.checked })}
+            />
             {t('changes.amendToggle')}
           </label>
           <button disabled={busy} onClick={() => void undoLastCommit()}>
@@ -248,16 +270,17 @@ export default function ChangesTab({
           </button>
           <button
             className="primary"
-            disabled={busy || !commitMsg.trim() || (stagedFiles.length === 0 && !amend)}
+            disabled={busy || !draft.message.trim() || (stagedFiles.length === 0 && !draft.amend)}
             onClick={() =>
               void act(async () => {
-                await api.commit(dir, commitMsg.trim(), amend);
-                setCommitMsg('');
-                setAmend(false);
+                await api.commit(dir, draft.message.trim(), draft.amend);
+                setDraft({ message: '', amend: false });
               })
             }
           >
-            {amend ? t('changes.amendCommitButton') : t('changes.commitButton', { n: stagedFiles.length })}
+            {draft.amend
+              ? t('changes.amendCommitButton')
+              : t('changes.commitButton', { n: stagedFiles.length })}
           </button>
         </div>
       </div>

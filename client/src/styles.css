@@ -696,27 +696,33 @@ textarea:focus {
   width: 4px;
   height: 48px;
 }
+/* パネル内の区切り (ファイルツリー ⇔ エディター、Git サイドバー ⇔ メイン、
+   変更リスト ⇔ diff)。タイル間と違って「カード間の余白」ではなく 1 枚のパネルの
+   中の境界なので、幅とグリップを控えめにする。ヒット領域はライブラリー側が
+   resizeTargetMinimumSize (fine: 10px) まで広げるので、細くしても掴みにくくならない */
+.pane-separator-inset {
+  width: 7px;
+}
+.pane-separator-inset::after {
+  width: 3px;
+  height: 32px;
+}
 
 /* ---- files tab ---- */
 
-/* ツリー列幅 */
-.tile-pane {
-  --files-tree-w: 260px;
-}
+/* ツリー列 ⇔ エディターは react-resizable-panels の Group (.files-split) が幅を持つ。
+   固定幅も flex 指定もここには置かない (Panel が flexGrow を書き込むため)。
+   .files-tab はコンテキストメニュー/モーダルの置き場として Group の外側に残す。 */
 .files-tab {
   display: flex;
   height: 100%;
 }
 .files-tree-pane {
-  width: var(--files-tree-w);
-  flex-shrink: 0;
   border-right: 1px solid var(--border);
   overflow: hidden;
   background: var(--bg-panel);
 }
 .files-editor-pane {
-  flex: 1;
-  min-width: 0;
   display: flex;
   flex-direction: column;
 }
@@ -1087,17 +1093,18 @@ button.statusbar-item:hover:not(:disabled) {
 
 /* ---- changes (ステージ済み|変更 リスト + 選択ファイルの diff タブ) ---- */
 
-/* Git の status ビュー全体: [変更リスト (常時表示)] + [diff タブ] */
-.changes-wrap {
+/* Git の status ビュー全体: [変更リスト (常時表示)] + [diff タブ]。
+   幅は Group (.changes-wrap 自体) と Panel が持つので、ここには固定幅を置かない */
+.git-changes-panel,
+.git-diff-panel {
   display: flex;
-  height: 100%;
-  min-width: 0;
+  flex-direction: column;
 }
 .changes-pane {
-  width: 340px;
-  flex-shrink: 0;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   border-right: 1px solid var(--border);
-  height: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -1520,21 +1527,22 @@ button.statusbar-item:hover:not(:disabled) {
 
 /* ---- Git tab (Sourcetree-style sidebar) ---- */
 
+/* サイドバー ⇔ メインは Group (.git-split) が幅を持つ。固定幅も flex 指定も置かない。
+   .git-tab はコンテキストメニュー/ダイアログの置き場として Group の外側に残す。 */
 .git-tab {
   display: flex;
   height: 100%;
 }
 .git-side {
-  width: 240px;
-  flex-shrink: 0;
   border-right: 1px solid var(--border);
   background: var(--bg-panel);
+  /* 実効値は GitTab の SplitPanel が style={{ overflowY: 'auto' }} で与える
+     (Panel の内側 div にはインラインが載るのでクラス側は勝てない)。ここに残すのは
+     Panel を経由しない使い方をしたときの既定として */
   overflow-y: auto;
   padding-bottom: 8px;
 }
 .git-main {
-  flex: 1;
-  min-width: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;

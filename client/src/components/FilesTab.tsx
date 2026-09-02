@@ -9,6 +9,7 @@
 // 「操作 → 木の変換 → リソース破棄 → 永続化」のオーケストレーションだけを持つ。
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Group, Separator } from 'react-resizable-panels';
 import { api } from '../api';
 import { copyText } from '../clipboard';
 import {
@@ -33,6 +34,9 @@ import { basename, toPosixPath } from './editorTabs';
 import FileHistoryModal from './FileHistoryModal';
 import FileTree, { type FileTreeHandle } from './FileTree';
 import SearchPanel from './SearchPanel';
+import SplitPanel from './SplitPanel';
+import { PANE_DEFAULT_PCT, paneSplitSizes } from '../layout/paneWidths';
+import { usePaneWidths } from '../layout/paneWidthStore';
 import type { DropZone } from '../layout/dropZones';
 import type { EditorTabDrag } from '../layout/editorTabDnd';
 import {
@@ -109,6 +113,15 @@ export default function FilesTab({
   });
 
   const containerRef = useRef<HTMLDivElement>(null);
+  // ツリー列の幅 (全タイル共通のグローバル設定)。SplitPanel が defaultSize を凍結するので、
+  // ここで読んだ値が効くのはマウント時のみ — 別タイルでの変更は remount まで反映されない
+  // (タイル分割 / エディター分割と同じ契約。理由は SplitPanel.tsx)。
+  const treeWidth = usePaneWidths((s) => s.widths.filesTree);
+  const setPaneWidth = usePaneWidths((s) => s.setWidth);
+  const [treeSize, editorSize] = paneSplitSizes(treeWidth, PANE_DEFAULT_PCT.filesTree);
+  // パネル id は DOM の id 属性になる。複数タイルで衝突しないよう leafId を前置する。
+  const treePanelId = `${leafId}:files-tree`;
+  const editorPanelId = `${leafId}:files-editor`;
   const rootRef = useRef(root);
   rootRef.current = root;
   const leafIdRef = useRef(leafId);
@@ -1071,69 +1084,82 @@ export default function FilesTab({
 
   return (
     <div className="files-tab" ref={containerRef} onPointerDownCapture={touch} onFocusCapture={touch}>
-      <div className="files-tree-pane">
-        <div className="side-switch">{leadHeader}</div>
-        <div className="side-view" style={{ display: side === 'tree' ? undefined : 'none' }}>
-          <FileTree
-            root={root}
-            selectedPath={activeEntry?.path ?? null}
-            onSelectFile={openFile}
-            onEntryContextMenu={(e, path, kind) => setFileMenu({ x: e.clientX, y: e.clientY, path, kind })}
-            onRenamed={onTreeRenamed}
-            controllerRef={treeCtl}
-            hideToolbar
-          />
-        </div>
-        {searchVisitedRef.current && (
-          <div className="side-view" style={{ display: side === 'search' ? undefined : 'none' }}>
-            <SearchPanel
+      {/* ツリー列 ⇔ エディターのリサイズ。Group はパネル / セパレーター以外の子を
+          置く場所ではないので、コンテキストメニューやモーダルは .files-tab 直下に残す */}
+      <Group
+        orientation="horizontal"
+        className="files-split"
+        onLayoutChanged={(layout, meta) => {
+          if (!meta.isUserInteraction) return;
+          const pct = layout[treePanelId];
+          if (pct !== undefined) setPaneWidth('filesTree', pct);
+        }}
+      >
+        <SplitPanel id={treePanelId} initialSize={treeSize} className="files-tree-pane">
+          <div className="side-switch">{leadHeader}</div>
+          <div className="side-view" style={{ display: side === 'tree' ? undefined : 'none' }}>
+            <FileTree
               root={root}
-              visible={side === 'search'}
-              focusSeq={searchFocusSeq}
-              onJump={openAtLine}
-              onClose={() => setSide('tree')}
+              selectedPath={activeEntry?.path ?? null}
+              onSelectFile={openFile}
+              onEntryContextMenu={(e, path, kind) => setFileMenu({ x: e.clientX, y: e.clientY, path, kind })}
+              onRenamed={onTreeRenamed}
+              controllerRef={treeCtl}
+              hideToolbar
             />
           </div>
-        )}
-      </div>
-      <div className="files-editor-pane">
-        <div className="editor-groups-host">
-          <GroupSplitView
-            node={groupsApi.root}
-            onSizes={(splitId, sizes) =>
-              groupsApi.set(setGroupSizes(groupsApi.stateRef.current.root, splitId, sizes))
-            }
-            renderGroup={(group) => (
-              <EditorGroupPane
-                key={group.id}
-                group={group}
-                isActiveGroup={group.id === groupsApi.activeGroupId}
-                entries={entriesApi.entries}
-                message={entriesApi.message}
-                shared={shared}
+          {searchVisitedRef.current && (
+            <div className="side-view" style={{ display: side === 'search' ? undefined : 'none' }}>
+              <SearchPanel
+                root={root}
+                visible={side === 'search'}
+                focusSeq={searchFocusSeq}
+                onJump={openAtLine}
+                onClose={() => setSide('tree')}
               />
-            )}
-          />
-        </div>
-        {showStatusBar && activeEntry.file !== null && (
-          <EditorStatusBar
-            editor={activeEditor}
-            activePath={activeEntry.path}
-            file={activeEntry.file}
-            onReloadWithEncoding={(encoding) => void reloadWithEncoding(encoding)}
-            onSaveWithEncoding={(encoding, bom) => {
-              const target = activeGroupEditorKey();
-              if (target) void entriesApi.save(target.key, target.editor, { encoding, bom });
-            }}
-            onEolOverride={() => {
-              // eolOverride は editor-only, path 単位 (モデル共有のため)。
-              const target = activeGroupEditorKey();
-              const entry = target ? entriesApi.entriesRef.current[target.key] : null;
-              if (entry?.kind === 'editor') entriesApi.eolOverrideRef.current.add(entry.path);
-            }}
-          />
-        )}
-      </div>
+            </div>
+          )}
+        </SplitPanel>
+        <Separator className="pane-separator pane-separator-h pane-separator-inset" />
+        <SplitPanel id={editorPanelId} initialSize={editorSize} className="files-editor-pane">
+          <div className="editor-groups-host">
+            <GroupSplitView
+              node={groupsApi.root}
+              onSizes={(splitId, sizes) =>
+                groupsApi.set(setGroupSizes(groupsApi.stateRef.current.root, splitId, sizes))
+              }
+              renderGroup={(group) => (
+                <EditorGroupPane
+                  key={group.id}
+                  group={group}
+                  isActiveGroup={group.id === groupsApi.activeGroupId}
+                  entries={entriesApi.entries}
+                  message={entriesApi.message}
+                  shared={shared}
+                />
+              )}
+            />
+          </div>
+          {showStatusBar && activeEntry.file !== null && (
+            <EditorStatusBar
+              editor={activeEditor}
+              activePath={activeEntry.path}
+              file={activeEntry.file}
+              onReloadWithEncoding={(encoding) => void reloadWithEncoding(encoding)}
+              onSaveWithEncoding={(encoding, bom) => {
+                const target = activeGroupEditorKey();
+                if (target) void entriesApi.save(target.key, target.editor, { encoding, bom });
+              }}
+              onEolOverride={() => {
+                // eolOverride は editor-only, path 単位 (モデル共有のため)。
+                const target = activeGroupEditorKey();
+                const entry = target ? entriesApi.entriesRef.current[target.key] : null;
+                if (entry?.kind === 'editor') entriesApi.eolOverrideRef.current.add(entry.path);
+              }}
+            />
+          )}
+        </SplitPanel>
+      </Group>
       {fileMenu && (
         <ContextMenu
           x={fileMenu.x}

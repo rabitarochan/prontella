@@ -142,8 +142,9 @@ export default function TilePane({
         onDragEnd={dndEnd}
       >
         {/* 先頭ゾーン: ビュー切替 + (files ビュー時) ツリー列ヘッダーのポータル先。
-            files ビューではツリー列幅 (--files-tree-w) に固定し、下のペイン境界と
-            ヘッダーの区切りを揃える */}
+            かつては --files-tree-w でツリー列幅に揃えていたが、ツリー列は
+            react-resizable-panels でユーザーが動かせるようになったため固定幅は廃止した
+            (ヘッダーは内容ぶんの幅で流れる) */}
         <div className="tile-header-lead">
           <span className="tile-drag-handle" title={t('tile.dragHint')}>
             <GripVertical />

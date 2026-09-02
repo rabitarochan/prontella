@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Group, Separator } from 'react-resizable-panels';
 import { api } from '../api';
 import { useT, type StringKey } from '../i18n';
+import { PANE_DEFAULT_PCT, paneSplitSizes } from '../layout/paneWidths';
+import { usePaneWidths } from '../layout/paneWidthStore';
 import { useTileBarSlots } from '../layout/tileBarSlots';
 import { useDeck } from '../store';
 import type {
@@ -22,6 +25,7 @@ import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import DiffTabsPane, { conflictTabKey, diffTabKey, stashTabKey, type WorkTab } from './DiffTabsPane';
 import HistoryTab from './HistoryTab';
 import { usePrompt } from './PromptDialog';
+import SplitPanel from './SplitPanel';
 
 type GitView = 'status' | 'history';
 
@@ -77,6 +81,21 @@ export default function GitTab({
   const [syncMenu, setSyncMenu] = useState<{ x: number; y: number; kind: 'pull' | 'push' } | null>(
     null,
   );
+  // サイドバー / 変更リストの幅 (全タイル共通のグローバル設定)。SplitPanel が defaultSize を
+  // 凍結するので、ここで読んだ値が効くのはマウント時のみ — 別タイルでの変更は remount まで
+  // 反映されない (タイル分割 / エディター分割と同じ契約。理由は SplitPanel.tsx)。
+  const paneWidths = usePaneWidths((s) => s.widths);
+  const setPaneWidth = usePaneWidths((s) => s.setWidth);
+  const [sideSize, mainSize] = paneSplitSizes(paneWidths.gitSide, PANE_DEFAULT_PCT.gitSide);
+  const [changesSize, diffSize] = paneSplitSizes(
+    paneWidths.gitChanges,
+    PANE_DEFAULT_PCT.gitChanges,
+  );
+  // パネル id は DOM の id 属性になる。複数タイルで衝突しないよう leafId を前置する。
+  const sidePanelId = `${leafId}:git-side`;
+  const mainPanelId = `${leafId}:git-main`;
+  const changesPanelId = `${leafId}:git-changes`;
+  const diffPanelId = `${leafId}:git-diff`;
   // タイルバーのメインゾーンスロット (1 段化)。hook のため gitMode==='none' の
   // 早期 return より前で購読する。表示中 (visible) のビューだけがバーを使う
   const barSlot = useTileBarSlots((s) => s.slots[leafId] ?? null);
@@ -809,254 +828,291 @@ export default function GitTab({
 
   return (
     <div className="git-tab">
-      <div className="git-side">
-        {inBar && barSlot ? createPortal(syncBar, barSlot) : syncBar}
-        <div className="git-section-head git-section-title">{t('git.workspaceSectionTitle')}</div>
-        <div
-          className={`git-nav-row ${view === 'status' ? 'active' : ''}`}
-          onClick={() => setView('status')}
+      {/* サイドバー ⇔ メインのリサイズ。Group はパネル / セパレーター以外の子を置く場所では
+          ないので、コンテキストメニューやダイアログは .git-tab 直下に残す */}
+      <Group
+        orientation="horizontal"
+        className="git-split"
+        onLayoutChanged={(layout, meta) => {
+          if (!meta.isUserInteraction) return;
+          const pct = layout[sidePanelId];
+          if (pct !== undefined) setPaneWidth('gitSide', pct);
+        }}
+      >
+        {/* Panel は className / style を内側の div に付け、その既定 overflow を SplitPanel が
+            hidden で固定する。サイドバーは自分でスクロールする必要があるので上書きする */}
+        <SplitPanel
+          id={sidePanelId}
+          initialSize={sideSize}
+          className="git-side"
+          style={{ overflowY: 'auto' }}
         >
-          <span className="codicon codicon-diff-multiple" /> {t('git.fileStatusNav')}
-          {dirty > 0 && <span className="wt-dirty">{dirty}</span>}
-        </div>
-        <div
-          className={`git-nav-row ${view === 'history' ? 'active' : ''}`}
-          onClick={() => setView('history')}
-        >
-          <span className="codicon codicon-history" /> {t('git.historyNav')}
-        </div>
+          {inBar && barSlot ? createPortal(syncBar, barSlot) : syncBar}
+          <div className="git-section-head git-section-title">{t('git.workspaceSectionTitle')}</div>
+          <div
+            className={`git-nav-row ${view === 'status' ? 'active' : ''}`}
+            onClick={() => setView('status')}
+          >
+            <span className="codicon codicon-diff-multiple" /> {t('git.fileStatusNav')}
+            {dirty > 0 && <span className="wt-dirty">{dirty}</span>}
+          </div>
+          <div
+            className={`git-nav-row ${view === 'history' ? 'active' : ''}`}
+            onClick={() => setView('history')}
+          >
+            <span className="codicon codicon-history" /> {t('git.historyNav')}
+          </div>
 
-        {sectionHead(t('git.branchesSectionTitle'), openLocal, () => setOpenLocal((v) => !v), {
-          icon: 'add',
-          title: t('git.newBranchTooltip'),
-          onClick: () => void createBranch(),
-        })}
-        {openLocal && (
-          <BranchTree
-            branches={locals}
-            currentBranch={currentBranch}
-            worktreePath={worktree.path}
-            onContextMenu={openBranchMenu}
-          />
-        )}
+          {sectionHead(t('git.branchesSectionTitle'), openLocal, () => setOpenLocal((v) => !v), {
+            icon: 'add',
+            title: t('git.newBranchTooltip'),
+            onClick: () => void createBranch(),
+          })}
+          {openLocal && (
+            <BranchTree
+              branches={locals}
+              currentBranch={currentBranch}
+              worktreePath={worktree.path}
+              onContextMenu={openBranchMenu}
+            />
+          )}
 
-        {sectionHead(t('git.remotesSectionTitle'), openRemote, () => setOpenRemote((v) => !v), {
-          icon: 'add',
-          title: t('git.addRemoteTitle'),
-          onClick: () => void addRemote(),
-        })}
-        {openRemote && (
-          <>
-            {gitRemotes.length === 0 ? (
-              <div className="git-side-empty">{t('git.noRemotes')}</div>
+          {sectionHead(t('git.remotesSectionTitle'), openRemote, () => setOpenRemote((v) => !v), {
+            icon: 'add',
+            title: t('git.addRemoteTitle'),
+            onClick: () => void addRemote(),
+          })}
+          {openRemote && (
+            <>
+              {gitRemotes.length === 0 ? (
+                <div className="git-side-empty">{t('git.noRemotes')}</div>
+              ) : (
+                gitRemotes.map((r) => (
+                  <div
+                    key={r.name}
+                    className="git-branch-row"
+                    title={`fetch: ${r.fetchUrl}\npush: ${r.pushUrl}`}
+                  >
+                    <span className="codicon codicon-remote branch-icon" />
+                    <span className="branch-name">{r.name}</span>
+                    <span className="branch-actions">
+                      <button
+                        className="icon-btn"
+                        title={t('git.editRemoteUrlTooltip')}
+                        disabled={busy}
+                        onClick={() => void setRemoteUrl(r)}
+                      >
+                        <span className="codicon codicon-edit" />
+                      </button>
+                      <button
+                        className="icon-btn"
+                        title={t('git.deleteEllipsisTooltip')}
+                        disabled={busy}
+                        onClick={() => void removeRemote(r)}
+                      >
+                        <span className="codicon codicon-trash" />
+                      </button>
+                    </span>
+                  </div>
+                ))
+              )}
+              {remotes.length === 0 ? (
+                <div className="git-side-empty">{t('git.noRemoteBranches')}</div>
+              ) : (
+                <BranchTree branches={remotes} onContextMenu={openBranchMenu} />
+              )}
+            </>
+          )}
+
+          {sectionHead(t('git.stashSectionTitle'), openStash, () => setOpenStash((v) => !v), {
+            icon: 'archive',
+            title: t('git.stashAllTooltip'),
+            onClick: () => void stashCurrent(),
+          })}
+          {openStash &&
+            (stashes.length === 0 ? (
+              <div className="git-side-empty">{t('git.noStashes')}</div>
             ) : (
-              gitRemotes.map((r) => (
+              stashes.map((s) => (
                 <div
-                  key={r.name}
-                  className="git-branch-row"
-                  title={`fetch: ${r.fetchUrl}\npush: ${r.pushUrl}`}
+                  key={s.ref}
+                  className={`git-branch-row git-stash-row ${activeDiff === stashTabKey(s.ref) ? 'selected' : ''}`}
+                  title={t('git.stashRowTooltip', { ref: s.ref, message: s.message })}
+                  onClick={() => openStashDiff(s)}
                 >
-                  <span className="codicon codicon-remote branch-icon" />
-                  <span className="branch-name">{r.name}</span>
+                  <span className="codicon codicon-archive branch-icon" />
+                  <span className="branch-name">{s.message}</span>
                   <span className="branch-actions">
                     <button
                       className="icon-btn"
-                      title={t('git.editRemoteUrlTooltip')}
+                      title={t('git.stashPopTooltip')}
                       disabled={busy}
-                      onClick={() => void setRemoteUrl(r)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void act(() => api.stashApply(dir, s.ref, true), t('git.appliedSuccess'));
+                      }}
                     >
-                      <span className="codicon codicon-edit" />
+                      <span className="codicon codicon-debug-step-out" />
                     </button>
                     <button
                       className="icon-btn"
-                      title={t('git.deleteEllipsisTooltip')}
+                      title={t('git.stashApplyTooltip')}
                       disabled={busy}
-                      onClick={() => void removeRemote(r)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void act(() => api.stashApply(dir, s.ref, false), t('git.appliedSuccess'));
+                      }}
+                    >
+                      <span className="codicon codicon-desktop-download" />
+                    </button>
+                    <button
+                      className="icon-btn"
+                      title={t('common.remove')}
+                      disabled={busy}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void (async () => {
+                          if (
+                            await confirmDialog({
+                              title: t('git.stashDropTitle'),
+                              message: t('git.stashDropMessage', { ref: s.ref, message: s.message }),
+                              confirmLabel: t('common.remove'),
+                              severity: 'danger',
+                            })
+                          ) {
+                            void act(() => api.stashDrop(dir, s.ref), t('git.stashDropSuccess'));
+                          }
+                        })();
+                      }}
                     >
                       <span className="codicon codicon-trash" />
                     </button>
                   </span>
                 </div>
               ))
-            )}
-            {remotes.length === 0 ? (
-              <div className="git-side-empty">{t('git.noRemoteBranches')}</div>
+            ))}
+
+          {sectionHead(t('git.tagsSectionTitle'), openTags, () => setOpenTags((v) => !v), {
+            icon: 'add',
+            title: t('git.newTagSectionTooltip'),
+            onClick: () => void createTag(),
+          })}
+          {openTags &&
+            (tags.length === 0 ? (
+              <div className="git-side-empty">{t('git.noTags')}</div>
             ) : (
-              <BranchTree branches={remotes} onContextMenu={openBranchMenu} />
-            )}
-          </>
-        )}
+              tags.map((tag) => (
+                <div key={tag.name} className="git-branch-row" title={tag.hash}>
+                  <span className="codicon codicon-tag branch-icon" />
+                  <span className="branch-name">{tag.name}</span>
+                  <span className="branch-actions">
+                    <button
+                      className="icon-btn"
+                      title={t('git.pushToOriginTooltip')}
+                      disabled={busy || !!operation}
+                      onClick={() => pushTag(tag)}
+                    >
+                      <span className="codicon codicon-cloud-upload" />
+                    </button>
+                    <button
+                      className="icon-btn"
+                      title={t('git.deleteTagLocalTooltip')}
+                      disabled={busy || !!operation}
+                      onClick={() => void deleteTagLocal(tag)}
+                    >
+                      <span className="codicon codicon-trash" />
+                    </button>
+                    <button
+                      className="icon-btn"
+                      title={t('git.deleteTagRemoteTooltip')}
+                      disabled={busy || !!operation}
+                      onClick={() => void deleteTagRemote(tag)}
+                    >
+                      <span className="codicon codicon-cloud" />
+                    </button>
+                  </span>
+                </div>
+              ))
+            ))}
 
-        {sectionHead(t('git.stashSectionTitle'), openStash, () => setOpenStash((v) => !v), {
-          icon: 'archive',
-          title: t('git.stashAllTooltip'),
-          onClick: () => void stashCurrent(),
-        })}
-        {openStash &&
-          (stashes.length === 0 ? (
-            <div className="git-side-empty">{t('git.noStashes')}</div>
-          ) : (
-            stashes.map((s) => (
-              <div
-                key={s.ref}
-                className={`git-branch-row git-stash-row ${activeDiff === stashTabKey(s.ref) ? 'selected' : ''}`}
-                title={t('git.stashRowTooltip', { ref: s.ref, message: s.message })}
-                onClick={() => openStashDiff(s)}
-              >
-                <span className="codicon codicon-archive branch-icon" />
-                <span className="branch-name">{s.message}</span>
-                <span className="branch-actions">
-                  <button
-                    className="icon-btn"
-                    title={t('git.stashPopTooltip')}
-                    disabled={busy}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void act(() => api.stashApply(dir, s.ref, true), t('git.appliedSuccess'));
-                    }}
-                  >
-                    <span className="codicon codicon-debug-step-out" />
-                  </button>
-                  <button
-                    className="icon-btn"
-                    title={t('git.stashApplyTooltip')}
-                    disabled={busy}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void act(() => api.stashApply(dir, s.ref, false), t('git.appliedSuccess'));
-                    }}
-                  >
-                    <span className="codicon codicon-desktop-download" />
-                  </button>
-                  <button
-                    className="icon-btn"
-                    title={t('common.remove')}
-                    disabled={busy}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void (async () => {
-                        if (
-                          await confirmDialog({
-                            title: t('git.stashDropTitle'),
-                            message: t('git.stashDropMessage', { ref: s.ref, message: s.message }),
-                            confirmLabel: t('common.remove'),
-                            severity: 'danger',
-                          })
-                        ) {
-                          void act(() => api.stashDrop(dir, s.ref), t('git.stashDropSuccess'));
-                        }
-                      })();
-                    }}
-                  >
-                    <span className="codicon codicon-trash" />
-                  </button>
-                </span>
-              </div>
-            ))
-          ))}
-
-        {sectionHead(t('git.tagsSectionTitle'), openTags, () => setOpenTags((v) => !v), {
-          icon: 'add',
-          title: t('git.newTagSectionTooltip'),
-          onClick: () => void createTag(),
-        })}
-        {openTags &&
-          (tags.length === 0 ? (
-            <div className="git-side-empty">{t('git.noTags')}</div>
-          ) : (
-            tags.map((tag) => (
-              <div key={tag.name} className="git-branch-row" title={tag.hash}>
-                <span className="codicon codicon-tag branch-icon" />
-                <span className="branch-name">{tag.name}</span>
-                <span className="branch-actions">
-                  <button
-                    className="icon-btn"
-                    title={t('git.pushToOriginTooltip')}
-                    disabled={busy || !!operation}
-                    onClick={() => pushTag(tag)}
-                  >
-                    <span className="codicon codicon-cloud-upload" />
-                  </button>
-                  <button
-                    className="icon-btn"
-                    title={t('git.deleteTagLocalTooltip')}
-                    disabled={busy || !!operation}
-                    onClick={() => void deleteTagLocal(tag)}
-                  >
-                    <span className="codicon codicon-trash" />
-                  </button>
-                  <button
-                    className="icon-btn"
-                    title={t('git.deleteTagRemoteTooltip')}
-                    disabled={busy || !!operation}
-                    onClick={() => void deleteTagRemote(tag)}
-                  >
-                    <span className="codicon codicon-cloud" />
-                  </button>
-                </span>
-              </div>
-            ))
-          ))}
-
-        {message && <div className="git-side-msg">{message}</div>}
-      </div>
-      <div className="git-main">
-        {operation && (
-          <div className="operation-banner">
-            <span>
-              ⚠ {t('git.operationBanner', { label: t(OPERATION_LABEL_KEYS[operation]) })}
-            </span>
-            <span className="operation-actions">
-              <button className="primary" disabled={busy} onClick={() => void runOperation('continue')}>
-                {t('git.continue')}
-              </button>
-              {!OPERATION_SKIP_UNSUPPORTED.includes(operation) && (
-                <button disabled={busy} onClick={() => void runOperation('skip')}>
-                  {t('git.skip')}
+          {message && <div className="git-side-msg">{message}</div>}
+        </SplitPanel>
+        <Separator className="pane-separator pane-separator-h pane-separator-inset" />
+        <SplitPanel id={mainPanelId} initialSize={mainSize} className="git-main">
+          {operation && (
+            <div className="operation-banner">
+              <span>
+                ⚠ {t('git.operationBanner', { label: t(OPERATION_LABEL_KEYS[operation]) })}
+              </span>
+              <span className="operation-actions">
+                <button className="primary" disabled={busy} onClick={() => void runOperation('continue')}>
+                  {t('git.continue')}
                 </button>
-              )}
-              <button className="danger" disabled={busy} onClick={() => void runOperation('abort')}>
-                {t('git.abort')}
-              </button>
-            </span>
-          </div>
-        )}
-        <div className="git-main-content">
-          {view === 'status' ? (
-            <div className="changes-wrap">
-              <ChangesTab
-                key={`s${reloadKey}`}
-                dir={dir}
-                onOpenDiff={openDiff}
-                onOpenConflict={openConflict}
-                selectedKey={activeDiff}
-                visible={visible}
-              />
-              <DiffTabsPane
-                dir={dir}
-                leafId={leafId}
-                tabs={diffTabs}
-                activeKey={activeDiff}
-                reloadKey={reloadKey}
-                onActivate={setActiveDiff}
-                onClose={(key) => void closeDiff(key)}
-                onReload={reloadDiff}
-                onStatusChanged={onConflictResolved}
-              />
+                {!OPERATION_SKIP_UNSUPPORTED.includes(operation) && (
+                  <button disabled={busy} onClick={() => void runOperation('skip')}>
+                    {t('git.skip')}
+                  </button>
+                )}
+                <button className="danger" disabled={busy} onClick={() => void runOperation('abort')}>
+                  {t('git.abort')}
+                </button>
+              </span>
             </div>
-          ) : (
-            <HistoryTab
-              key={`h${reloadKey}`}
-              dir={dir}
-              operation={operation}
-              busy={busy}
-              dirty={resetLossCount}
-              untracked={untrackedCount}
-              onAct={act}
-            />
           )}
-        </div>
-      </div>
+          <div className="git-main-content">
+            {view === 'status' ? (
+              <Group
+                orientation="horizontal"
+                className="changes-wrap"
+                onLayoutChanged={(layout, meta) => {
+                  if (!meta.isUserInteraction) return;
+                  const pct = layout[changesPanelId];
+                  if (pct !== undefined) setPaneWidth('gitChanges', pct);
+                }}
+              >
+                <SplitPanel
+                  id={changesPanelId}
+                  initialSize={changesSize}
+                  className="git-changes-panel"
+                >
+                  <ChangesTab
+                    key={`s${reloadKey}`}
+                    dir={dir}
+                    onOpenDiff={openDiff}
+                    onOpenConflict={openConflict}
+                    selectedKey={activeDiff}
+                    visible={visible}
+                  />
+                </SplitPanel>
+                <Separator className="pane-separator pane-separator-h pane-separator-inset" />
+                <SplitPanel id={diffPanelId} initialSize={diffSize} className="git-diff-panel">
+                  <DiffTabsPane
+                    dir={dir}
+                    leafId={leafId}
+                    tabs={diffTabs}
+                    activeKey={activeDiff}
+                    reloadKey={reloadKey}
+                    onActivate={setActiveDiff}
+                    onClose={(key) => void closeDiff(key)}
+                    onReload={reloadDiff}
+                    onStatusChanged={onConflictResolved}
+                  />
+                </SplitPanel>
+              </Group>
+            ) : (
+              <HistoryTab
+                key={`h${reloadKey}`}
+                dir={dir}
+                operation={operation}
+                busy={busy}
+                dirty={resetLossCount}
+                untracked={untrackedCount}
+                onAct={act}
+              />
+            )}
+          </div>
+        </SplitPanel>
+      </Group>
       {branchMenu && (
         <ContextMenu
           x={branchMenu.x}

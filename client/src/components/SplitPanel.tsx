@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react';
+import { useRef, type CSSProperties, type ReactNode } from 'react';
 import { Panel } from 'react-resizable-panels';
 
 /**
@@ -29,11 +29,16 @@ export default function SplitPanel({
   id,
   initialSize,
   className,
+  style,
   children,
 }: {
   id: string;
   initialSize: string;
   className: string;
+  /** `overflow: hidden` の後にマージされる追加スタイル。Panel は className と style を
+   *  **内側の div** に付け、その既定は `overflow: auto`。インラインはクラス規則に勝つので、
+   *  ペイン自身がスクロールする必要がある場合 (`.git-side`) はここで上書きする。 */
+  style?: CSSProperties;
   children: ReactNode;
 }) {
   const defaultSize = useRef(initialSize).current;
@@ -43,7 +48,7 @@ export default function SplitPanel({
       defaultSize={defaultSize}
       minSize="120px"
       className={className}
-      style={{ overflow: 'hidden' }}
+      style={{ overflow: 'hidden', ...style }}
     >
       {children}
     </Panel>

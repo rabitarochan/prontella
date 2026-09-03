@@ -248,6 +248,9 @@ export function syncSessions(
   root: TermGroupNode,
   ownedIds: string[],
   preferGroupId: string | null,
+  /** id ごとの受け皿グループ (存在すればこちらが preferGroupId より優先。null = 既定へ)。
+   *  ターミナルモニターが「同じ worktree のセッションが居るグループへ」を実現するのに使う。 */
+  preferFor?: (sessionId: string, root: TermGroupNode) => string | null,
 ): TermGroupNode {
   const owned = new Set(ownedIds);
   const groups = allTermGroups(root);
@@ -265,7 +268,11 @@ export function syncSessions(
     if (!target) {
       out = makeTermGroup(missing, missing[missing.length - 1]);
     } else {
-      for (const id of missing) out = insertSessionInGroup(out, target.id, id);
+      for (const id of missing) {
+        const own = preferFor?.(id, out) ?? null;
+        const dst = (own && findTermGroup(out, own)) || target;
+        out = insertSessionInGroup(out, dst.id, id);
+      }
     }
   }
   return pruneEmptyTermGroups(out);

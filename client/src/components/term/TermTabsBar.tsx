@@ -32,6 +32,7 @@ export default function TermTabsBar({
   group,
   liveMap,
   busy,
+  labelOf,
   callbacks,
 }: {
   leafId: string;
@@ -39,6 +40,8 @@ export default function TermTabsBar({
   /** 生存セッションの id → 情報。ここに無い id は終了済み (タブだけ残っている)。 */
   liveMap: Map<string, TerminalSession>;
   busy: boolean;
+  /** タブ名。既定はセッションのタイトル。ターミナルモニターは worktree 名を出す。 */
+  labelOf?: (session: TerminalSession) => string;
   callbacks: TermTabsBarCallbacks;
 }) {
   const t = useT();
@@ -132,7 +135,9 @@ export default function TermTabsBar({
               {...middleClickClose(() => callbacks.onCloseTab(id))}
             >
               <span className="codicon codicon-terminal" />
-              <span className="editor-tab-name">{session?.title ?? t('term.endedLabel')}</span>
+              <span className="editor-tab-name">
+                {session ? (labelOf ? labelOf(session) : session.title) : t('term.endedLabel')}
+              </span>
               {session && <StatusBadge status={session.status} dot />}
               <span className="editor-tab-actions">
                 <button

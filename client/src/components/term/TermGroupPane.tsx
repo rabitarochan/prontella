@@ -28,6 +28,7 @@ export default function TermGroupPane({
   isActiveGroup,
   hostFor,
   emptyContent,
+  labelOf,
   callbacks,
 }: {
   group: TermGroup;
@@ -35,6 +36,8 @@ export default function TermGroupPane({
   liveMap: Map<string, TerminalSession>;
   busy: boolean;
   isActiveGroup: boolean;
+  /** タブ名 (TermTabsBar へ委譲)。 */
+  labelOf?: (session: TerminalSession) => string;
   /** セッション id → 安定 host div (TermPanel が所有)。 */
   hostFor: (sessionId: string) => HTMLDivElement;
   /** タブが 1 枚も無いグループの本文 (接続中 / 新規作成の案内)。 */
@@ -80,6 +83,7 @@ export default function TermGroupPane({
         group={group}
         liveMap={liveMap}
         busy={busy}
+        labelOf={labelOf}
         callbacks={callbacks}
       />
       <div className="term-group-body" ref={bodyRef}>

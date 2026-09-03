@@ -10,11 +10,18 @@ import CommandPalette from './components/CommandPalette';
 import DeckView from './components/DeckView';
 import QuickOpenModal from './components/QuickOpenModal';
 import Rail from './components/Rail';
+import TerminalMonitorView from './components/TerminalMonitorView';
 import VncView from './components/VncView';
 import WorktreeView from './components/WorktreeView';
+import { useMonitorView } from './layout/monitorViewStore';
 import { useVncView } from './layout/vncViewStore';
+import { usePageActivity, wirePageActivity } from './lib/pageActivity';
 
+// 全 worktree の git 状態 (/api/repos) の更新間隔。フォーカスのあるページだけ短く、
+// 別ウィンドウで眺めているだけ (可視だがフォーカスなし) なら長くする。エージェントの
+// ステータスは /ws/events のプッシュで届くので、ここが遅くても「確認待ち」の検知は遅れない。
 const POLL_MS = 4000;
+const POLL_UNFOCUSED_MS = 15_000;
 
 export default function App() {
   const t = useT();
@@ -26,6 +33,8 @@ export default function App() {
   const vncActive = useVncView((s) => s.active);
   const vncVisited = useVncView((s) => s.visited);
   const setVncActive = useVncView((s) => s.setActive);
+  const monitorActive = useMonitorView((s) => s.active);
+  const setMonitorActive = useMonitorView((s) => s.setActive);
   useSearchHotkeys(setQuickOpenTarget);
 
   // Ctrl+K = グローバルコマンドパレット。Ctrl+P (ファイル検索) と同じ流儀:
@@ -46,31 +55,36 @@ export default function App() {
   useEffect(() => {
     void refresh();
     connectAgentEvents();
+    wirePageActivity();
     let timer: ReturnType<typeof setInterval> | null = null;
-    const start = () => {
-      if (timer !== null) return;
-      timer = setInterval(() => void refresh(), POLL_MS);
+    let currentMs = 0;
+    // 非表示 = 停止 (サーバー側の git.exe 起動を抑える) / 可視かつフォーカスあり = 4 秒 /
+    // 可視だがフォーカスなし (別ウィンドウで眺めているだけ) = 15 秒。
+    const desiredMs = () => {
+      if (document.visibilityState === 'hidden') return 0;
+      return usePageActivity.getState().active ? POLL_MS : POLL_UNFOCUSED_MS;
     };
-    const stop = () => {
-      if (timer === null) return;
-      clearInterval(timer);
-      timer = null;
-    };
-    // ブラウザータブが非表示の間は 4 秒ポーリングを止める (サーバー側の git.exe 起動を抑える)。
-    // 再表示された瞬間に即 refresh() してから interval を再開する。
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        stop();
-      } else {
-        void refresh();
-        start();
+    // kick = 間隔が変わる契機で即 1 回 refresh する (再表示・フォーカス復帰)。
+    const apply = (kick: boolean) => {
+      const ms = desiredMs();
+      if (ms === currentMs) return;
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
       }
+      currentMs = ms;
+      if (ms === 0) return;
+      if (kick) void refresh();
+      timer = setInterval(() => void refresh(), ms);
     };
-    if (document.visibilityState !== 'hidden') start();
+    apply(false);
+    const onVisibilityChange = () => apply(document.visibilityState !== 'hidden');
     document.addEventListener('visibilitychange', onVisibilityChange);
+    const unsubscribe = usePageActivity.subscribe((s) => apply(s.active));
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      stop();
+      unsubscribe();
+      if (timer !== null) clearInterval(timer);
     };
   }, [refresh]);
 
@@ -89,6 +103,12 @@ export default function App() {
     if (current && vncActive) setVncActive(false);
   }, [current, vncActive, setVncActive]);
 
+  // ターミナルモニターも同じ規則 (選択優先)。VNC とは排他で、両方が保存状態に
+  // 残っていた場合 (通常は layout/mainMode が防ぐ) は VNC を優先しモニターを降ろす。
+  useEffect(() => {
+    if (monitorActive && (current || vncActive)) setMonitorActive(false);
+  }, [current, vncActive, monitorActive, setMonitorActive]);
+
   const vncVisible = loaded && vncActive && !current;
 
   return (
@@ -104,7 +124,9 @@ export default function App() {
           <div className="placeholder">{t('common.loading')}</div>
         ) : current ? (
           <WorktreeView key={current.worktree.path} repo={current.repo} worktree={current.worktree} />
-        ) : vncActive ? null : (
+        ) : vncActive ? null : monitorActive ? (
+          <TerminalMonitorView />
+        ) : (
           <DeckView />
         )}
         {/* VNC ビューは worktree 切替 (WorktreeView の key remount) の影響を受けない

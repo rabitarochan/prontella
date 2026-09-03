@@ -4,6 +4,8 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { findWorktree, resolveAndSelect, useAgentEvents, waitingSessions } from '../agentEvents';
 import { useLang, useT } from '../i18n';
+import { enterMonitor, enterVnc, exitMonitor, exitVnc } from '../layout/mainMode';
+import { useMonitorView } from '../layout/monitorViewStore';
 import { getActiveWorktreeCommands } from '../layout/worktreeCommands';
 import { useVncView } from '../layout/vncViewStore';
 import { isActive } from '../repoSections';
@@ -42,7 +44,7 @@ export default function CommandPalette({
   const setLang = useLang((s) => s.setLang);
   const setThemeMode = useTheme((s) => s.setMode);
   const vncActive = useVncView((s) => s.active);
-  const setVncActive = useVncView((s) => s.setActive);
+  const monitorActive = useMonitorView((s) => s.active);
   const { repos, select } = useDeck();
   const sessions = useAgentEvents((s) => s.sessions);
   const [query, setQuery] = useState('');
@@ -112,20 +114,20 @@ export default function CommandPalette({
         run: () => onAddWorktree(repo),
       });
     }
+    // Rail のトグルと同じ経路 (layout/mainMode): 入るときは選択を外し、他方のモードを抜ける
+    all.push({
+      id: 'cmd:monitor',
+      section: 'commands',
+      icon: 'multiple-windows',
+      label: t('monitor.paletteToggle'),
+      run: () => (monitorActive ? exitMonitor() : enterMonitor()),
+    });
     all.push({
       id: 'cmd:vnc',
       section: 'commands',
       icon: 'vm',
       label: t('vnc.paletteToggle'),
-      run: () => {
-        // Rail のトグルと同じ: 入るときは選択を外す (選択優先 effect との競合回避)
-        if (vncActive) {
-          setVncActive(false);
-        } else {
-          select(null);
-          setVncActive(true);
-        }
-      },
+      run: () => (vncActive ? exitVnc() : enterVnc()),
     });
     all.push(
       {
@@ -168,7 +170,7 @@ export default function CommandPalette({
     return fuzzysort
       .go(query, all, { keys: ['label', 'sub'], limit: 50 })
       .map((r) => r.obj);
-  }, [sessions, repos, query, t, select, setThemeMode, setLang, onOpenQuickOpen, onAddWorktree, vncActive, setVncActive]);
+  }, [sessions, repos, query, t, select, setThemeMode, setLang, onOpenQuickOpen, onAddWorktree, vncActive, monitorActive]);
 
   useEffect(() => setSelected(0), [items]);
   useEffect(() => {

@@ -16,10 +16,19 @@ import {
 } from './claudeHookState.js';
 import { claudeCommand } from './hooks.js';
 import { broadcastEvent, registerSnapshotProvider } from './sessionEvents.js';
+import { ScreenMirror } from './screenMirror.js';
+import { parseResizeMessage } from './termProtocol.js';
 
 export type AgentStatus = 'busy' | 'waiting' | 'idle' | 'shell';
 
-const MAX_SCROLLBACK = 200_000; // chars of raw output kept for reattach
+// attach 時に再生するスクロールバックの行数 (サーバー側 headless xterm の保持量)。
+// クライアント (XTermView) は 5000 行だが、再接続で戻す履歴は 1000 行に絞る:
+// シリアライズ量 (= attach の待ち時間) と resize 時の再折り返しコストは保持行数に
+// 比例し、5000 行だと 8 セッションの一斉再接続で 2.6 MB / 2.5 秒になった (計測)。
+const MIRROR_SCROLLBACK_LINES = 1000;
+// spawn 時の PTY サイズ。最初の attach クライアントが fit() で上書きするまでの仮の値。
+const INITIAL_COLS = 120;
+const INITIAL_ROWS = 32;
 const BUSY_HOLD_MS = 3_000; // spinner redraw gap tolerance
 // hook セッションが busy のまま無音でいられる上限。超えたら作業状態を捨てて idle に
 // 落とす (hook 断で永久 busy に固着させないための保険)。バックグラウンドのサブ
@@ -113,7 +122,13 @@ interface Session {
   cwd: string;
   title: string;
   proc: pty.IPty;
-  scrollback: string;
+  /** 現在の PTY winsize。attach 時の snapshot と resize broadcast で全クライアントへ配る。 */
+  cols: number;
+  rows: number;
+  /** サーバー側の画面の鏡 (headless xterm)。attach 時の snapshot はここからシリアライズする。 */
+  mirror: ScreenMirror;
+  /** attach 処理中 (snapshot のシリアライズ待ち) のソケットへ後送りする出力。 */
+  attaching: Set<string[]>;
   carry: string; // stripped tail carried into the next chunk's pattern scan
   modes: Map<number, boolean>; // last seen state of TRACKED_MODES (true = set/h); unseen modes are absent
   modeCarry: string; // raw tail carried into the next chunk's DECSET_RE scan
@@ -208,8 +223,8 @@ export class PtyManager {
     const shell = defaultShell();
     const proc = pty.spawn(shell.file, shell.args, {
       name: 'xterm-256color',
-      cols: 120,
-      rows: 32,
+      cols: INITIAL_COLS,
+      rows: INITIAL_ROWS,
       cwd,
       // terminalEnv(): deck の process.env ではなく「OS で新規に端末を開いた」環境。
       // deck の起動元シェルの汚染 (NODE_ENV/PORT/NO_COLOR/GIT_EDITOR ...) を持ち込まない。
@@ -225,7 +240,10 @@ export class PtyManager {
       cwd: path.resolve(cwd),
       title: run ? 'Claude Code' : path.basename(cwd),
       proc,
-      scrollback: '',
+      cols: INITIAL_COLS,
+      rows: INITIAL_ROWS,
+      mirror: new ScreenMirror(INITIAL_COLS, INITIAL_ROWS, MIRROR_SCROLLBACK_LINES),
+      attaching: new Set(),
       carry: '',
       modes: new Map(),
       modeCarry: '',
@@ -252,6 +270,7 @@ export class PtyManager {
       session.exited = true;
       this.broadcast(session, { type: 'exit' });
       for (const ws of session.sockets) ws.close();
+      session.mirror.dispose();
       this.sessions.delete(session.id);
       broadcastEvent({ type: 'removed', id: session.id });
     });
@@ -273,28 +292,40 @@ export class PtyManager {
   attach(id: string, ws: WebSocket): boolean {
     const session = this.sessions.get(id);
     if (!session) return false;
-    // Flush any pending 'data' broadcast to existing sockets BEFORE adding the
-    // new one: pending is already folded into scrollback (onData updates both
-    // synchronously), so the new socket must receive it only via the snapshot
-    // below, never via a live broadcast — otherwise it would see it twice.
+    // snapshot は headless xterm のシリアライズで、write キューが掃けるのを待つ
+    // (非同期)。その間に届いた出力は `queued` に積み、snapshot の直後に順番どおり
+    // 送ってからライブ配信 (session.sockets) へ加える。こうすると新しいソケットは
+    // 出力を「snapshot 経由で 1 回」か「後送り経由で 1 回」のどちらかで必ず 1 回
+    // だけ受け取る (snapshot 前の pending はここで flush して既存ソケットへ流す)。
     this.flush(session);
-    session.sockets.add(ws);
-    // Scrollback is trimmed to MAX_SCROLLBACK, so one-shot mode sequences sent
-    // at startup (bracketed paste, mouse tracking) can fall out of the window.
-    // The client resets the terminal before replaying the snapshot, so without
-    // re-asserting the tracked modes here, a reattach silently loses bracketed
-    // paste (multi-line pastes submit line-by-line) and mouse tracking (copy
-    // selection breaks). Reset ('l') states must be included too: some modes
-    // default to on (e.g. 25, cursor visibility), so a tracked "off" has to be
-    // re-sent to override the client's post-reset default.
-    const prefix = [...session.modes.entries()]
-      .sort(([a], [b]) => a - b)
-      .map(([mode, on]) => `\x1b[?${mode}${on ? 'h' : 'l'}`)
-      .join('');
-    ws.send(JSON.stringify({ type: 'snapshot', data: prefix + session.scrollback }));
-    ws.send(JSON.stringify({ type: 'status', status: session.status }));
+    const queued: string[] = [];
+    session.attaching.add(queued);
+    session.mirror.snapshot((screen) => {
+      session.attaching.delete(queued);
+      if (ws.readyState !== ws.OPEN) return;
+      // serialize は DEC モードも書き出すが、追跡中のモード (bracketed paste・マウス・
+      // カーソル可視) は明示的に前置しておく。クライアントは reset() してから再生する
+      // ので、既定 on のモードの "off" も含めて送る必要がある。冪等なので二重でも無害。
+      const prefix = [...session.modes.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([mode, on]) => `\x1b[?${mode}${on ? 'h' : 'l'}`)
+        .join('');
+      // cols/rows: 非アクティブなページ (フォーカスのないタブ/ウィンドウ) は自分の
+      // 寸法を主張せず、この値に格子を合わせて鏡写しする (client XTermView)。
+      ws.send(
+        JSON.stringify({
+          type: 'snapshot',
+          data: prefix + screen,
+          cols: session.cols,
+          rows: session.rows,
+        }),
+      );
+      ws.send(JSON.stringify({ type: 'status', status: session.status }));
+      if (queued.length > 0) ws.send(Buffer.from(queued.join(''), 'utf8'), { binary: true });
+      if (!session.exited) session.sockets.add(ws);
+    });
     ws.on('message', (raw) => {
-      let msg: { type: string; data?: string; cols?: number; rows?: number };
+      let msg: { type: string; data?: string; cols?: unknown; rows?: unknown };
       try {
         msg = JSON.parse(String(raw));
       } catch {
@@ -308,16 +339,35 @@ export class PtyManager {
         // ここで idle に落とすと走行中のサブエージェントを消してしまう。
         if (session.status === 'waiting' && !session.hook) this.setStatus(session, 'idle');
         session.proc.write(msg.data);
-      } else if (msg.type === 'resize' && msg.cols && msg.rows) {
-        try {
-          session.proc.resize(msg.cols, msg.rows);
-        } catch {
-          // resize can race with exit
-        }
+      } else if (msg.type === 'resize') {
+        const size = parseResizeMessage(msg);
+        if (size) this.resizePty(session, size.cols, size.rows);
       }
     });
-    ws.on('close', () => session.sockets.delete(ws));
+    ws.on('close', () => {
+      session.sockets.delete(ws);
+      session.attaching.delete(queued);
+    });
     return true;
+  }
+
+  /**
+   * PTY の winsize は 1 つしかない (last-write-wins)。サイズが変わるときは
+   * `proc.resize` の**前に**全 attach ソケットへ新サイズを流す — 追従側の
+   * クライアントが格子を合わせてから TUI の再描画出力を受け取れるように。
+   * 同サイズでも `proc.resize` は呼ぶ (再接続時に同じ値を送り直す既存挙動を維持)。
+   */
+  private resizePty(session: Session, cols: number, rows: number): void {
+    const changed = cols !== session.cols || rows !== session.rows;
+    session.cols = cols;
+    session.rows = rows;
+    session.mirror.resize(cols, rows);
+    if (changed) this.broadcast(session, { type: 'resize', cols, rows });
+    try {
+      session.proc.resize(cols, rows);
+    } catch {
+      // resize can race with exit
+    }
   }
 
   /**
@@ -389,7 +439,8 @@ export class PtyManager {
 
   private onData(session: Session, data: string): void {
     session.lastOutputAt = Date.now();
-    session.scrollback = (session.scrollback + data).slice(-MAX_SCROLLBACK);
+    session.mirror.write(data);
+    for (const queue of session.attaching) queue.push(data);
     session.pending += data;
     if (session.pending.length > MAX_PENDING) {
       // Burst guard: flush immediately rather than let pending (and latency) grow unbounded.
@@ -495,7 +546,10 @@ export class PtyManager {
       session.flushTimer = null;
     }
     if (session.pending) {
-      this.broadcast(session, { type: 'data', data: session.pending });
+      // PTY 出力はバイナリフレームで流す。JSON だと制御文字のエスケープ (ESC 等) で
+      // 膨らみ、クライアントは文字列をパースしてから xterm へ渡すが、バイナリなら
+      // xterm が UTF-8 のバイト列を直接受ける (client/src/lib/liveSocket.ts の onBinary)。
+      this.broadcastBinary(session, Buffer.from(session.pending, 'utf8'));
       session.pending = '';
     }
   }
@@ -504,6 +558,12 @@ export class PtyManager {
     const payload = JSON.stringify(msg);
     for (const ws of session.sockets) {
       if (ws.readyState === ws.OPEN) ws.send(payload);
+    }
+  }
+
+  private broadcastBinary(session: Session, payload: Buffer): void {
+    for (const ws of session.sockets) {
+      if (ws.readyState === ws.OPEN) ws.send(payload, { binary: true });
     }
   }
 

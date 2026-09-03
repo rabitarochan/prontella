@@ -16,6 +16,8 @@ const DONE_SETTLE_MS = 4_000;
 
 interface AgentEventsState {
   sessions: Record<string, TerminalSession>;
+  /** /ws/events の snapshot を 1 度でも受けたか。true なら `sessions` が全セッションの顔ぶれとして信頼できる。 */
+  loaded: boolean;
   desktopEnabled: boolean;
   soundEnabled: boolean;
   setDesktopEnabled: (v: boolean) => void;
@@ -43,6 +45,7 @@ export function savePref(key: string, value: boolean): void {
 
 export const useAgentEvents = create<AgentEventsState>((set) => ({
   sessions: {},
+  loaded: false,
   desktopEnabled: loadPref('prontella.notify.desktop', true),
   soundEnabled: loadPref('prontella.notify.sound', true),
   setDesktopEnabled: (v) => {
@@ -191,6 +194,7 @@ export function connectAgentEvents(): void {
         for (const id of doneTimers.keys()) cancelDoneTimer(id);
         useAgentEvents.setState({
           sessions: Object.fromEntries(msg.sessions.map((s) => [s.id, s])),
+          loaded: true,
         });
       } else if (msg.type === 'session' && msg.session) {
         handleSession(msg.session);

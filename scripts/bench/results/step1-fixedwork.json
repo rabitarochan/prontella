@@ -1,0 +1,110 @@
+{
+  "label": "step1-fixedwork",
+  "at": "2026-09-03T10:40:41.241Z",
+  "git": {
+    "commit": "92180337dbf3608d547666fd2fe1318261a99940",
+    "branch": "feature/terminal-monitor"
+  },
+  "versions": {
+    "node": "v24.18.1",
+    "xterm": "^6.0.0",
+    "nodePty": "^1.1.0"
+  },
+  "config": {
+    "sessions": 8,
+    "seconds": 30,
+    "hz": 10,
+    "lines": 30,
+    "port": 4751,
+    "cdp": 9733
+  },
+  "m1": {
+    "attachMs": 1170,
+    "snapshotBytes": 2007836,
+    "snapshotCount": 8,
+    "perf": {
+      "TaskDuration": -58.063013,
+      "ScriptDuration": -47.081919,
+      "LayoutDuration": -0.664708,
+      "RecalcStyleDuration": -0.7174320000000001,
+      "JSHeapUsedSize": -7337176
+    },
+    "longtaskCount": 5,
+    "longtaskMs": 313
+  },
+  "m2": {
+    "wallSeconds": 116.51,
+    "serverCpuSecondsPerWallSecond": 0.692,
+    "serverCpuByName": {
+      "node": 22,
+      "conhost": 4.531,
+      "pwsh": 50.563,
+      "claude": 3.547
+    },
+    "serverRssBytesBefore": 1473470464,
+    "serverRssBytesAfter": 1717080064,
+    "pageA": {
+      "perf": {
+        "TaskDuration": 53.606232,
+        "ScriptDuration": 43.916755,
+        "LayoutDuration": 0.415071,
+        "RecalcStyleDuration": 0.587681,
+        "JSHeapUsedSize": 16509256
+      },
+      "longtaskCount": 2,
+      "longtaskMs": 104,
+      "wsFramesReceived": {
+        "snapshot": 0,
+        "status": 0,
+        "resize": 0,
+        "data": 15971,
+        "pong": 48
+      },
+      "wsBytesReceived": 9002211
+    },
+    "pageB": {
+      "perf": {
+        "TaskDuration": 57.178516,
+        "ScriptDuration": 46.67588,
+        "LayoutDuration": 0.36255899999999996,
+        "RecalcStyleDuration": 0.685767,
+        "JSHeapUsedSize": 22768576
+      },
+      "longtaskCount": 5,
+      "longtaskMs": 256,
+      "wsFramesReceived": {
+        "snapshot": 0,
+        "status": 0,
+        "resize": 0,
+        "data": 15971,
+        "pong": 48
+      },
+      "wsBytesReceived": 9002211
+    }
+  },
+  "m3": {
+    "driverPage": "worktree(A)",
+    "driverFocus": {
+      "hasFocus": true,
+      "visibilityState": "visible"
+    },
+    "dragMs": 2032,
+    "resizeFramesSentByDriver": 32,
+    "resizeFramesReceivedByOther": 32,
+    "driverLongtaskCount": 0,
+    "driverLongtaskMs": 0,
+    "serverCpuSecondsPerWallSecond": 0.092,
+    "serverCpuByName": {
+      "node": 0.109,
+      "conhost": 0,
+      "pwsh": 0.063,
+      "claude": 0.016
+    }
+  },
+  "m4": {
+    "closedSockets": 8,
+    "reconnectMs": 944,
+    "longtaskCount": 0,
+    "longtaskMs": 0
+  }
+}

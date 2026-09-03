@@ -18,7 +18,8 @@ class FakeWebSocket {
   sent: string[] = [];
   closeCalls = 0;
   onopen: (() => void) | null = null;
-  onmessage: ((ev: { data: string }) => void) | null = null;
+  onmessage: ((ev: { data: string | ArrayBuffer }) => void) | null = null;
+  binaryType = 'blob';
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
 
@@ -44,6 +45,11 @@ class FakeWebSocket {
   /** サーバーからのメッセージ。 */
   emit(payload: unknown): void {
     this.onmessage?.({ data: JSON.stringify(payload) });
+  }
+
+  /** サーバーからのバイナリフレーム (PTY 出力)。 */
+  emitBinary(bytes: number[]): void {
+    this.onmessage?.({ data: Uint8Array.from(bytes).buffer });
   }
 
   /** サーバー / ネットワークによる正常な切断 (close フレームが届いた)。 */
@@ -127,6 +133,26 @@ describe('openLiveSocket', () => {
 
     last().emit({ type: 'data', data: 'x' });
     expect(h.messages).toEqual([{ type: 'data', data: 'x' }]);
+  });
+
+  it('バイナリフレームは onBinary へ届き、onMessage には来ない。受信は生存の証拠になる', () => {
+    const binaries: Uint8Array[] = [];
+    const h = open({ onBinary: (b) => binaries.push(b) });
+    expect(last().binaryType).toBe('arraybuffer');
+    // ping を撃って期限を張ってから、pong の代わりにバイナリを受ける
+    vi.advanceTimersByTime(PING_MS);
+    expect(last().pingCount()).toBe(1);
+    last().emitBinary([0x68, 0x69]);
+    expect(binaries.map((b) => Array.from(b))).toEqual([[0x68, 0x69]]);
+    expect(h.messages).toEqual([]);
+    vi.advanceTimersByTime(PONG_TIMEOUT_MS + 1);
+    expect(FakeWebSocket.instances).toHaveLength(1); // 期限切れで落とされていない
+  });
+
+  it('onBinary 未指定ならバイナリは捨てる (例外にしない)', () => {
+    const h = open();
+    expect(() => last().emitBinary([1, 2, 3])).not.toThrow();
+    expect(h.messages).toEqual([]);
   });
 
   it('pong は呼び出し側に渡さない', () => {

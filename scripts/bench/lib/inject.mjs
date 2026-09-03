@@ -47,11 +47,19 @@ export function benchInstrumentationScript() {
         bucket(this.__benchPath).socketCount++;
         state.sockets.push(this);
         this.addEventListener('message', (ev) => {
-          if (typeof ev.data !== 'string') return;
           const b = bucket(this.__benchPath);
-          const t = typeOf(ev.data);
+          let t;
+          let len;
+          if (typeof ev.data === 'string') {
+            t = typeOf(ev.data);
+            len = byteLen(ev.data);
+          } else {
+            // バイナリフレーム = PTY 出力 (step4 以降)。JSON の 'data' と同じ枠で数える
+            t = 'data';
+            len = ev.data instanceof ArrayBuffer ? ev.data.byteLength : (ev.data?.size ?? 0);
+            b.received.binary = (b.received.binary || 0) + 1;
+          }
           b.received[t] = (b.received[t] || 0) + 1;
-          const len = byteLen(ev.data);
           b.bytesReceived += len;
           b.bytesByTypeReceived[t] = (b.bytesByTypeReceived[t] || 0) + len;
         });

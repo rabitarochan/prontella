@@ -321,7 +321,7 @@ export class PtyManager {
         }),
       );
       ws.send(JSON.stringify({ type: 'status', status: session.status }));
-      if (queued.length > 0) ws.send(JSON.stringify({ type: 'data', data: queued.join('') }));
+      if (queued.length > 0) ws.send(Buffer.from(queued.join(''), 'utf8'), { binary: true });
       if (!session.exited) session.sockets.add(ws);
     });
     ws.on('message', (raw) => {
@@ -546,7 +546,10 @@ export class PtyManager {
       session.flushTimer = null;
     }
     if (session.pending) {
-      this.broadcast(session, { type: 'data', data: session.pending });
+      // PTY 出力はバイナリフレームで流す。JSON だと制御文字のエスケープ (ESC 等) で
+      // 膨らみ、クライアントは文字列をパースしてから xterm へ渡すが、バイナリなら
+      // xterm が UTF-8 のバイト列を直接受ける (client/src/lib/liveSocket.ts の onBinary)。
+      this.broadcastBinary(session, Buffer.from(session.pending, 'utf8'));
       session.pending = '';
     }
   }
@@ -555,6 +558,12 @@ export class PtyManager {
     const payload = JSON.stringify(msg);
     for (const ws of session.sockets) {
       if (ws.readyState === ws.OPEN) ws.send(payload);
+    }
+  }
+
+  private broadcastBinary(session: Session, payload: Buffer): void {
+    for (const ws of session.sockets) {
+      if (ws.readyState === ws.OPEN) ws.send(payload, { binary: true });
     }
   }
 

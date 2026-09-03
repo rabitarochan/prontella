@@ -27,6 +27,8 @@ export interface LiveSocketOptions {
   path: string;
   /** JSON パース済みのメッセージ。'pong' は内部で消費するのでここには来ない。 */
   onMessage: (msg: Record<string, unknown>) => void;
+  /** バイナリフレーム (PTY 出力の生バイト列)。指定が無ければ捨てる。 */
+  onBinary?: (bytes: Uint8Array) => void;
   /** 接続が開くたびに呼ばれる (初回だけでなく再接続でも)。 */
   onOpen?: () => void;
   onPhase?: (phase: LinkPhase) => void;
@@ -94,6 +96,8 @@ class LiveSocketImpl implements LiveSocket {
       return;
     }
     this.ws = ws;
+    // PTY 出力はバイナリで届く (JSON のエスケープ/パースと UTF-16 変換を省く)。
+    ws.binaryType = 'arraybuffer';
     ws.onopen = () => {
       if (this.ws !== ws) return;
       this.attempt = 0;
@@ -103,13 +107,18 @@ class LiveSocketImpl implements LiveSocket {
     };
     ws.onmessage = (event) => {
       if (this.ws !== ws) return;
+      if (event.data instanceof ArrayBuffer) {
+        // 何であれ受信は生存の証拠。出力が流れている間は ping を待たずに期限を解く。
+        this.clearPongDeadline();
+        this.opts.onBinary?.(new Uint8Array(event.data));
+        return;
+      }
       let msg: Record<string, unknown>;
       try {
         msg = JSON.parse(String(event.data));
       } catch {
         return;
       }
-      // 何であれ受信は生存の証拠。出力が流れている間は ping を待たずに期限を解く。
       this.clearPongDeadline();
       if (msg?.type === 'pong') return;
       this.opts.onMessage(msg);

@@ -230,6 +230,9 @@ export default function XTermView({
       // winsize が切断前のままで「リサイズが追従しない」症状が残る。
       // (非アクティブなページでは送らず、直後の snapshot が運ぶ cols/rows に従う。)
       onOpen: () => sendResize(true),
+      // PTY 出力はバイナリフレーム (server/pty.ts の flush)。xterm はバイト列を
+      // 直接受けられ、JSON 文字列より速い経路になる。
+      onBinary: (bytes) => term.write(bytes),
       onMessage: (raw) => {
         const msg = raw as { type?: string; data?: string; message?: string; cols?: unknown; rows?: unknown };
         if (msg.type === 'snapshot') {

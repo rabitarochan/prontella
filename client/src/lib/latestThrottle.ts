@@ -15,16 +15,18 @@ export interface LatestThrottle<T> {
   cancel(): void;
 }
 
+type TimerHandle = ReturnType<typeof setTimeout>;
+
 export function createLatestThrottle<T>(
   send: (value: T) => void,
   intervalMs: number,
   timers: {
-    setTimeout: (fn: () => void, ms: number) => unknown;
-    clearTimeout: (handle: unknown) => void;
-  } = globalThis,
+    setTimeout: (fn: () => void, ms: number) => TimerHandle;
+    clearTimeout: (handle: TimerHandle) => void;
+  } = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (handle) => clearTimeout(handle) },
 ): LatestThrottle<T> {
   let pending: { value: T } | null = null;
-  let timer: unknown = null;
+  let timer: TimerHandle | null = null;
   const fire = () => {
     timer = null;
     if (!pending) return;

@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { t } from '../i18n';
+import { createLatestThrottle } from '../lib/latestThrottle';
 import { openLiveSocket, type LinkPhase } from '../lib/liveSocket';
 import { BASE_FONT_SIZE } from '../lib/mirrorFont';
 import { clearMirrorScale, refitMirror } from '../lib/mirrorFontDom';
@@ -38,6 +39,9 @@ import { terminalTheme } from '../theme/terminalTheme';
  * grid, and only shrinks its font so the grid fits its box. When the page
  * becomes active again it fits and claims its own size back.
  */
+/** PTY への resize 送信の最短間隔。ドラッグ中の追従感と再描画コストの折り合い (VS Code も同程度)。 */
+const RESIZE_SEND_MS = 80;
+
 export default function XTermView({
   id,
   claudeMode,
@@ -182,7 +186,16 @@ export default function XTermView({
 
     // 主張側: 通常フォントで枠に合わせて cols/rows を決め、PTY へ送る。
     // 非アクティブなページは PTY のサイズを主張しない (フォントだけ枠に合わせる)。
-    const sendResize = () => {
+    // サーバーへの resize 送信は間引く: セパレーターのドラッグ中は ResizeObserver が
+    // 毎フレーム発火し、そのたびに PTY をリサイズすると ConPTY と TUI が全画面を
+    // 描き直してカクつく。ローカルの fit は即時 (格子は追従する) で、PTY へ届ける
+    // 値だけ最新のものを RESIZE_SEND_MS ごとに 1 回にする。
+    const resizeThrottle = createLatestThrottle<{ cols: number; rows: number }>(
+      (size) => link.send({ type: 'resize', ...size }),
+      RESIZE_SEND_MS,
+    );
+    // immediate = 再接続直後やアクティブ復帰など、待つと「サイズが追従しない」に見える場面。
+    const sendResize = (immediate = false) => {
       if (!pageActiveRef.current) {
         scheduleRefit();
         return;
@@ -194,9 +207,10 @@ export default function XTermView({
       } catch {
         return;
       }
-      link.send({ type: 'resize', cols: term.cols, rows: term.rows });
+      resizeThrottle.push({ cols: term.cols, rows: term.rows });
+      if (immediate) resizeThrottle.flush();
     };
-    claimRef.current = sendResize;
+    claimRef.current = () => sendResize(true);
 
     // 追従側: サーバーが配る実サイズに格子を合わせる (TUI の再描画出力が届く前に)。
     const applyRemoteSize = (msg: { cols?: unknown; rows?: unknown }) => {
@@ -215,7 +229,7 @@ export default function XTermView({
       // 再接続のたびに今のサイズを送り直す。これが無いと、繋ぎ直っても PTY の
       // winsize が切断前のままで「リサイズが追従しない」症状が残る。
       // (非アクティブなページでは送らず、直後の snapshot が運ぶ cols/rows に従う。)
-      onOpen: sendResize,
+      onOpen: () => sendResize(true),
       onMessage: (raw) => {
         const msg = raw as { type?: string; data?: string; message?: string; cols?: unknown; rows?: unknown };
         if (msg.type === 'snapshot') {
@@ -266,6 +280,7 @@ export default function XTermView({
     return () => {
       observer.disconnect();
       if (refitRaf) cancelAnimationFrame(refitRaf);
+      resizeThrottle.cancel();
       claimRef.current = null;
       dataDisposable.dispose();
       link.stop();

@@ -16,6 +16,7 @@ import {
 } from './claudeHookState.js';
 import { claudeCommand } from './hooks.js';
 import { broadcastEvent, registerSnapshotProvider } from './sessionEvents.js';
+import { ScrollbackBuffer } from './scrollback.js';
 import { parseResizeMessage } from './termProtocol.js';
 
 export type AgentStatus = 'busy' | 'waiting' | 'idle' | 'shell';
@@ -120,7 +121,8 @@ interface Session {
   /** 現在の PTY winsize。attach 時の snapshot と resize broadcast で全クライアントへ配る。 */
   cols: number;
   rows: number;
-  scrollback: string;
+  /** 末尾 MAX_SCROLLBACK 文字。結合は attach 時だけ (毎チャンクの slice を避ける)。 */
+  scrollback: ScrollbackBuffer;
   carry: string; // stripped tail carried into the next chunk's pattern scan
   modes: Map<number, boolean>; // last seen state of TRACKED_MODES (true = set/h); unseen modes are absent
   modeCarry: string; // raw tail carried into the next chunk's DECSET_RE scan
@@ -234,7 +236,7 @@ export class PtyManager {
       proc,
       cols: INITIAL_COLS,
       rows: INITIAL_ROWS,
-      scrollback: '',
+      scrollback: new ScrollbackBuffer(MAX_SCROLLBACK),
       carry: '',
       modes: new Map(),
       modeCarry: '',
@@ -305,7 +307,7 @@ export class PtyManager {
     ws.send(
       JSON.stringify({
         type: 'snapshot',
-        data: prefix + session.scrollback,
+        data: prefix + session.scrollback.snapshot(),
         cols: session.cols,
         rows: session.rows,
       }),
@@ -422,7 +424,7 @@ export class PtyManager {
 
   private onData(session: Session, data: string): void {
     session.lastOutputAt = Date.now();
-    session.scrollback = (session.scrollback + data).slice(-MAX_SCROLLBACK);
+    session.scrollback.append(data);
     session.pending += data;
     if (session.pending.length > MAX_PENDING) {
       // Burst guard: flush immediately rather than let pending (and latency) grow unbounded.

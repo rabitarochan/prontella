@@ -14,7 +14,10 @@ import { BASE_FONT_SIZE, mirrorScale, solveMirrorFontSize, type Box, type GridSi
  */
 
 const SCREEN_SELECTOR = '.xterm-screen';
-const VIEWPORT_SELECTOR = '.xterm-viewport';
+// xterm 6 のスクロールバーは VS Code 由来のオーバーレイで、DOM の offsetWidth −
+// clientWidth では測れない。FitAddon 0.11 と同じ規則 (scrollback が 0 なら 0、
+// それ以外は overviewRuler.width か既定 14px) で控除する。
+const DEFAULT_SCROLL_BAR_WIDTH = 14;
 
 /** `.xterm-screen` の格子実寸。inline style を優先し、無ければレイアウト寸法にフォールバック。 */
 export function readScreenSize(term: Terminal): GridSize | null {
@@ -26,13 +29,13 @@ export function readScreenSize(term: Terminal): GridSize | null {
   return { width, height };
 }
 
-/** 格子を収めるべき枠 = コンテナ内寸 − padding − viewport のスクロールバー幅 (FitAddon と同じ控除)。 */
+/** 格子を収めるべき枠 = コンテナ内寸 − padding − スクロールバー幅 (FitAddon と同じ控除)。 */
 export function mirrorBox(term: Terminal, container: HTMLElement): Box {
   const cs = getComputedStyle(container);
   const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
   const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
-  const viewport = term.element?.querySelector<HTMLElement>(VIEWPORT_SELECTOR);
-  const scrollbar = viewport ? Math.max(0, viewport.offsetWidth - viewport.clientWidth) : 0;
+  const scrollbar =
+    term.options.scrollback === 0 ? 0 : term.options.overviewRuler?.width || DEFAULT_SCROLL_BAR_WIDTH;
   return {
     width: container.clientWidth - padX - scrollbar,
     height: container.clientHeight - padY,

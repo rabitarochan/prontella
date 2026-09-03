@@ -10,8 +10,10 @@ import CommandPalette from './components/CommandPalette';
 import DeckView from './components/DeckView';
 import QuickOpenModal from './components/QuickOpenModal';
 import Rail from './components/Rail';
+import TerminalMonitorView from './components/TerminalMonitorView';
 import VncView from './components/VncView';
 import WorktreeView from './components/WorktreeView';
+import { useMonitorView } from './layout/monitorViewStore';
 import { useVncView } from './layout/vncViewStore';
 
 const POLL_MS = 4000;
@@ -26,6 +28,8 @@ export default function App() {
   const vncActive = useVncView((s) => s.active);
   const vncVisited = useVncView((s) => s.visited);
   const setVncActive = useVncView((s) => s.setActive);
+  const monitorActive = useMonitorView((s) => s.active);
+  const setMonitorActive = useMonitorView((s) => s.setActive);
   useSearchHotkeys(setQuickOpenTarget);
 
   // Ctrl+K = グローバルコマンドパレット。Ctrl+P (ファイル検索) と同じ流儀:
@@ -89,6 +93,12 @@ export default function App() {
     if (current && vncActive) setVncActive(false);
   }, [current, vncActive, setVncActive]);
 
+  // ターミナルモニターも同じ規則 (選択優先)。VNC とは排他で、両方が保存状態に
+  // 残っていた場合 (通常は layout/mainMode が防ぐ) は VNC を優先しモニターを降ろす。
+  useEffect(() => {
+    if (monitorActive && (current || vncActive)) setMonitorActive(false);
+  }, [current, vncActive, monitorActive, setMonitorActive]);
+
   const vncVisible = loaded && vncActive && !current;
 
   return (
@@ -104,7 +114,9 @@ export default function App() {
           <div className="placeholder">{t('common.loading')}</div>
         ) : current ? (
           <WorktreeView key={current.worktree.path} repo={current.repo} worktree={current.worktree} />
-        ) : vncActive ? null : (
+        ) : vncActive ? null : monitorActive ? (
+          <TerminalMonitorView />
+        ) : (
           <DeckView />
         )}
         {/* VNC ビューは worktree 切替 (WorktreeView の key remount) の影響を受けない

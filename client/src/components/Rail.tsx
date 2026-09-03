@@ -1,4 +1,6 @@
 import { useLang, useT } from '../i18n';
+import { enterMonitor, enterVnc, exitMonitor, exitVnc } from '../layout/mainMode';
+import { useMonitorView } from '../layout/monitorViewStore';
 import { useVncView } from '../layout/vncViewStore';
 import { useDeck } from '../store';
 import AttentionBell from './AttentionBell';
@@ -6,7 +8,7 @@ import Sidebar from './Sidebar';
 import ThemeToggle from './ThemeToggle';
 
 /**
- * 左ペイン (レール): タイトル行 (ロゴ = デッキへ戻る / ベル / 言語 / テーマ) +
+ * 左ペイン (レール): タイトル行 (ロゴ = デッキへ戻る / モニター / VNC / ベル / 言語 / テーマ) +
  * 検索・コマンドバー (Ctrl+K パレット) + リポジトリーナビ (Sidebar)。
  * 旧 topbar の要素はここに集約。
  */
@@ -16,18 +18,7 @@ export default function Rail({ onOpenPalette }: { onOpenPalette: () => void }) {
   const lang = useLang((s) => s.lang);
   const setLang = useLang((s) => s.setLang);
   const vncActive = useVncView((s) => s.active);
-  const setVncActive = useVncView((s) => s.setActive);
-
-  // VNC モードへの出入り。入るときはリポジトリー選択を外して main 全体を VNC にする
-  // (選択が残っていると App 側の「選択優先」effect が即座にモードを解除してしまう)。
-  const toggleVnc = () => {
-    if (vncActive) {
-      setVncActive(false);
-    } else {
-      select(null);
-      setVncActive(true);
-    }
-  };
+  const monitorActive = useMonitorView((s) => s.active);
 
   return (
     <aside className="rail">
@@ -37,9 +28,16 @@ export default function Rail({ onOpenPalette }: { onOpenPalette: () => void }) {
         </button>
         <span className="rail-title-actions">
           <button
+            className={`icon-btn${monitorActive ? ' monitor-btn-active' : ''}`}
+            title={t('monitor.railTooltip')}
+            onClick={() => (monitorActive ? exitMonitor() : enterMonitor())}
+          >
+            <span className="codicon codicon-multiple-windows" />
+          </button>
+          <button
             className={`icon-btn${vncActive ? ' vnc-btn-active' : ''}`}
             title={t('vnc.railTooltip')}
-            onClick={toggleVnc}
+            onClick={() => (vncActive ? exitVnc() : enterVnc())}
           >
             <span className="codicon codicon-vm" />
           </button>

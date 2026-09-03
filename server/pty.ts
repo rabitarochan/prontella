@@ -16,10 +16,14 @@ import {
 } from './claudeHookState.js';
 import { claudeCommand } from './hooks.js';
 import { broadcastEvent, registerSnapshotProvider } from './sessionEvents.js';
+import { parseResizeMessage } from './termProtocol.js';
 
 export type AgentStatus = 'busy' | 'waiting' | 'idle' | 'shell';
 
 const MAX_SCROLLBACK = 200_000; // chars of raw output kept for reattach
+// spawn 時の PTY サイズ。最初の attach クライアントが fit() で上書きするまでの仮の値。
+const INITIAL_COLS = 120;
+const INITIAL_ROWS = 32;
 const BUSY_HOLD_MS = 3_000; // spinner redraw gap tolerance
 // hook セッションが busy のまま無音でいられる上限。超えたら作業状態を捨てて idle に
 // 落とす (hook 断で永久 busy に固着させないための保険)。バックグラウンドのサブ
@@ -113,6 +117,9 @@ interface Session {
   cwd: string;
   title: string;
   proc: pty.IPty;
+  /** 現在の PTY winsize。attach 時の snapshot と resize broadcast で全クライアントへ配る。 */
+  cols: number;
+  rows: number;
   scrollback: string;
   carry: string; // stripped tail carried into the next chunk's pattern scan
   modes: Map<number, boolean>; // last seen state of TRACKED_MODES (true = set/h); unseen modes are absent
@@ -208,8 +215,8 @@ export class PtyManager {
     const shell = defaultShell();
     const proc = pty.spawn(shell.file, shell.args, {
       name: 'xterm-256color',
-      cols: 120,
-      rows: 32,
+      cols: INITIAL_COLS,
+      rows: INITIAL_ROWS,
       cwd,
       // terminalEnv(): deck の process.env ではなく「OS で新規に端末を開いた」環境。
       // deck の起動元シェルの汚染 (NODE_ENV/PORT/NO_COLOR/GIT_EDITOR ...) を持ち込まない。
@@ -225,6 +232,8 @@ export class PtyManager {
       cwd: path.resolve(cwd),
       title: run ? 'Claude Code' : path.basename(cwd),
       proc,
+      cols: INITIAL_COLS,
+      rows: INITIAL_ROWS,
       scrollback: '',
       carry: '',
       modes: new Map(),
@@ -291,10 +300,19 @@ export class PtyManager {
       .sort(([a], [b]) => a - b)
       .map(([mode, on]) => `\x1b[?${mode}${on ? 'h' : 'l'}`)
       .join('');
-    ws.send(JSON.stringify({ type: 'snapshot', data: prefix + session.scrollback }));
+    // cols/rows: 非アクティブなページ (フォーカスのないタブ/ウィンドウ) は自分の
+    // 寸法を主張せず、この値に格子を合わせて鏡写しする (client XTermView)。
+    ws.send(
+      JSON.stringify({
+        type: 'snapshot',
+        data: prefix + session.scrollback,
+        cols: session.cols,
+        rows: session.rows,
+      }),
+    );
     ws.send(JSON.stringify({ type: 'status', status: session.status }));
     ws.on('message', (raw) => {
-      let msg: { type: string; data?: string; cols?: number; rows?: number };
+      let msg: { type: string; data?: string; cols?: unknown; rows?: unknown };
       try {
         msg = JSON.parse(String(raw));
       } catch {
@@ -308,16 +326,31 @@ export class PtyManager {
         // ここで idle に落とすと走行中のサブエージェントを消してしまう。
         if (session.status === 'waiting' && !session.hook) this.setStatus(session, 'idle');
         session.proc.write(msg.data);
-      } else if (msg.type === 'resize' && msg.cols && msg.rows) {
-        try {
-          session.proc.resize(msg.cols, msg.rows);
-        } catch {
-          // resize can race with exit
-        }
+      } else if (msg.type === 'resize') {
+        const size = parseResizeMessage(msg);
+        if (size) this.resizePty(session, size.cols, size.rows);
       }
     });
     ws.on('close', () => session.sockets.delete(ws));
     return true;
+  }
+
+  /**
+   * PTY の winsize は 1 つしかない (last-write-wins)。サイズが変わるときは
+   * `proc.resize` の**前に**全 attach ソケットへ新サイズを流す — 追従側の
+   * クライアントが格子を合わせてから TUI の再描画出力を受け取れるように。
+   * 同サイズでも `proc.resize` は呼ぶ (再接続時に同じ値を送り直す既存挙動を維持)。
+   */
+  private resizePty(session: Session, cols: number, rows: number): void {
+    const changed = cols !== session.cols || rows !== session.rows;
+    session.cols = cols;
+    session.rows = rows;
+    if (changed) this.broadcast(session, { type: 'resize', cols, rows });
+    try {
+      session.proc.resize(cols, rows);
+    } catch {
+      // resize can race with exit
+    }
   }
 
   /**

@@ -177,6 +177,21 @@ const CORE_STRINGS = {
   'bell.sound': { ja: 'サウンド', en: 'Sound' },
 
   // ---- VNC (右ペイン) ----
+  'monitor.title': { ja: 'ターミナルモニター', en: 'Terminal monitor' },
+  'monitor.railTooltip': { ja: 'ターミナルモニター (全セッション)', en: 'Terminal monitor (all sessions)' },
+  'monitor.paletteToggle': { ja: 'ターミナルモニターを開閉', en: 'Toggle terminal monitor' },
+  'monitor.count': { ja: '{n} セッション', en: '{n} sessions' },
+  'monitor.empty': { ja: '稼働中のターミナルはありません', en: 'No live terminals' },
+  'monitor.emptyHint': {
+    ja: 'worktree を開いてターミナルを作ると、ここに全リポジトリー横断で並びます。',
+    en: 'Open a worktree and create a terminal; every repository’s terminals show up here.',
+  },
+  'monitor.openWorktree': { ja: 'この worktree を開く', en: 'Open this worktree' },
+  'monitor.close': { ja: 'モニターを閉じる', en: 'Close monitor' },
+  'monitor.sizeHint': {
+    ja: '表示中のページがターミナルのサイズを決めます。ここで表示している間は各ターミナルがこのタイルの寸法で再描画され、worktree を開くとそちらの寸法に戻ります。',
+    en: 'The page you are looking at owns the terminal size: while shown here, each terminal is redrawn at its tile size; opening a worktree switches back to that page’s size.',
+  },
   'vnc.title': { ja: 'リモートデスクトップ', en: 'Remote desktop' },
   'vnc.railTooltip': { ja: 'リモートデスクトップ (VNC)', en: 'Remote desktop (VNC)' },
   'vnc.paletteToggle': { ja: 'リモートデスクトップ (VNC) を開閉', en: 'Toggle remote desktop (VNC)' },

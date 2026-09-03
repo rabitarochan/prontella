@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
 import type { DropZone } from '../layout/dropZones';
-import { loadLeafTermState, saveLeafTermState } from '../layout/termState';
+import { loadLeafTermState, saveLeafTermState, type LeafTermState } from '../layout/termState';
 import {
   activateSession,
   findTermGroup,
@@ -13,6 +13,7 @@ import {
   splitWithSession,
   syncSessions,
   type TermGroup,
+  type TermGroupNode,
 } from '../layout/termGroups';
 import type { TermTabDrag } from '../layout/termTabDnd';
 import { useTermGroups } from '../layout/useTermGroups';
@@ -43,7 +44,19 @@ import XTermView from './XTermView';
  * にしかならないので、xterm インスタンスは生き続ける。
  *
  * 終了したセッションのタブは (最後の出力を確認できるよう) 手動で閉じるまで残る。
+ *
+ * ターミナルモニター (TerminalMonitorView) も同じコンポーネントを使う: 所有権の
+ * 出所が「タイルの leaf.sessions」から「サーバー上の全 PTY セッション」に変わる
+ * だけで、グループ分割・タブ DnD・永続化は共通。そのための差し込み口が
+ * defaultState / labelOf / preferGroupFor / webglPolicy と create の第 2 引数。
  */
+export interface TermCreateContext {
+  /** 「+」「✦」を押したグループ。 */
+  groupId: string;
+  /** そのグループのアクティブなセッション (モニターは cwd をここから取る)。 */
+  activeSessionId: string | null;
+}
+
 export default function TermPanel({
   root,
   sessions,
@@ -54,6 +67,10 @@ export default function TermPanel({
   onActivate,
   onCloseTab,
   create,
+  defaultState,
+  labelOf,
+  preferGroupFor,
+  webglPolicy = 'visible',
 }: {
   /** worktree パス。グループツリーの永続化キー。 */
   root: string;
@@ -66,7 +83,16 @@ export default function TermPanel({
   leafId: string;
   onActivate: (id: string) => void;
   onCloseTab: (id: string) => Promise<void>;
-  create: (run?: string) => Promise<void>;
+  create: (run: string | undefined, ctx: TermCreateContext) => Promise<void>;
+  /** 永続化された状態が無いときの初期グループ構成 (既定は空グループ 1 つ)。 */
+  defaultState?: () => LeafTermState | null;
+  /** タブ名 (既定はセッションのタイトル)。 */
+  labelOf?: (session: TerminalSession) => string;
+  /** 新規に現れたセッションの受け皿グループ (null = 「+」を押したグループ / アクティブグループ)。 */
+  preferGroupFor?: (sessionId: string, root: TermGroupNode) => string | null;
+  /** WebGL を許すターミナル: 'visible' = 表示中の全グループ (既定)、'activeGroup' =
+   *  アクティブグループの 1 枚だけ (グループ数が多い画面向け。上限 ~16/タブ)。 */
+  webglPolicy?: 'visible' | 'activeGroup';
 }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
@@ -79,7 +105,7 @@ export default function TermPanel({
   // Restored exactly once at mount (lazy initializer). Root changes after
   // mount are handled by the root effect below (WorktreeView normally
   // remounts this component via `key`, so that branch is defensive).
-  const [initialState] = useState(() => loadLeafTermState(root, leafId));
+  const [initialState] = useState(() => loadLeafTermState(root, leafId) ?? defaultState?.() ?? null);
   const groupsApi = useTermGroups(initialState);
   const { root: groupRoot, activeGroupId } = groupsApi;
 
@@ -117,7 +143,9 @@ export default function TermPanel({
   useEffect(() => {
     const st = groupsApi.stateRef.current;
     const prefer = pendingGroupRef.current ?? st.activeGroupId;
-    const next = syncSessions(st.root, ownedIds, prefer);
+    // 「+」を押した直後の到着はそのグループへ (preferGroupFor より優先)。
+    const pending = pendingGroupRef.current;
+    const next = syncSessions(st.root, ownedIds, prefer, pending ? undefined : preferGroupFor);
     pendingGroupRef.current = null;
     if (next !== st.root) groupsApi.set(next, { activate: prefer });
     // ownedIds の内容が変わったときだけ走らせる (配列の identity は毎回変わる)
@@ -267,6 +295,9 @@ export default function TermPanel({
 
   // ---- 描画 ---------------------------------------------------------------
 
+  // 空グループの案内ボタンから作るときの文脈 (押した先は現在のアクティブグループ)
+  const emptyCtx = (): TermCreateContext => ({ groupId: activeGroupId, activeSessionId: null });
+
   const emptyContent: ReactNode =
     sessions === null ? (
       <p>{t('term.connecting')}</p>
@@ -274,10 +305,10 @@ export default function TermPanel({
       <>
         <p>{t('term.empty')}</p>
         <div className="term-empty-buttons">
-          <button disabled={busy} onClick={() => run(() => create())}>
+          <button disabled={busy} onClick={() => run(() => create(undefined, emptyCtx()))}>
             {t('term.newShellButton')}
           </button>
-          <button className="claude" disabled={busy} onClick={() => run(() => create('claude'))}>
+          <button className="claude" disabled={busy} onClick={() => run(() => create('claude', emptyCtx()))}>
             {t('term.launchClaudeButton')}
           </button>
         </div>
@@ -294,6 +325,7 @@ export default function TermPanel({
       isActiveGroup={group.id === activeGroupId}
       hostFor={hostFor}
       emptyContent={emptyContent}
+      labelOf={labelOf}
       callbacks={{
         onActivate: (id) =>
           groupsApi.set(activateSession(groupsApi.stateRef.current.root, group.id, id), {
@@ -303,7 +335,7 @@ export default function TermPanel({
         onCreate: (runCmd) => {
           pendingGroupRef.current = group.id;
           groupsApi.setActiveGroup(group.id);
-          run(() => create(runCmd));
+          run(() => create(runCmd, { groupId: group.id, activeSessionId: group.activeId }));
         },
         onSplit: () => splitGroup(group.id),
         onDropTab: (index, drag) => dropOnTabStrip(group.id, index, drag),
@@ -342,6 +374,9 @@ export default function TermPanel({
             id={id}
             claudeMode={liveMap.get(id)?.claudeDetected ?? false}
             visible={visible && groupOfSession(groupRoot, id)?.activeId === id}
+            preferWebgl={
+              webglPolicy === 'visible' || groupOfSession(groupRoot, id)?.id === activeGroupId
+            }
           />,
           hostFor(id),
           id,

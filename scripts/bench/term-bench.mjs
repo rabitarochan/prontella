@@ -17,7 +17,7 @@ import { benchInstrumentationScript, monitorInitScript, selectionInitScript } fr
 import { findChrome, killChromeTree, launchChrome, waitForCdp } from './lib/chrome.mjs';
 import { PROJECT_ROOT, killServer, spawnServer, waitForPortReleased, waitForServerReady } from './lib/server.mjs';
 import { addRepo, createTerminal, getRepos, killTerminal, openTermWs, waitOpen } from './lib/api.mjs';
-import { fmtBytes, fmtNum, maxMtimeMs, rmDirWithRetry, sampleProcess, waitFor } from './lib/util.mjs';
+import { cpuDeltaByName, fmtBytes, fmtNum, maxMtimeMs, rmDirWithRetry, sampleProcess, waitFor } from './lib/util.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RESULTS_DIR = path.join(__dirname, 'results');
@@ -293,6 +293,8 @@ async function main() {
     const m2 = {
       wallSeconds: Number(wallSeconds.toFixed(2)),
       serverCpuSecondsPerWallSecond: cpuSecondsPerWallSecond === null ? null : Number(cpuSecondsPerWallSecond.toFixed(3)),
+      // プロセス名別の CPU 秒 (node = サーバー本体、pwsh = node-pty が spawn したシェル = 負荷生成器自身)
+      serverCpuByName: cpuDeltaByName(cpuBefore, cpuAfter),
       serverRssBytesBefore: cpuBefore.rssBytes,
       serverRssBytesAfter: cpuAfter.rssBytes,
       pageA: pageMetrics(m2PerfABefore, m2PerfAAfter, m2SnapABefore, m2SnapAAfter),
@@ -383,6 +385,7 @@ async function main() {
           m3CpuBefore.cpuSeconds !== null && m3CpuAfter.cpuSeconds !== null
             ? Number(((m3CpuAfter.cpuSeconds - m3CpuBefore.cpuSeconds) / dragWallSeconds).toFixed(3))
             : null,
+        serverCpuByName: cpuDeltaByName(m3CpuBefore, m3CpuAfter),
       };
       console.log(`[bench] M3 dragMs=${dragMs} resizeFramesSentByDriver=${m3.resizeFramesSentByDriver} resizeFramesReceivedByOther=${m3.resizeFramesReceivedByOther}`);
     }
@@ -434,8 +437,11 @@ function printMarkdown(r) {
     ['M1 snapshot bytes', fmtBytes(r.m1.snapshotBytes)],
     ['M1 longtasks (count/ms)', `${r.m1.longtaskCount} / ${fmtNum(r.m1.longtaskMs)}`],
     ['M1 TaskDuration diff (s)', fmtNum(r.m1.perf.TaskDuration, 3)],
-    ['M2 server CPU / wall', fmtNum(r.m2.serverCpuSecondsPerWallSecond, 3)],
+    ['M2 server CPU / wall (tree)', fmtNum(r.m2.serverCpuSecondsPerWallSecond, 3)],
+    ['M2 server CPU s (node / pwsh)', `${fmtNum(r.m2.serverCpuByName?.node, 2)} / ${fmtNum(r.m2.serverCpuByName?.pwsh, 2)}`],
     ['M2 server RSS after', fmtBytes(r.m2.serverRssBytesAfter)],
+    ['M2 pageA TaskDuration / Script (s)', `${fmtNum(r.m2.pageA.perf.TaskDuration, 2)} / ${fmtNum(r.m2.pageA.perf.ScriptDuration, 2)}`],
+    ['M2 pageB TaskDuration / Script (s)', `${fmtNum(r.m2.pageB.perf.TaskDuration, 2)} / ${fmtNum(r.m2.pageB.perf.ScriptDuration, 2)}`],
     ['M2 pageA longtasks (count/ms)', `${r.m2.pageA.longtaskCount} / ${fmtNum(r.m2.pageA.longtaskMs)}`],
     ['M2 pageB longtasks (count/ms)', `${r.m2.pageB.longtaskCount} / ${fmtNum(r.m2.pageB.longtaskMs)}`],
     ['M2 pageA ws bytes received', fmtBytes(r.m2.pageA.wsBytesReceived)],
@@ -443,6 +449,7 @@ function printMarkdown(r) {
     ['M3 drag (ms)', r.m3 ? r.m3.dragMs : 'n/a'],
     ['M3 resize sent(driver)/recv(other)', r.m3 ? `${r.m3.resizeFramesSentByDriver} / ${r.m3.resizeFramesReceivedByOther}` : 'n/a'],
     ['M3 server CPU / wall (drag)', r.m3 ? fmtNum(r.m3.serverCpuSecondsPerWallSecond, 3) : 'n/a'],
+    ['M3 server CPU s (node / pwsh)', r.m3 ? `${fmtNum(r.m3.serverCpuByName?.node, 2)} / ${fmtNum(r.m3.serverCpuByName?.pwsh, 2)}` : 'n/a'],
     ['M4 reconnect (ms)', r.m4.reconnectMs],
     ['M4 longtasks (count/ms)', `${r.m4.longtaskCount} / ${fmtNum(r.m4.longtaskMs)}`],
   ];

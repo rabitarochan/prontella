@@ -7,6 +7,26 @@ function getPath(obj, dotted) {
   return dotted.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
 }
 
+// 負荷生成器 (pwsh) の出力量は実行ごとに揺れる (マシンの混み具合で ±50%)。
+// M2 の絶対値は比べられないので、「受信 1 MiB あたり」に正規化した派生指標を足す。
+const MIB = 1024 * 1024;
+function derive(r) {
+  const bytesB = getPath(r, 'm2.pageB.wsBytesReceived');
+  const bytesA = getPath(r, 'm2.pageA.wsBytesReceived');
+  const per = (v, bytes) => (typeof v === 'number' && typeof bytes === 'number' && bytes > 0 ? (v / bytes) * MIB : undefined);
+  return {
+    ...r,
+    d: {
+      nodeCpuPerMiB: per(getPath(r, 'm2.serverCpuByName.node'), bytesB),
+      pageATaskPerMiB: per(getPath(r, 'm2.pageA.perf.TaskDuration'), bytesA),
+      pageBTaskPerMiB: per(getPath(r, 'm2.pageB.perf.TaskDuration'), bytesB),
+      pageAScriptPerMiB: per(getPath(r, 'm2.pageA.perf.ScriptDuration'), bytesA),
+      pageBScriptPerMiB: per(getPath(r, 'm2.pageB.perf.ScriptDuration'), bytesB),
+      attachMsPerMiB: per(getPath(r, 'm1.attachMs'), getPath(r, 'm1.snapshotBytes')),
+    },
+  };
+}
+
 const METRICS = [
   ['m1.attachMs', 'M1 attach (ms)', 'lower'],
   ['m1.snapshotBytes', 'M1 snapshot bytes', 'lower'],
@@ -32,6 +52,12 @@ const METRICS = [
   ['m3.driverLongtaskMs', 'M3 driver longtask ms', 'lower'],
   ['m4.reconnectMs', 'M4 reconnect (ms)', 'lower'],
   ['m4.longtaskMs', 'M4 longtask ms', 'lower'],
+  ['d.nodeCpuPerMiB', '* M2 server CPU s / MiB recv', 'lower'],
+  ['d.pageATaskPerMiB', '* M2 pageA TaskDuration s / MiB', 'lower'],
+  ['d.pageBTaskPerMiB', '* M2 pageB TaskDuration s / MiB', 'lower'],
+  ['d.pageAScriptPerMiB', '* M2 pageA ScriptDuration s / MiB', 'lower'],
+  ['d.pageBScriptPerMiB', '* M2 pageB ScriptDuration s / MiB', 'lower'],
+  ['d.attachMsPerMiB', '* M1 attach ms / MiB snapshot', 'lower'],
 ];
 
 function fmt(v) {
@@ -46,8 +72,8 @@ function main() {
     console.error('usage: node scripts/bench/compare.mjs results/a.json results/b.json');
     process.exit(1);
   }
-  const a = JSON.parse(fs.readFileSync(fileA, 'utf8'));
-  const b = JSON.parse(fs.readFileSync(fileB, 'utf8'));
+  const a = derive(JSON.parse(fs.readFileSync(fileA, 'utf8')));
+  const b = derive(JSON.parse(fs.readFileSync(fileB, 'utf8')));
 
   console.log(`\n## compare: ${a.label} (${a.at}) -> ${b.label} (${b.at})\n`);
   console.log('| metric | before | after | delta | delta % |');

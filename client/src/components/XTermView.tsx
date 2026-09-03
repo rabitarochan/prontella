@@ -41,6 +41,8 @@ import { terminalTheme } from '../theme/terminalTheme';
  */
 /** PTY への resize 送信の最短間隔。ドラッグ中の追従感と再描画コストの折り合い (VS Code も同程度)。 */
 const RESIZE_SEND_MS = 80;
+/** 非表示中に保留する出力の上限。超えたら隠れたまま書き出す (表示時の一括処理を有界にする)。 */
+const DEFER_MAX_BYTES = 1024 * 1024;
 
 export default function XTermView({
   id,
@@ -78,6 +80,10 @@ export default function XTermView({
   pageActiveRef.current = pageActive;
   // アクティブへ遷移したときに自分の寸法を取り返すための入口 (mount effect が差す)。
   const claimRef = useRef<(() => void) | null>(null);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  // 非表示中に保留した出力を書き出す入口 (mount effect が差す)。
+  const flushDeferredRef = useRef<(() => void) | null>(null);
 
   // WebGL rendering is much faster than the default DOM renderer, but its
   // context is a scarce, capped resource (see the file-level comment) and it
@@ -184,6 +190,35 @@ export default function XTermView({
       });
     };
 
+    // 非表示 (display:none のタブ) の間は出力を xterm に流さず保留する。xterm は
+    // 見えていなくてもパースと DOM レンダラーの行更新を続けるので、隠れタブが多い
+    // ほど (モニターや分割タブ) 主スレッドを食う。表示に戻った瞬間にまとめて書く
+    // (xterm の WriteBuffer は数 ms ずつ刻んで処理するので長いフレーム落ちにはならない)。
+    // 保留量には上限を設け、超えたら隠れたまま書き出して表示時の一括処理を有界にする。
+    let deferred: (string | Uint8Array)[] = [];
+    let deferredBytes = 0;
+    const flushDeferred = () => {
+      if (deferred.length === 0) return;
+      const items = deferred;
+      deferred = [];
+      deferredBytes = 0;
+      for (const chunk of items) term.write(chunk);
+    };
+    const discardDeferred = () => {
+      deferred = [];
+      deferredBytes = 0;
+    };
+    const writeOrDefer = (chunk: string | Uint8Array) => {
+      if (visibleRef.current) {
+        term.write(chunk);
+        return;
+      }
+      deferred.push(chunk);
+      deferredBytes += chunk.length;
+      if (deferredBytes > DEFER_MAX_BYTES) flushDeferred();
+    };
+    flushDeferredRef.current = flushDeferred;
+
     // 主張側: 通常フォントで枠に合わせて cols/rows を決め、PTY へ送る。
     // 非アクティブなページは PTY のサイズを主張しない (フォントだけ枠に合わせる)。
     // サーバーへの resize 送信は間引く: セパレーターのドラッグ中は ResizeObserver が
@@ -217,6 +252,8 @@ export default function XTermView({
       const { cols, rows } = msg;
       if (typeof cols !== 'number' || typeof rows !== 'number') return;
       if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 1 || rows < 1) return;
+      // 保留中の出力は旧サイズで描かれたものなので、格子を変える前に流し切る
+      flushDeferred();
       if (term.cols !== cols || term.rows !== rows) term.resize(cols, rows);
       scheduleRefit();
     };
@@ -232,26 +269,30 @@ export default function XTermView({
       onOpen: () => sendResize(true),
       // PTY 出力はバイナリフレーム (server/pty.ts の flush)。xterm はバイト列を
       // 直接受けられ、JSON 文字列より速い経路になる。
-      onBinary: (bytes) => term.write(bytes),
+      onBinary: writeOrDefer,
       onMessage: (raw) => {
         const msg = raw as { type?: string; data?: string; message?: string; cols?: unknown; rows?: unknown };
         if (msg.type === 'snapshot') {
           // 再アタッチ時はサーバーが追跡中の DEC モード (bracketed paste・
           // マウス) をプレフィックスに付けて送り直す (server/pty.ts の attach)。
+          // snapshot は画面全体を作り直すので、保留中の出力は捨ててよい
+          discardDeferred();
           if (!pageActiveRef.current) applyRemoteSize(msg);
           term.reset();
           term.write(msg.data ?? '');
         } else if (msg.type === 'data') {
-          term.write(msg.data ?? '');
+          writeOrDefer(msg.data ?? '');
         } else if (msg.type === 'resize') {
           // 別のページが主張したサイズ。主張側 (アクティブ) は自分の fit が正なので無視する。
           if (!pageActiveRef.current) applyRemoteSize(msg);
         } else if (msg.type === 'exit') {
+          flushDeferred();
           term.write(`\r\n\x1b[90m${t('term.processExited')}\x1b[0m\r\n`);
           // プロセスが終わればサーバーはセッションを破棄する。繋ぎ直しても
           // 「見つかりません」を取りに行くだけなので、ここで打ち切る。
           link.stop('gone');
         } else if (msg.type === 'error') {
+          flushDeferred();
           term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
           link.stop('gone');
         }
@@ -285,6 +326,8 @@ export default function XTermView({
       if (refitRaf) cancelAnimationFrame(refitRaf);
       resizeThrottle.cancel();
       claimRef.current = null;
+      flushDeferredRef.current = null;
+      discardDeferred();
       dataDisposable.dispose();
       link.stop();
       // Pass the effect-local `container` explicitly — on unmount,
@@ -301,7 +344,10 @@ export default function XTermView({
   }, [webglWanted]);
 
   useEffect(() => {
-    if (visible && autoFocus) containerRef.current?.querySelector('textarea')?.focus();
+    if (!visible) return;
+    // 表示に戻った: 非表示中に保留した出力を書き出す (ResizeObserver の refit より先)
+    flushDeferredRef.current?.();
+    if (autoFocus) containerRef.current?.querySelector('textarea')?.focus();
   }, [visible, autoFocus]);
 
   // ページがアクティブになったら自分の寸法を取り返す (枠が可視のときだけ。

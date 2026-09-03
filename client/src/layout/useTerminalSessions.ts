@@ -1,33 +1,38 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAgentEvents } from '../agentEvents';
 import { api } from '../api';
+import { normPath } from '../sessionLocate';
 import { useDeck } from '../store';
 import type { TerminalSession } from '../types';
 import { recordSessionKinds } from './sessionKinds';
 
-const POLL_MS = 3000;
+// /ws/events が死んでいる (半死ソケット等) ときの保険。通常はプッシュだけで顔ぶれが揃う。
+const FALLBACK_POLL_MS = 30_000;
 
 /**
- * Polls terminal sessions for a worktree and exposes create/kill.
- * `sessions` is null until the first successful fetch; on fetch errors the
- * previous list is kept so a transient server hiccup does not flash dead UI.
+ * Exposes the terminal sessions of a worktree plus create/kill.
  *
- * ポーリングが決めるのは**セッションの顔ぶれ**(作成/終了)だけ。個々のセッションの
- * 中身は /ws/events のプッシュ (useAgentEvents) を被せて返す。3 秒間隔ではエージェントの
- * ステータスと実行中ツールの表示が最大 3 秒古くなり、実行中ツールのほうが短命なため
- * 「終わったツールを表示し続ける」状態が常態化する (実測で確認)。
+ * **顔ぶれも中身もプッシュ (/ws/events) が正**: サーバーは snapshot / session /
+ * removed で全セッションの作成・更新・終了を流す (useAgentEvents)。以前は
+ * `/api/terminals?cwd=` を 3 秒ごとにポーリングして顔ぶれを決めていたが、
+ * プッシュで同じ情報が届いているので、ポーリングは (a) 初回表示を速くするための
+ * 1 回と (b) プッシュが途絶えたときの 30 秒ごとの保険だけにした
+ * (ページ数 × 3 秒ごとの HTTP とサーバーの list() を消す)。
+ *
+ * `sessions` はプッシュの snapshot か初回フェッチのどちらかが届くまで null。
  */
 export function useTerminalSessions(cwd: string) {
   const refreshDeck = useDeck((s) => s.refresh);
-  const [sessions, setSessions] = useState<TerminalSession[] | null>(null);
+  const [fetched, setFetched] = useState<TerminalSession[] | null>(null);
   const live = useAgentEvents((s) => s.sessions);
+  const liveLoaded = useAgentEvents((s) => s.loaded);
 
   const reload = useCallback(async () => {
     try {
       const list = await api.terminals(cwd);
       // kind レジストリを先に更新してから公開する (終了後のタブ分類用)
       recordSessionKinds(list);
-      setSessions(list);
+      setFetched(list);
     } catch {
       // server restart etc. — next poll will recover
     }
@@ -37,15 +42,14 @@ export function useTerminalSessions(cwd: string) {
     let timer: ReturnType<typeof setInterval> | null = null;
     const start = () => {
       if (timer !== null) return;
-      timer = setInterval(() => void reload(), POLL_MS);
+      timer = setInterval(() => void reload(), FALLBACK_POLL_MS);
     };
     const stop = () => {
       if (timer === null) return;
       clearInterval(timer);
       timer = null;
     };
-    // ブラウザータブが非表示の間はポーリングを止める (App.tsx の deck ポーリングと同じ対応)。
-    // 再表示された瞬間に即 reload() してから interval を再開する。
+    // ブラウザータブが非表示の間は保険のポーリングも止める。再表示の瞬間に 1 回同期する。
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
         stop();
@@ -63,11 +67,20 @@ export function useTerminalSessions(cwd: string) {
     };
   }, [reload]);
 
-  // 顔ぶれはポーリング、中身はプッシュ。プッシュに無い id はポーリングの値のまま。
-  const merged = useMemo(
-    () => (sessions === null ? null : sessions.map((session) => live[session.id] ?? session)),
-    [sessions, live],
-  );
+  // プッシュが揃っていればそれが顔ぶけ・中身の両方。揃う前は初回フェッチの結果に
+  // プッシュ済みの中身を被せる (従来の合成)。
+  const merged = useMemo(() => {
+    if (liveLoaded) {
+      const target = normPath(cwd);
+      return Object.values(live).filter((s) => normPath(s.cwd) === target);
+    }
+    return fetched === null ? null : fetched.map((session) => live[session.id] ?? session);
+  }, [cwd, fetched, live, liveLoaded]);
+
+  // 終了後のタブ分類 (sessionKinds) はプッシュ由来のセッションにも効かせる
+  useEffect(() => {
+    if (merged) recordSessionKinds(merged);
+  }, [merged]);
 
   const create = useCallback(
     async (run?: string, place?: (session: TerminalSession) => void) => {

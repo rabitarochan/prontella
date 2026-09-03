@@ -15,8 +15,13 @@ import VncView from './components/VncView';
 import WorktreeView from './components/WorktreeView';
 import { useMonitorView } from './layout/monitorViewStore';
 import { useVncView } from './layout/vncViewStore';
+import { usePageActivity, wirePageActivity } from './lib/pageActivity';
 
+// 全 worktree の git 状態 (/api/repos) の更新間隔。フォーカスのあるページだけ短く、
+// 別ウィンドウで眺めているだけ (可視だがフォーカスなし) なら長くする。エージェントの
+// ステータスは /ws/events のプッシュで届くので、ここが遅くても「確認待ち」の検知は遅れない。
 const POLL_MS = 4000;
+const POLL_UNFOCUSED_MS = 15_000;
 
 export default function App() {
   const t = useT();
@@ -50,31 +55,36 @@ export default function App() {
   useEffect(() => {
     void refresh();
     connectAgentEvents();
+    wirePageActivity();
     let timer: ReturnType<typeof setInterval> | null = null;
-    const start = () => {
-      if (timer !== null) return;
-      timer = setInterval(() => void refresh(), POLL_MS);
+    let currentMs = 0;
+    // 非表示 = 停止 (サーバー側の git.exe 起動を抑える) / 可視かつフォーカスあり = 4 秒 /
+    // 可視だがフォーカスなし (別ウィンドウで眺めているだけ) = 15 秒。
+    const desiredMs = () => {
+      if (document.visibilityState === 'hidden') return 0;
+      return usePageActivity.getState().active ? POLL_MS : POLL_UNFOCUSED_MS;
     };
-    const stop = () => {
-      if (timer === null) return;
-      clearInterval(timer);
-      timer = null;
-    };
-    // ブラウザータブが非表示の間は 4 秒ポーリングを止める (サーバー側の git.exe 起動を抑える)。
-    // 再表示された瞬間に即 refresh() してから interval を再開する。
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        stop();
-      } else {
-        void refresh();
-        start();
+    // kick = 間隔が変わる契機で即 1 回 refresh する (再表示・フォーカス復帰)。
+    const apply = (kick: boolean) => {
+      const ms = desiredMs();
+      if (ms === currentMs) return;
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
       }
+      currentMs = ms;
+      if (ms === 0) return;
+      if (kick) void refresh();
+      timer = setInterval(() => void refresh(), ms);
     };
-    if (document.visibilityState !== 'hidden') start();
+    apply(false);
+    const onVisibilityChange = () => apply(document.visibilityState !== 'hidden');
     document.addEventListener('visibilitychange', onVisibilityChange);
+    const unsubscribe = usePageActivity.subscribe((s) => apply(s.active));
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      stop();
+      unsubscribe();
+      if (timer !== null) clearInterval(timer);
     };
   }, [refresh]);
 

@@ -249,7 +249,7 @@ async function main() {
       const ws = openTermWs(args.port, id);
       verificationSockets.push(ws);
       await waitOpen(ws);
-      const cmd = `& '${LOAD_PS1.replace(/'/g, "''")}' -Seconds ${args.seconds} -Hz ${args.hz} -Lines ${args.lines} -Cols 100\r`;
+      const cmd = `& '${LOAD_PS1.replace(/'/g, "''")}' -Seconds ${args.seconds} -Hz ${args.hz} -Lines ${args.lines} -Cols 100 -Ticks ${args.seconds * args.hz}\r`;
       ws.send(JSON.stringify({ type: 'input', data: cmd }));
     }
 
@@ -261,8 +261,24 @@ async function main() {
     const m2SnapBBefore = await snapshot(browser, pageB.sessionId);
     const wallStart = Date.now();
 
+    // load.ps1 は tick 数固定 (= 仕事量固定) なので、混んでいると seconds より長くかかる。
+    // 時間ではなく「data フレームが 1.5 秒止まる」= 全セッションが出し切ったことを待つ。
     await delay(args.seconds * 1000);
-    await delay(2_000); // load.ps1 終了後の落ち着き待ち (ブリーフ通り)
+    {
+      let last = termPath(await snapshot(browser, pageB.sessionId)).received?.data ?? 0;
+      let quietSince = Date.now();
+      await waitFor(
+        async () => {
+          const cur = termPath(await snapshot(browser, pageB.sessionId)).received?.data ?? 0;
+          if (cur !== last) {
+            last = cur;
+            quietSince = Date.now();
+          }
+          return Date.now() - quietSince >= 1_500;
+        },
+        { timeoutMs: args.seconds * 3_000 + 10_000, intervalMs: 500, label: 'M2 output quiescent' },
+      );
+    }
 
     const wallSeconds = (Date.now() - wallStart) / 1000;
     const cpuAfter = sampleProcess(serverPid);

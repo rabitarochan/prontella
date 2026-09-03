@@ -11,20 +11,25 @@ param(
   [int]$Seconds = 20,
   [int]$Hz = 10,
   [int]$Lines = 20,
-  [int]$Cols = 100
+  [int]$Cols = 100,
+  # 仕事量を固定するための tick 数 (既定 = Seconds × Hz)。マシンが混んでいて Hz を
+  # 出せなくても、この tick 数を出し切ってから終わる (時間ではなく仕事量で揃える)。
+  # 上限として Seconds × 4 で打ち切る。
+  [int]$Ticks = 0
 )
 
 $esc = [char]27
 $spinners = @('✻', '✶', '✽', '✢')
 $colors = @(31, 32, 33, 34, 35, 36)
 $intervalMs = [Math]::Max(1, [int](1000 / $Hz))
-$deadline = (Get-Date).AddSeconds($Seconds)
+if ($Ticks -le 0) { $Ticks = $Seconds * $Hz }
+$deadline = (Get-Date).AddSeconds($Seconds * 4)
 
 # 最初の再描画がカーソルを正しい位置まで戻せるよう、先に $Lines 行分の余白を出しておく。
 for ($i = 0; $i -lt $Lines; $i++) { Write-Host '' }
 
 $tick = 0
-while ((Get-Date) -lt $deadline) {
+while ($tick -lt $Ticks -and (Get-Date) -lt $deadline) {
   $spinner = $spinners[$tick % $spinners.Length]
   $sb = New-Object System.Text.StringBuilder
   [void]$sb.Append("$esc[${Lines}A")

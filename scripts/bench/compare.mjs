@@ -14,9 +14,18 @@ function derive(r) {
   const bytesB = getPath(r, 'm2.pageB.wsBytesReceived');
   const bytesA = getPath(r, 'm2.pageA.wsBytesReceived');
   const per = (v, bytes) => (typeof v === 'number' && typeof bytes === 'number' && bytes > 0 ? (v / bytes) * MIB : undefined);
+  // フレーム数は混み具合で大きく変わる (同じバイト数でも 3.5 倍差を実測)。クライアントの
+  // コストは「フレームあたり」の固定費が支配的なので、1000 フレームあたりも出す。
+  const framesB = getPath(r, 'm2.pageB.wsFramesReceived.data');
+  const framesA = getPath(r, 'm2.pageA.wsFramesReceived.data');
+  const perK = (v, n) => (typeof v === 'number' && typeof n === 'number' && n > 0 ? (v / n) * 1000 : undefined);
   return {
     ...r,
     d: {
+      framesB,
+      nodeCpuPerKFrames: perK(getPath(r, 'm2.serverCpuByName.node'), framesB),
+      pageATaskPerKFrames: perK(getPath(r, 'm2.pageA.perf.TaskDuration'), framesA),
+      pageBTaskPerKFrames: perK(getPath(r, 'm2.pageB.perf.TaskDuration'), framesB),
       nodeCpuPerMiB: per(getPath(r, 'm2.serverCpuByName.node'), bytesB),
       pageATaskPerMiB: per(getPath(r, 'm2.pageA.perf.TaskDuration'), bytesA),
       pageBTaskPerMiB: per(getPath(r, 'm2.pageB.perf.TaskDuration'), bytesB),
@@ -58,6 +67,10 @@ const METRICS = [
   ['d.pageAScriptPerMiB', '* M2 pageA ScriptDuration s / MiB', 'lower'],
   ['d.pageBScriptPerMiB', '* M2 pageB ScriptDuration s / MiB', 'lower'],
   ['d.attachMsPerMiB', '* M1 attach ms / MiB snapshot', 'lower'],
+  ['d.framesB', '* M2 pageB data frames', 'info'],
+  ['d.nodeCpuPerKFrames', '* M2 server CPU s / 1000 frames', 'lower'],
+  ['d.pageATaskPerKFrames', '* M2 pageA TaskDuration s / 1000 frames', 'lower'],
+  ['d.pageBTaskPerKFrames', '* M2 pageB TaskDuration s / 1000 frames', 'lower'],
 ];
 
 function fmt(v) {

@@ -16,12 +16,16 @@ import {
 } from './claudeHookState.js';
 import { claudeCommand } from './hooks.js';
 import { broadcastEvent, registerSnapshotProvider } from './sessionEvents.js';
-import { ScrollbackBuffer } from './scrollback.js';
+import { ScreenMirror } from './screenMirror.js';
 import { parseResizeMessage } from './termProtocol.js';
 
 export type AgentStatus = 'busy' | 'waiting' | 'idle' | 'shell';
 
-const MAX_SCROLLBACK = 200_000; // chars of raw output kept for reattach
+// attach 時に再生するスクロールバックの行数 (サーバー側 headless xterm の保持量)。
+// クライアント (XTermView) は 5000 行だが、再接続で戻す履歴は 1000 行に絞る:
+// シリアライズ量 (= attach の待ち時間) と resize 時の再折り返しコストは保持行数に
+// 比例し、5000 行だと 8 セッションの一斉再接続で 2.6 MB / 2.5 秒になった (計測)。
+const MIRROR_SCROLLBACK_LINES = 1000;
 // spawn 時の PTY サイズ。最初の attach クライアントが fit() で上書きするまでの仮の値。
 const INITIAL_COLS = 120;
 const INITIAL_ROWS = 32;
@@ -121,8 +125,10 @@ interface Session {
   /** 現在の PTY winsize。attach 時の snapshot と resize broadcast で全クライアントへ配る。 */
   cols: number;
   rows: number;
-  /** 末尾 MAX_SCROLLBACK 文字。結合は attach 時だけ (毎チャンクの slice を避ける)。 */
-  scrollback: ScrollbackBuffer;
+  /** サーバー側の画面の鏡 (headless xterm)。attach 時の snapshot はここからシリアライズする。 */
+  mirror: ScreenMirror;
+  /** attach 処理中 (snapshot のシリアライズ待ち) のソケットへ後送りする出力。 */
+  attaching: Set<string[]>;
   carry: string; // stripped tail carried into the next chunk's pattern scan
   modes: Map<number, boolean>; // last seen state of TRACKED_MODES (true = set/h); unseen modes are absent
   modeCarry: string; // raw tail carried into the next chunk's DECSET_RE scan
@@ -236,7 +242,8 @@ export class PtyManager {
       proc,
       cols: INITIAL_COLS,
       rows: INITIAL_ROWS,
-      scrollback: new ScrollbackBuffer(MAX_SCROLLBACK),
+      mirror: new ScreenMirror(INITIAL_COLS, INITIAL_ROWS, MIRROR_SCROLLBACK_LINES),
+      attaching: new Set(),
       carry: '',
       modes: new Map(),
       modeCarry: '',
@@ -263,6 +270,7 @@ export class PtyManager {
       session.exited = true;
       this.broadcast(session, { type: 'exit' });
       for (const ws of session.sockets) ws.close();
+      session.mirror.dispose();
       this.sessions.delete(session.id);
       broadcastEvent({ type: 'removed', id: session.id });
     });
@@ -284,35 +292,38 @@ export class PtyManager {
   attach(id: string, ws: WebSocket): boolean {
     const session = this.sessions.get(id);
     if (!session) return false;
-    // Flush any pending 'data' broadcast to existing sockets BEFORE adding the
-    // new one: pending is already folded into scrollback (onData updates both
-    // synchronously), so the new socket must receive it only via the snapshot
-    // below, never via a live broadcast — otherwise it would see it twice.
+    // snapshot は headless xterm のシリアライズで、write キューが掃けるのを待つ
+    // (非同期)。その間に届いた出力は `queued` に積み、snapshot の直後に順番どおり
+    // 送ってからライブ配信 (session.sockets) へ加える。こうすると新しいソケットは
+    // 出力を「snapshot 経由で 1 回」か「後送り経由で 1 回」のどちらかで必ず 1 回
+    // だけ受け取る (snapshot 前の pending はここで flush して既存ソケットへ流す)。
     this.flush(session);
-    session.sockets.add(ws);
-    // Scrollback is trimmed to MAX_SCROLLBACK, so one-shot mode sequences sent
-    // at startup (bracketed paste, mouse tracking) can fall out of the window.
-    // The client resets the terminal before replaying the snapshot, so without
-    // re-asserting the tracked modes here, a reattach silently loses bracketed
-    // paste (multi-line pastes submit line-by-line) and mouse tracking (copy
-    // selection breaks). Reset ('l') states must be included too: some modes
-    // default to on (e.g. 25, cursor visibility), so a tracked "off" has to be
-    // re-sent to override the client's post-reset default.
-    const prefix = [...session.modes.entries()]
-      .sort(([a], [b]) => a - b)
-      .map(([mode, on]) => `\x1b[?${mode}${on ? 'h' : 'l'}`)
-      .join('');
-    // cols/rows: 非アクティブなページ (フォーカスのないタブ/ウィンドウ) は自分の
-    // 寸法を主張せず、この値に格子を合わせて鏡写しする (client XTermView)。
-    ws.send(
-      JSON.stringify({
-        type: 'snapshot',
-        data: prefix + session.scrollback.snapshot(),
-        cols: session.cols,
-        rows: session.rows,
-      }),
-    );
-    ws.send(JSON.stringify({ type: 'status', status: session.status }));
+    const queued: string[] = [];
+    session.attaching.add(queued);
+    session.mirror.snapshot((screen) => {
+      session.attaching.delete(queued);
+      if (ws.readyState !== ws.OPEN) return;
+      // serialize は DEC モードも書き出すが、追跡中のモード (bracketed paste・マウス・
+      // カーソル可視) は明示的に前置しておく。クライアントは reset() してから再生する
+      // ので、既定 on のモードの "off" も含めて送る必要がある。冪等なので二重でも無害。
+      const prefix = [...session.modes.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([mode, on]) => `\x1b[?${mode}${on ? 'h' : 'l'}`)
+        .join('');
+      // cols/rows: 非アクティブなページ (フォーカスのないタブ/ウィンドウ) は自分の
+      // 寸法を主張せず、この値に格子を合わせて鏡写しする (client XTermView)。
+      ws.send(
+        JSON.stringify({
+          type: 'snapshot',
+          data: prefix + screen,
+          cols: session.cols,
+          rows: session.rows,
+        }),
+      );
+      ws.send(JSON.stringify({ type: 'status', status: session.status }));
+      if (queued.length > 0) ws.send(JSON.stringify({ type: 'data', data: queued.join('') }));
+      if (!session.exited) session.sockets.add(ws);
+    });
     ws.on('message', (raw) => {
       let msg: { type: string; data?: string; cols?: unknown; rows?: unknown };
       try {
@@ -333,7 +344,10 @@ export class PtyManager {
         if (size) this.resizePty(session, size.cols, size.rows);
       }
     });
-    ws.on('close', () => session.sockets.delete(ws));
+    ws.on('close', () => {
+      session.sockets.delete(ws);
+      session.attaching.delete(queued);
+    });
     return true;
   }
 
@@ -347,6 +361,7 @@ export class PtyManager {
     const changed = cols !== session.cols || rows !== session.rows;
     session.cols = cols;
     session.rows = rows;
+    session.mirror.resize(cols, rows);
     if (changed) this.broadcast(session, { type: 'resize', cols, rows });
     try {
       session.proc.resize(cols, rows);
@@ -424,7 +439,8 @@ export class PtyManager {
 
   private onData(session: Session, data: string): void {
     session.lastOutputAt = Date.now();
-    session.scrollback.append(data);
+    session.mirror.write(data);
+    for (const queue of session.attaching) queue.push(data);
     session.pending += data;
     if (session.pending.length > MAX_PENDING) {
       // Burst guard: flush immediately rather than let pending (and latency) grow unbounded.

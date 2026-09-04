@@ -168,7 +168,8 @@ export default function CommandPalette({
     );
     if (!query) return all;
     return fuzzysort
-      .go(query, all, { keys: ['label', 'sub'], limit: 50 })
+      // threshold: fuzzysort v4 の既定 .5 は部分一致を切り捨てるため、v3 と同じ 0 を明示する
+      .go(query, all, { keys: ['label', 'sub'], limit: 50, threshold: 0 })
       .map((r) => r.obj);
   }, [sessions, repos, query, t, select, setThemeMode, setLang, onOpenQuickOpen, onAddWorktree, vncActive, monitorActive]);
 

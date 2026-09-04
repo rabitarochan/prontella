@@ -2,11 +2,12 @@
  * markdown-it-task-lists は型定義を同梱していない (package.json に "types" フィールド
  * 無し、実体は素の JS)。ここで最小限の ambient 宣言を用意する。
  * 実装 (node_modules/markdown-it-task-lists/index.js) は
- * `module.exports = function(md, options) { ... }` という
- * MarkdownIt.PluginWithOptions<T> 相当のシグネチャで export している。
+ * `module.exports = function(md, options) { ... }` というシグネチャで export している。
  */
 declare module 'markdown-it-task-lists' {
-  import type MarkdownIt from 'markdown-it';
+  // markdown-it 15 は型定義を自前で同梱するようになり、@types/markdown-it にあった
+  // MarkdownIt.PluginWithOptions<T> は無くなったため、シグネチャを直接書く。
+  import type { MarkdownIt } from 'markdown-it';
 
   interface TaskListsOptions {
     /** チェックボックスを disabled にせず有効化する (クリック可能にする)。既定は無効。 */
@@ -17,6 +18,6 @@ declare module 'markdown-it-task-lists' {
     labelAfter?: boolean;
   }
 
-  const taskLists: MarkdownIt.PluginWithOptions<TaskListsOptions>;
+  const taskLists: (md: MarkdownIt, options?: TaskListsOptions) => void;
   export default taskLists;
 }

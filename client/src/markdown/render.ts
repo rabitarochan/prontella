@@ -82,7 +82,9 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
   const ctx = requireCtx();
   const token = tokens[idx];
   const altText = md.utils.escapeHtml(self.renderInlineAsText(token.children ?? [], options, env));
-  const srcRaw = token.attrGet('src') ?? '';
+  // markdown-it 15 の attrGet は string | number | null を返す (attrSet が number を
+  // 受けるため型が広がった)。パーサー由来の src は常に文字列だが、型を絞るため String() を通す。
+  const srcRaw = String(token.attrGet('src') ?? '');
   const kind = classifyHref(ctx.mdPath, srcRaw);
 
   if (kind.kind === 'relative') {
@@ -113,7 +115,8 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
 md.renderer.rules.link_open = (tokens, idx) => {
   const ctx = requireCtx();
   const token = tokens[idx];
-  const hrefRaw = token.attrGet('href') ?? '';
+  // src と同様、markdown-it 15 の attrGet は string | number | null を返す。
+  const hrefRaw = String(token.attrGet('href') ?? '');
   const kind = classifyHref(ctx.mdPath, hrefRaw);
 
   const attrs = ['href="#"'];

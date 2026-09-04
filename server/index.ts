@@ -61,8 +61,16 @@ function asyncHandler(
   };
 }
 
+// Express 5 (path-to-regexp v8) は繰り返しパラメーター (:foo+ / *splat) を持てるため、
+// req.params の値の型が string | string[] に広がった。このサーバーが登録するルートは
+// 単一値の :id しか使わず配列で来ることは無いが、型を絞るためここを通す。
+function pathParam(req: express.Request, name: string): string {
+  const value = req.params[name];
+  return Array.isArray(value) ? (value[0] ?? '') : (value ?? '');
+}
+
 function requireRepo(req: express.Request): config.RepoConfig {
-  const repo = config.getRepo(req.params.id);
+  const repo = config.getRepo(pathParam(req, 'id'));
   if (!repo) throw new Error('リポジトリーが見つかりません');
   return repo;
 }
@@ -185,8 +193,8 @@ app.post('/api/repos', asyncHandler(async (req, res) => {
 }));
 
 app.delete('/api/repos/:id', asyncHandler(async (req, res) => {
-  config.removeRepo(req.params.id);
-  worktreeCache.delete(req.params.id);
+  config.removeRepo(pathParam(req, 'id'));
+  worktreeCache.delete(pathParam(req, 'id'));
   res.json({ ok: true });
 }));
 
@@ -1261,7 +1269,7 @@ app.post('/api/terminals', asyncHandler(async (req, res) => {
 }));
 
 app.post('/api/terminals/:id/kill', asyncHandler(async (req, res) => {
-  res.json({ ok: ptyManager.kill(req.params.id) || agentManager.kill(req.params.id) });
+  res.json({ ok: ptyManager.kill(pathParam(req, 'id')) || agentManager.kill(pathParam(req, 'id')) });
 }));
 
 // chat (Agent SDK) セッションの作成 / 再開。一覧・kill は /api/terminals に相乗りする
@@ -1283,7 +1291,7 @@ app.get('/api/agents/resumable', asyncHandler(async (req, res) => {
 }));
 
 app.post('/api/agents/resumable/:id/discard', asyncHandler(async (req, res) => {
-  res.json({ ok: agentManager.discardRecord(req.params.id) });
+  res.json({ ok: agentManager.discardRecord(pathParam(req, 'id')) });
 }));
 
 // Claude Code の hooks (HTTP hook) からのイベント通知。既定の 127.0.0.1 バインド

@@ -105,6 +105,13 @@ Worktree を開き「✦ Claude 起動」でそのディレクトリーをカレ
   予測入力 (Predictive IntelliSense) が使えないため、既定を PowerShell 7 側に寄せています。
   明示したい場合は環境変数 `PRONTELLA_SHELL` にコマンド名か絶対パスを指定してください
   (例: `PRONTELLA_SHELL=powershell.exe`)。指定が見つからないときは警告を出して既定に戻ります
+- Windows のターミナルは、OS 同梱の ConPTY ではなく **node-pty が同梱する新しい ConPTY**
+  (Windows Terminal 1.23 系) を使います。OS 同梱版は子プロセスの VT を一度画面バッファに
+  起こしてから再レンダリングする旧世代で、新しい方は VT を素通しします。実測で大量出力の
+  スクロールが約 1.5 倍速く、最初のバイトが届くまでの時間が 5〜7 倍短くなります
+  (`node scripts/bench/conpty-ab.mjs` で再現できます)。何か問題が出たら
+  `PRONTELLA_CONPTY_DLL=0` で OS 同梱の ConPTY に戻せます。起動に失敗した場合は
+  警告を出して自動的に OS 同梱版へフォールバックします
 - `scripts/ws-debug.mjs` はターミナル出力とステータス検知のデバッグ用ヘルパー
 - 「✦ Claude 起動」以外で起動した claude (ターミナルに手打ちなど) は hooks が入らないため、
   TUI 文言ヒューリスティックのみで検知します。文言変更で精度が落ちた場合は `server/pty.ts` の

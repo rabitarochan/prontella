@@ -50,6 +50,16 @@ const TRACKED_MODES = new Set([1, 9, 25, 1000, 1002, 1003, 1004, 1005, 1006, 101
 // eslint-disable-next-line no-control-regex
 const DECSET_RE = /\x1b\[\?([0-9;]+)([hl])/g;
 
+// ConPTY v2 (node-pty 同梱の conpty.dll) は起動直後に端末へ DA1 (Primary Device
+// Attributes, `ESC[c`) を投げ、返事が来るまで子プロセスの出力を握ったまま待つ。
+// in-box の ConPTY は投げないので、これは v2 に切り替えて初めて出る挙動。
+// node-pty 自身は端末ではないので誰も答えず、タイムアウトの約 3 秒がまるごと
+// 起動時間に乗る (実測: cmd.exe で 124ms → 3134ms、pwsh で 1.4s → 3.9s。
+// 3.1s ±40ms とほぼ一定なのでスキャン等ではなくタイマー)。
+// 応答は「VT100 with Advanced Video Option」— xterm.js が返すのと同じ値。
+const DA1_QUERY = '\x1b[c';
+const DA1_REPLY = '\x1b[?1;2c';
+
 // NOTE: the Claude Code TUI positions text with cursor moves, so after ANSI
 // stripping spaces between words are often missing ("shift+tabtocycle").
 // Patterns below must tolerate that (\s* instead of literal spaces).
@@ -132,6 +142,7 @@ interface Session {
   carry: string; // stripped tail carried into the next chunk's pattern scan
   modes: Map<number, boolean>; // last seen state of TRACKED_MODES (true = set/h); unseen modes are absent
   modeCarry: string; // raw tail carried into the next chunk's DECSET_RE scan
+  da1Answered: boolean; // ConPTY v2 の起動時 DA1 に一度だけ答えたか
   pending: string; // unflushed 'data' broadcast payload, coalesced within FLUSH_MS
   flushTimer: NodeJS.Timeout | null;
   sockets: Set<WebSocket>;
@@ -208,6 +219,27 @@ function defaultShell(): { file: string; args: string[] } {
   return { file: terminalEnv().SHELL || 'bash', args: [] };
 }
 
+/**
+ * Windows: node-pty が同梱する conpty.dll (Windows Terminal 1.23 系) を使うかどうか。
+ *
+ * OS 同梱 (in-box) の ConPTY は、子プロセスの VT を一度テキストバッファに起こしてから
+ * その画面スナップショットを再レンダリングして VT に戻す旧世代。node-pty が同梱する
+ * conpty.dll は Windows Terminal 1.22 以降の新世代で、子プロセスの VT をそのまま
+ * ホスト側のパイプへ流す (素通し)。スクロールの重い出力ほど差が出る。
+ * DLL は npm install 時点で node-pty のネイティブモジュールと同じ場所に入っているので、
+ * こちらで配置する作業は要らない — フラグを立てるだけで切り替わる。
+ *
+ * upstream ではまだ EXPERIMENTAL 扱いなので、spawn が落ちたら in-box ConPTY に
+ * 落として続行する (conptyDllDisabled をラッチして以降は試さない)。
+ * `PRONTELLA_CONPTY_DLL=0` で最初から無効化できる。
+ */
+let conptyDllDisabled =
+  process.platform !== 'win32' || process.env.PRONTELLA_CONPTY_DLL?.trim() === '0';
+
+function conptyOptions(): { useConptyDll?: true } {
+  return conptyDllDisabled ? {} : { useConptyDll: true };
+}
+
 export class PtyManager {
   private sessions = new Map<string, Session>();
   private timer: NodeJS.Timeout;
@@ -221,7 +253,7 @@ export class PtyManager {
   create(cwd: string, run?: 'claude' | string): SessionInfo {
     const id = randomUUID().slice(0, 8);
     const shell = defaultShell();
-    const proc = pty.spawn(shell.file, shell.args, {
+    const options: pty.IWindowsPtyForkOptions = {
       name: 'xterm-256color',
       cols: INITIAL_COLS,
       rows: INITIAL_ROWS,
@@ -234,7 +266,21 @@ export class PtyManager {
         PRONTELLA_PORT: String(this.port),
         PRONTELLA_TERM: id,
       }),
-    });
+    };
+    let proc: pty.IPty;
+    try {
+      proc = pty.spawn(shell.file, shell.args, { ...options, ...conptyOptions() });
+    } catch (err) {
+      if (conptyDllDisabled) throw err;
+      // 同梱 conpty.dll でのみ落ちるケース (DLL 欠損・環境制約) は in-box に落として続行する。
+      conptyDllDisabled = true;
+      console.warn(
+        `[prontella] 同梱 conpty.dll での PTY 起動に失敗しました。OS 同梱の ConPTY に戻します: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      proc = pty.spawn(shell.file, shell.args, options);
+    }
     const session: Session = {
       id,
       cwd: path.resolve(cwd),
@@ -247,6 +293,7 @@ export class PtyManager {
       carry: '',
       modes: new Map(),
       modeCarry: '',
+      da1Answered: false,
       pending: '',
       flushTimer: null,
       sockets: new Set(),
@@ -439,6 +486,20 @@ export class PtyManager {
 
   private onData(session: Session, data: string): void {
     session.lastOutputAt = Date.now();
+
+    // DA1 に答えて ConPTY v2 の起動待ちを解く (DA1_QUERY のコメント参照)。
+    // **サーバーが必ず答える**: クライアントの attach 待ちにすると、attach が
+    // クエリーより先か後かで 3 秒待つかどうかが変わり、起動時間が 1.7〜6.4 秒に
+    // ばらついた (実測)。attach 済みでも xterm.js に頼らない。
+    // 代わりにクエリー自体を中継から取り除く — これをそのまま流すと xterm.js も
+    // DA1 に答え、二重応答の `ESC[?1;2c` がシェルの入力として打ち込まれる。
+    // 端末への問い合わせであって表示内容ではないので、落として困るものはない。
+    if (!session.da1Answered && data.includes(DA1_QUERY)) {
+      session.da1Answered = true;
+      session.proc.write(DA1_REPLY);
+      data = data.replace(DA1_QUERY, '');
+    }
+
     session.mirror.write(data);
     for (const queue of session.attaching) queue.push(data);
     session.pending += data;

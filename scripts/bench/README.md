@@ -136,3 +136,38 @@ node scripts/bench/compare.mjs results/before.json results/after.json
 - **`--sessions` を増やすと M1/M4 の待ち時間が伸びる**。既定の 45〜60 秒の
   タイムアウトで足りない場合はコード側の `timeoutMs` を調整すること (CLI 化はしていない)。
 - スモークテストの結果は `results/smoke.json` に置いてある (Conductor が捨てる想定)。
+
+## conpty-ab.mjs — ConPTY 2 世代の A/B
+
+`term-bench.mjs` はブラウザーまで含むので ConPTY 単体の差はノイズに埋もれる。
+こちらは PTY とシェルだけを回して「素のスクロール」を測る。
+
+```
+node scripts/bench/conpty-ab.mjs --rounds 5 --lines 50000
+node scripts/bench/conpty-ab.mjs --rounds 5 --lines 50000 --no-da1   # DA1 に答えない
+```
+
+| オプション | 既定 | 説明 |
+| --- | --- | --- |
+| `--rounds <n>` | 5 | ラウンド数。ラウンドごとに A/B の実行順を入れ替える |
+| `--lines <n>` | 50000 | 1 回あたりの出力行数 |
+| `--case <c>` | both | `plain` / `unicode` / `both` |
+| `--shell <path>` | pwsh.exe | 計測に使うシェル |
+| `--no-da1` | off | DA1 に応答しない (ConPTY v2 の起動待ち約 3 秒を観測する) |
+
+### 設計上の注意 (踏んだ罠)
+
+- **計測対象は ConPTY であってシェルではない**。`1..50000 | ForEach-Object { ... }` を
+  そのまま流すと 1 行あたり約 300us の pwsh 側コストが支配的になり (実測: 50000 行で
+  15 秒)、ConPTY の差が 1.1x に埋もれる。文字列を先に組み立ててから
+  `[Console]::Out.Write` で 1 回に吐き出し、**その 1 回だけ**を測ること。
+  これで同じ条件が 1.5x になった。
+- **完了トークンをシェルのエコーと衝突させない**。JS 側で連結した完成形を書くと
+  コマンド行のエコーが即座に一致し、50000 行のはずが 3KB で「完了」になる。
+  連結はシェル側で行う (`"DN" + "E_xxx"`)。
+- **PSReadLine の履歴予測にも衝突する**。過去の実行で履歴が汚れているとそこに
+  トークンが現れるので、実行ごとにランダムなタグを付ける。
+- **DA1 に答えないと起動時間の比較にならない**。ConPTY v2 は起動時に端末へ
+  `ESC[c` を投げ、返事が来るまで子プロセスの出力を握って待つ (約 3 秒のタイムアウト。
+  実測 3.1s ±40ms でシェルによらず一定)。このスクリプトは server/pty.ts と同じ
+  応答を返す。`--no-da1` を付けるとその 3 秒がそのまま観測できる。

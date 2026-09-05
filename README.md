@@ -66,7 +66,7 @@ npx prontella            # 起動してブラウザを開く
 npx prontella --port 4000 --no-open
 ```
 
-- 要 Node.js 18+ と git。node-pty は Windows / macOS 向けプレビルドバイナリ同梱のためビルドツール不要 (Linux のみ gcc 等が必要)
+- 要 Node.js 24+ と git。node-pty は Windows / macOS 向けプレビルドバイナリ同梱のためビルドツール不要 (Linux のみ gcc 等が必要)
 - ブラウザを閉じてもサーバーが生きている限りターミナルセッションは維持されます
 
 ### リポジトリーから

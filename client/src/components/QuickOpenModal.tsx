@@ -89,6 +89,7 @@ export default function QuickOpenModal({
     const results = fuzzysort.go<QuickOpenTarget>(query, targets, {
       keys: ['name', 'path'],
       limit: LIMIT,
+      threshold: 0, // fuzzysort v4 の既定 .5 では略語クエリー (srvpty 等) が全滅するため v3 と同じ「一致すれば返す」に戻す
     });
     return results.map((r) => ({
       rel: r.obj.rel,

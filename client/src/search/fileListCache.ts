@@ -1,4 +1,4 @@
-import fuzzysort from 'fuzzysort';
+import fuzzysort, { type Prepared } from 'fuzzysort';
 import { api } from '../api';
 
 /**
@@ -9,8 +9,8 @@ import { api } from '../api';
  */
 export interface QuickOpenTarget {
   rel: string; // root-relative path, forward slashes
-  name: Fuzzysort.Prepared; // basename
-  path: Fuzzysort.Prepared; // full relative path
+  name: Prepared; // basename
+  path: Prepared; // full relative path
 }
 
 export interface FileListEntry {

@@ -12,8 +12,8 @@
     "resolveJsonModule": true,
     "types": ["vite/client", "novnc__novnc"],
     "forceConsistentCasingInFileNames": true,
-    "baseUrl": ".",
     "paths": {
+      "*": ["./*"],
       "@/*": ["./client/src/*"]
     }
   },

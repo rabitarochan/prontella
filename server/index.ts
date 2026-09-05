@@ -11,7 +11,7 @@ import * as git from './git.js';
 import * as files from './files.js';
 import * as search from './search.js';
 import { buildPartialPatchLines, checkApplyHunksRequest, hashHunk, splitDiffHunks, type ApplyDirection } from './diffPatch.js';
-import { PtyManager, aggregateStatus } from './pty.js';
+import { PtyManager, aggregateStatus, conptyMode } from './pty.js';
 import { ensureHookAssets, warnIfHooksBlocked } from './hooks.js';
 import { AgentSessionManager } from './agentSession.js';
 import { attachEvents } from './sessionEvents.js';
@@ -1411,6 +1411,13 @@ server.on('upgrade', (req, socket, head) => {
 server.listen(PORT, HOST, () => {
   console.log(`[prontella] server: http://localhost:${PORT}`);
   console.log(`[prontella] mode: ${process.env.NODE_ENV ?? 'development'}`);
+  // どちらの ConPTY で動いているかは外から見分けにくい (プロセスツリーに
+  // OpenConsole.exe が出るか、node が node_modules 配下の conpty.dll を
+  // ロードしているかを見るしかない)。正常時にも 1 行出しておく。
+  const conpty = conptyMode();
+  if (conpty) {
+    console.log(`[prontella] ConPTY: ${conpty}`);
+  }
   // フック資材を起動時に書き出す。「✦ Claude 起動」でも生成されるが、それを待つと
   // 更新直後の設定ファイルが旧版のまま残り、(1) 新版が有効なのか設定を見ても
   // 確認できない (2) 旧転送スクリプト deck-hook.mjs が掃除されない

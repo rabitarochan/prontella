@@ -240,6 +240,19 @@ function conptyOptions(): { useConptyDll?: true } {
   return conptyDllDisabled ? {} : { useConptyDll: true };
 }
 
+/**
+ * 起動時ログ用に、どちらの ConPTY を使う設定かを 1 行で返す (Windows 以外は null)。
+ *
+ * conpty.dll が実際にロードされるのは最初の PTY 起動時なので、これは「使うつもり」の値。
+ * spawn に失敗して OS 同梱へ落ちた場合は create() が別途 warn を出す。
+ */
+export function conptyMode(): string | null {
+  if (process.platform !== 'win32') return null;
+  return conptyDllDisabled
+    ? 'OS 同梱 (in-box)'
+    : 'node-pty 同梱 conpty.dll (Windows Terminal 1.23 系)';
+}
+
 export class PtyManager {
   private sessions = new Map<string, Session>();
   private timer: NodeJS.Timeout;

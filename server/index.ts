@@ -17,7 +17,13 @@ import { AgentSessionManager } from './agentSession.js';
 import { attachEvents } from './sessionEvents.js';
 import { getUsage } from './usage.js';
 import { attachVncBridge, getVncTarget, probeVncTarget } from './vnc.js';
-import { VSCODE_BASE_PATH, VSCODE_PROFILE_DIR, vscodeTileEnabled, vscodeWeb } from './vscodeWeb.js';
+import {
+  VSCODE_BASE_PATH,
+  VSCODE_PROFILE_DIR,
+  vscodeBackendKind,
+  vscodeTileEnabled,
+  vscodeWeb,
+} from './vscodeWeb.js';
 import {
   assertExtensionId,
   listExtensions,
@@ -1391,7 +1397,15 @@ if (vscodeTileEnabled()) {
   const extensionOp = (action: '--install-extension' | '--uninstall-extension') =>
     asyncHandler(async (req, res) => {
       const target = vscodeWeb.cliTarget();
-      if (!target) throw new Error('VSCodium が未導入です。先に VS Code タイルを開いてください。');
+      if (!target) {
+        // serve-web の CLI には --install-extension が無い (実測)。
+        // 未導入の場合と原因が違うので、文言を分ける。
+        throw new Error(
+          vscodeBackendKind() === 'serve-web'
+            ? 'serve-web バックエンドでは Prontella から拡張機能を操作できません。VS Code タイル内の拡張機能ビューを使ってください。'
+            : 'VSCodium が未導入です。先に VS Code タイルを開いてください。',
+        );
+      }
       const id = assertExtensionId((req.body as { id?: unknown }).id);
       const args = action === '--install-extension' ? [action, id, '--force'] : [action, id];
       const output = await serializeExtensionOp(() => runExtensionCli(target, args));

@@ -268,6 +268,10 @@ export const FILES_STRINGS = {
     ja: 'Open VSX から取得します。VS Code タイル内の拡張機能ビューからも追加できます。反映にはタイルの再読み込みが必要な場合があります。',
     en: 'Fetched from Open VSX. You can also install from the Extensions view inside the tile. A tile reload may be needed to activate.',
   },
+  'vscode.extensionsServeWebNote': {
+    ja: 'serve-web バックエンドでは Prontella から追加/削除できません (この CLI は --install-extension を持たないため)。VS Code タイル内の拡張機能ビューから操作してください。',
+    en: 'The serve-web backend has no --install-extension CLI, so extensions cannot be managed from Prontella. Use the Extensions view inside the tile.',
+  },
   'vscode.install': { ja: '追加', en: 'Install' },
   'vscode.installing': { ja: '追加中…', en: 'Installing…' },
   'vscode.uninstall': { ja: '削除', en: 'Uninstall' },

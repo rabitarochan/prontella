@@ -11,7 +11,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { api } from '../../api';
 import { useT } from '../../i18n';
-import type { VsCodeExtension } from '../../types';
+import type { VsCodeExtension, VsCodeStatus } from '../../types';
 import { useConfirm } from '../ConfirmDialog';
 
 /**
@@ -28,22 +28,26 @@ export default function VsCodeSettingsModal({ onClose }: { onClose: () => void }
   const [settings, setSettings] = useState('');
   const [savedSettings, setSavedSettings] = useState('');
   const [extensions, setExtensions] = useState<VsCodeExtension[]>([]);
+  const [status, setStatus] = useState<VsCodeStatus | null>(null);
   const [newId, setNewId] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
-    void Promise.all([api.vscodeSettings(), api.vscodeExtensions()])
-      .then(([s, list]) => {
+    void Promise.all([api.vscodeSettings(), api.vscodeExtensions(), api.vscodeStatus()])
+      .then(([s, list, st]) => {
         setSettings(s.text);
         setSavedSettings(s.text);
         setExtensions(list);
+        setStatus(st);
       })
       .catch((e: Error) => setError(e.message));
   }, []);
 
   const dirty = settings !== savedSettings;
+  // serve-web バックエンドは --install-extension を持たないので、追加/削除は出さない
+  const manageable = status?.canManageExtensions !== false;
 
   const save = async () => {
     setBusy('settings');
@@ -127,34 +131,40 @@ export default function VsCodeSettingsModal({ onClose }: { onClose: () => void }
 
           <section>
             <h3>{t('vscode.extensions')}</h3>
-            <p className="vscode-settings-note">{t('vscode.extensionsNote')}</p>
-            <div className="vscode-settings-row">
-              <Input
-                placeholder="publisher.name"
-                value={newId}
-                onChange={(e) => setNewId(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void install();
-                }}
-              />
-              <Button onClick={() => void install()} disabled={!newId.trim() || busy !== null}>
-                {busy === newId.trim() ? t('vscode.installing') : t('vscode.install')}
-              </Button>
-            </div>
+            <p className="vscode-settings-note">
+              {manageable ? t('vscode.extensionsNote') : t('vscode.extensionsServeWebNote')}
+            </p>
+            {manageable && (
+              <div className="vscode-settings-row">
+                <Input
+                  placeholder="publisher.name"
+                  value={newId}
+                  onChange={(e) => setNewId(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void install();
+                  }}
+                />
+                <Button onClick={() => void install()} disabled={!newId.trim() || busy !== null}>
+                  {busy === newId.trim() ? t('vscode.installing') : t('vscode.install')}
+                </Button>
+              </div>
+            )}
             <ul className="vscode-ext-list">
               {extensions.length === 0 && <li className="vscode-settings-note">{t('vscode.noExtensions')}</li>}
               {extensions.map((e) => (
                 <li key={e.id}>
                   <span className="vscode-ext-id">{e.id}</span>
                   {e.version && <span className="vscode-ext-version">{e.version}</span>}
-                  <button
-                    className="vscode-ext-remove"
-                    title={t('vscode.uninstall')}
-                    disabled={busy !== null}
-                    onClick={() => void uninstall(e.id)}
-                  >
-                    <Trash2 />
-                  </button>
+                  {manageable && (
+                    <button
+                      className="vscode-ext-remove"
+                      title={t('vscode.uninstall')}
+                      disabled={busy !== null}
+                      onClick={() => void uninstall(e.id)}
+                    >
+                      <Trash2 />
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>

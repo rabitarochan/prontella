@@ -371,6 +371,9 @@ export interface VsCodeInstallProgress {
 
 /** VS Code タイル (VSCodium reh-web) のバックエンド状態。 */
 export interface VsCodeStatus {
+  backend: 'vscodium' | 'serve-web';
+  /** 拡張機能を Prontella から追加/削除できるか (serve-web は CLI を持たない)。 */
+  canManageExtensions: boolean;
   installed: boolean;
   installDir: string | null;
   running: boolean;

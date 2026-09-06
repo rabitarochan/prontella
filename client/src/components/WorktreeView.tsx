@@ -8,6 +8,7 @@ import {
   setActiveWorktreeCommands,
 } from '../layout/worktreeCommands';
 import { useConfirm } from './ConfirmDialog';
+import OpenInEditorButton from './OpenInEditorButton';
 import StatusBadge from './StatusBadge';
 import TileGrid from './tiles/TileGrid';
 
@@ -48,6 +49,7 @@ export default function WorktreeView({ repo, worktree }: { repo: ActiveRepo; wor
           <StatusBadge status={worktree.agent.status} />
         </div>
         <div className="wt-header-actions">
+          <OpenInEditorButton dir={worktree.path} />
           <button
             className="icon-btn layout-reset"
             title={t('wt.resetLayout')}

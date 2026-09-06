@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { setOverlayInert } from '../components/vscode/overlayHost';
 
 /**
  * タイル DnD (レイアウト再構成) のドラッグ状態。Sidebar のリポジトリー DnD と
@@ -15,6 +16,14 @@ interface TileDndState {
 
 export const useTileDnd = create<TileDndState>((set) => ({
   draggingId: null,
-  start: (leafId) => set({ draggingId: leafId }),
-  end: () => set({ draggingId: null }),
+  // VS Code タイルの iframe はポインターイベントを飲むので、ドラッグ中は
+  // 素通しにしないとドロップゾーンが反応しない。
+  start: (leafId) => {
+    setOverlayInert(true);
+    set({ draggingId: leafId });
+  },
+  end: () => {
+    setOverlayInert(false);
+    set({ draggingId: null });
+  },
 }));

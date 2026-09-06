@@ -24,6 +24,7 @@ import type {
   TreeEntry,
   TreeStatusEntry,
   UsageSnapshot,
+  VsCodeStatus,
 } from './types';
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -284,4 +285,9 @@ export const api = {
   discardAgentRecord: (deckId: string) =>
     post<{ ok: boolean }>(`/api/agents/resumable/${deckId}/discard`, {}),
   killTerminal: (id: string) => post<{ ok: boolean }>(`/api/terminals/${id}/kill`, {}),
+
+  // VS Code タイル。ensure は未起動なら起動する (サーバー側で single-flight)
+  vscodeStatus: () => request<VsCodeStatus>('/api/vscode/status'),
+  vscodeEnsure: () => post<VsCodeStatus>('/api/vscode/ensure', {}),
+  vscodeStop: () => post<VsCodeStatus>('/api/vscode/stop', {}),
 };

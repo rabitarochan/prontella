@@ -3,6 +3,7 @@ import { useT } from '../i18n';
 import type { TerminalSession } from '../types';
 import { pruneEditorState, TILE_LAYOUT_STORAGE_PREFIX } from '../editorState';
 import { pruneTermState } from './termState';
+import { syncOverlay } from '../components/vscode/overlayHost';
 import {
   adoptSessions,
   appendSession,
@@ -99,6 +100,10 @@ export function useTileLayout(
     } catch {
       // storage full / unavailable — layout just won't persist
     }
+    // VS Code タイルのオーバーレイは DOM 外に固定配置されているので、タイルの
+    // 分割・クローズ・入れ替えで矩形がずれる。ここで測り直す (サイズ変化を伴う
+    // スプリッター操作は overlayHost 側の ResizeObserver が拾う)。
+    syncOverlay();
     // タイル閉鎖やレイアウト初期化(reset)で消えた leaf の editorState /
     // termState スライスを回収する
     const liveLeafIds = layout.root ? leaves(layout.root).map((l) => l.id) : [];

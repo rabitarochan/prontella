@@ -7,6 +7,7 @@ import ChatPanel from '../ChatPanel';
 import FilesTab from '../FilesTab';
 import GitTab from '../GitTab';
 import TermPanel from '../TermPanel';
+import VsCodePanel from '../VsCodePanel';
 
 /**
  * A tile's tabbed content: files / git / term, switched by the tile header.
@@ -66,6 +67,11 @@ export default function TileWorkspace({
             onCloseTab={(id) => actions.closeSessionTab(leaf.id, id)}
             create={(run) => actions.openTerminal(run, leaf.id)}
           />
+        </div>
+      )}
+      {visited.has('code') && (
+        <div className="tile-view" style={{ display: leaf.view === 'code' ? undefined : 'none' }}>
+          <VsCodePanel root={worktree.path} visible={leaf.view === 'code'} />
         </div>
       )}
       {visited.has('chat') && (

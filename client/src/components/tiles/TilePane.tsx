@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, ChevronDown, FileText, GitBranch, GripVertical, MessageSquare, Terminal } from 'lucide-react';
+import { Check, ChevronDown, Code2, FileText, GitBranch, GripVertical, MessageSquare, Terminal } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,12 +16,16 @@ import type { LeafNode, TileView } from '../../layout/tileTree';
 import type { TileActions, TileDropZone } from '../../layout/useTileLayout';
 import { useConfirm } from '../ConfirmDialog';
 import StatusBadge from '../StatusBadge';
+import { useVsCodeEnabled } from '../vscode/useVsCodeEnabled';
 
 const VIEWS: { view: TileView; labelKey: StringKey; Icon: typeof FileText }[] = [
   { view: 'files', labelKey: 'tile.viewFiles', Icon: FileText },
   { view: 'git', labelKey: 'tile.viewGit', Icon: GitBranch },
   { view: 'term', labelKey: 'tile.viewTerm', Icon: Terminal },
   { view: 'chat', labelKey: 'tile.viewChat', Icon: MessageSquare },
+  // VS Code は PRONTELLA_VSCODE_TILE=1 のときだけメニューに出す。VIEWS 自体からは
+  // 外さない — 保存済みレイアウトが code のときに現在ビューを解決できなくなるため。
+  { view: 'code', labelKey: 'tile.viewCode', Icon: Code2 },
 ];
 
 /** タイル内セッションの「最も注意が必要な」ステータス (デッキのカードと同じ優先順)。 */
@@ -55,6 +59,7 @@ export default function TilePane({
   host: HTMLDivElement;
 }) {
   const t = useT();
+  const vscodeEnabled = useVsCodeEnabled();
   const { confirm: confirmDialog, dialog } = useConfirm();
   const setSlot = useTileBarSlots((s) => s.setSlot);
   const clearSlot = useTileBarSlots((s) => s.clearSlot);
@@ -128,6 +133,8 @@ export default function TilePane({
   // グループごとに 1 段下がった (バーには使用量表示が入る) ので対象外。
   const tabsInBar = leaf.view === 'chat';
   const current = VIEWS.find((v) => v.view === leaf.view) ?? VIEWS[0];
+  // 無効時は VS Code を選択肢から隠す (既に code のタイルはそのまま動く)
+  const menuViews = VIEWS.filter((v) => v.view !== 'code' || vscodeEnabled);
   const CurrentIcon = current.Icon;
 
   return (
@@ -160,7 +167,7 @@ export default function TilePane({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
-              {VIEWS.map(({ view, labelKey, Icon }) => (
+              {menuViews.map(({ view, labelKey, Icon }) => (
                 <DropdownMenuItem key={view} onSelect={() => actions.setView(leaf.id, view)}>
                   <Icon />
                   {t(labelKey)}

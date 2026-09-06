@@ -4110,3 +4110,63 @@ button.statusbar-item:hover:not(:disabled) {
   align-self: center;
   margin-top: 4px;
 }
+
+/* ---- VS Code タイル ---------------------------------------------------------
+   iframe は DOM を移動されると再ロードされる (実行中のデバッグセッションが飛ぶ)。
+   そのため body 直下に position:fixed で置き、タイル内のプレースホルダーの矩形に
+   座標だけで追従させる。DOM 上は生成後 一切動かさない。詳細は overlayHost.ts。
+   z-index はドロップ表示(50)・ベル(40/41)・エラーバー(60)より下に置き、
+   それらが iframe の上に出るようにする。 */
+.vscode-overlay {
+  position: fixed;
+  z-index: 10;
+  overflow: hidden;
+  background: var(--background);
+}
+.vscode-overlay[hidden] {
+  display: none;
+}
+.vscode-overlay-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+.vscode-overlay-frame[hidden] {
+  display: none;
+}
+
+.vscode-panel {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+/* オーバーレイの位置合わせ基準。中身は持たない */
+.vscode-panel-host {
+  width: 100%;
+  height: 100%;
+}
+.vscode-panel-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 1.5rem;
+  text-align: center;
+}
+.vscode-panel-msg {
+  font-size: 0.9rem;
+}
+.vscode-panel-error {
+  color: var(--destructive);
+}
+.vscode-panel-hint {
+  font-size: 0.8rem;
+  opacity: 0.75;
+  max-width: 42rem;
+  line-height: 1.6;
+}

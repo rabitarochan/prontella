@@ -17,6 +17,8 @@ import { AgentSessionManager } from './agentSession.js';
 import { attachEvents } from './sessionEvents.js';
 import { getUsage } from './usage.js';
 import { attachVncBridge, getVncTarget, probeVncTarget } from './vnc.js';
+import { VSCODE_BASE_PATH, vscodeTileEnabled, vscodeWeb } from './vscodeWeb.js';
+import { vscodeProxyHandler, vscodeProxyUpgrade } from './vscodeProxy.js';
 import { keepAlive } from './wsKeepAlive.js';
 
 const PORT = Number(process.env.PORT) || 3711;
@@ -1337,6 +1339,36 @@ app.get('/api/vnc/status', asyncHandler(async (_req, res) => {
   res.json({ host: target.host, port: target.port, reachable });
 }));
 
+// ---- VS Code タイル (VSCodium reh-web) --------------------------------------
+
+// PRONTELLA_VSCODE_TILE=1 のときだけ機能ごと生やす。既定では API もプロキシも存在しない。
+if (vscodeTileEnabled()) {
+  app.get('/api/vscode/status', (_req, res) => {
+    res.json(vscodeWeb.status());
+  });
+
+  app.post('/api/vscode/ensure', asyncHandler(async (_req, res) => {
+    await vscodeWeb.ensure();
+    res.json(vscodeWeb.status());
+  }));
+
+  app.post('/api/vscode/stop', (_req, res) => {
+    vscodeWeb.stop();
+    res.json(vscodeWeb.status());
+  });
+
+  // workbench のプロキシ。express.static より前に置く必要がある
+  // (/vscode 配下は SPA フォールバックに食わせない)。
+  app.use(VSCODE_BASE_PATH, vscodeProxyHandler);
+
+  // 子プロセスは Windows では親の終了で道連れにならないので明示的に落とす。
+  // タイルを閉じただけでは落とさない (起動と拡張機能ホスト初期化が重いため) 分、
+  // ここで確実に始末しないと deck を止めても居座る。
+  for (const sig of ['exit', 'SIGINT', 'SIGTERM'] as const) {
+    process.on(sig, () => vscodeWeb.stop());
+  }
+}
+
 // ---- static client (production build) ---------------------------------------
 
 // Resolve the built client for both layouts:
@@ -1403,6 +1435,10 @@ server.on('upgrade', (req, socket, head) => {
     // 決まり、クエリパラメーターは意図的に読まない (読んだらオープンプロキシになる)。
     // 生バイナリを流すので keepAlive は付けない (JSON の pong が RFB を壊す)。
     wss.handleUpgrade(req, socket, head, (ws) => attachVncBridge(ws));
+  } else if (vscodeTileEnabled() && url.pathname.startsWith(`${VSCODE_BASE_PATH}/`)) {
+    // workbench のリモート接続。ws ライブラリーには通さず生ソケットで中継する
+    // (サブプロトコル/拡張のネゴシエーションを workbench 自身が行うため)。
+    vscodeProxyUpgrade(req, socket, head);
   } else {
     socket.destroy();
   }

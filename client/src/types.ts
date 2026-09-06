@@ -360,3 +360,13 @@ export interface AgentResumableSession {
   cwd: string;
   savedAt: number;
 }
+
+/** VS Code タイル (VSCodium reh-web) のバックエンド状態。 */
+export interface VsCodeStatus {
+  installed: boolean;
+  installDir: string | null;
+  running: boolean;
+  ready: boolean;
+  basePath: string;
+  lastError: string | null;
+}

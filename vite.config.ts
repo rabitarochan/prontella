@@ -3,6 +3,12 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
+// dev サーバーの転送先。既定はサーバー側の既定ポートと揃える。
+// 検証で別ポートに立てたいときのために PORT で上書きできる。
+const SERVER_PORT = process.env.PORT || '3711';
+const SERVER_ORIGIN = `http://localhost:${SERVER_PORT}`;
+const SERVER_WS_ORIGIN = `ws://localhost:${SERVER_PORT}`;
+
 export default defineConfig({
   root: 'client',
   plugins: [react(), tailwindcss()],
@@ -21,8 +27,11 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': { target: 'http://localhost:3711', changeOrigin: true },
-      '/ws': { target: 'ws://localhost:3711', ws: true },
+      '/api': { target: SERVER_ORIGIN, changeOrigin: true },
+      '/ws': { target: SERVER_WS_ORIGIN, ws: true },
+      // VS Code タイル。HTML と WebSocket が同じ前置パスに来るので ws:true が要る
+      // (サーバー側で --server-base-path を同じ値にしてある)。
+      '/vscode': { target: SERVER_ORIGIN, changeOrigin: true, ws: true },
     },
   },
 });

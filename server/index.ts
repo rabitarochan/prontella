@@ -1347,10 +1347,12 @@ if (vscodeTileEnabled()) {
     res.json(vscodeWeb.status());
   });
 
-  app.post('/api/vscode/ensure', asyncHandler(async (_req, res) => {
-    await vscodeWeb.ensure();
+  // ensure は待たない (初回は 108MB のダウンロードが走る)。着手だけして
+  // 現在の状態を返し、クライアントは status をポーリングして進捗を追う。
+  app.post('/api/vscode/ensure', (_req, res) => {
+    vscodeWeb.ensure();
     res.json(vscodeWeb.status());
-  }));
+  });
 
   app.post('/api/vscode/stop', (_req, res) => {
     vscodeWeb.stop();

@@ -245,11 +245,15 @@ export const FILES_STRINGS = {
   // ---- VS Code タイル (VsCodePanel) ----
   'vscode.starting': { ja: 'VS Code を起動しています…', en: 'Starting VS Code…' },
   'vscode.notReady': { ja: 'VS Code を起動できませんでした', en: 'Could not start VS Code' },
-  'vscode.notInstalled': {
-    ja: 'VSCodium (reh-web) が見つかりません。~/.prontella/vscode/vscodium/ に展開するか、PRONTELLA_VSCODE_DIR を設定してください。',
-    en: 'VSCodium (reh-web) not found. Extract it under ~/.prontella/vscode/vscodium/ or set PRONTELLA_VSCODE_DIR.',
-  },
   'vscode.retry': { ja: '再試行', en: 'Retry' },
+  'vscode.resolving': { ja: 'VSCodium のバージョンを確認しています…', en: 'Resolving VSCodium version…' },
+  'vscode.downloading': { ja: 'VSCodium をダウンロードしています', en: 'Downloading VSCodium' },
+  'vscode.downloadNote': {
+    ja: '初回のみです。次回からはこの待ち時間はありません。',
+    en: 'First run only — later launches skip this.',
+  },
+  'vscode.verifying': { ja: 'ダウンロードを検証しています…', en: 'Verifying download…' },
+  'vscode.extracting': { ja: '展開しています…', en: 'Extracting…' },
   'tile.closeTitle': { ja: 'タイルを閉じる', en: 'Close tile' },
   'tile.closeUnsavedMessage': {
     ja: '未保存の変更があります。タイルを閉じますか?',

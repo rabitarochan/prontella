@@ -4170,3 +4170,19 @@ button.statusbar-item:hover:not(:disabled) {
   max-width: 42rem;
   line-height: 1.6;
 }
+
+/* VSCodium 初回ダウンロードの進捗バー */
+.vscode-progress {
+  display: block;
+  width: min(24rem, 70%);
+  height: 4px;
+  border-radius: 2px;
+  background: var(--muted);
+  overflow: hidden;
+}
+.vscode-progress-bar {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.2s linear;
+}

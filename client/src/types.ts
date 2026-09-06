@@ -361,12 +361,23 @@ export interface AgentResumableSession {
   savedAt: number;
 }
 
+/** VSCodium 本体の取得進捗 (初回のみ)。 */
+export interface VsCodeInstallProgress {
+  phase: 'resolving' | 'downloading' | 'verifying' | 'extracting';
+  version: string | null;
+  received: number;
+  total: number | null;
+}
+
 /** VS Code タイル (VSCodium reh-web) のバックエンド状態。 */
 export interface VsCodeStatus {
   installed: boolean;
   installDir: string | null;
   running: boolean;
   ready: boolean;
+  /** 準備中 (ダウンロード・展開・起動のいずれか)。 */
+  preparing: boolean;
+  install: VsCodeInstallProgress | null;
   basePath: string;
   lastError: string | null;
 }

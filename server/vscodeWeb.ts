@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { terminalEnv } from './childEnv.js';
 import { CONFIG_DIR } from './config.js';
+import { installVsCodium, type InstallProgress } from './vscodeDownload.js';
 
 /** プロキシの前置パス。サーバーへ渡す --server-base-path と必ず一致させること。 */
 export const VSCODE_BASE_PATH = '/vscode';
@@ -53,6 +54,10 @@ export interface VsCodeStatus {
   running: boolean;
   /** workbench が応答可能 (ポートが取れた) */
   ready: boolean;
+  /** 準備中 (ダウンロード・展開・起動のいずれか)。ready になるまでクライアントは status を追う。 */
+  preparing: boolean;
+  /** ダウンロード/展開の進捗。準備中でなければ null。 */
+  install: InstallProgress | null;
   basePath: string;
   lastError: string | null;
 }
@@ -155,6 +160,7 @@ class VsCodeWebServer {
   private inflight: Promise<number> | null = null;
   private lastError: string | null = null;
   private errTail = '';
+  private installProgress: InstallProgress | null = null;
 
   /** プロキシが転送先を知るための唯一の入口。未起動なら null。 */
   activePort(): number | null {
@@ -168,34 +174,51 @@ class VsCodeWebServer {
       installDir: install?.dir ?? null,
       running: this.proc !== null,
       ready: this.port !== null,
+      preparing: this.inflight !== null,
+      install: this.installProgress,
       basePath: VSCODE_BASE_PATH,
       lastError: this.lastError,
     };
   }
 
   /**
-   * 起動を保証する。single-flight — タイルを 2 つ同時に開いても二重起動しない
+   * 準備 (必要ならダウンロード) と起動を開始する。**待たない。**
+   * 初回は 108MB のダウンロードが走るので、HTTP レスポンスを掴んだまま
+   * 待たせるわけにいかない。クライアントは status をポーリングして進捗を見る。
+   *
+   * single-flight — タイルを 2 つ同時に開いても二重にダウンロード/起動しない
    * (server/usage.ts の inflight パターンと同じ形)。
    */
-  ensure(): Promise<number> {
-    if (this.port !== null) return Promise.resolve(this.port);
-    if (this.inflight) return this.inflight;
-    this.inflight = this.start().finally(() => {
-      this.inflight = null;
-    });
-    return this.inflight;
+  ensure(): void {
+    if (this.port !== null || this.inflight) return;
+    this.lastError = null;
+    this.inflight = this.start()
+      .catch((err: unknown) => {
+        // 失敗は status.lastError で見せる。ここで握らないと unhandledRejection になる
+        this.lastError = err instanceof Error ? err.message : String(err);
+        return -1;
+      })
+      .finally(() => {
+        this.inflight = null;
+        this.installProgress = null;
+      });
   }
 
   private async start(): Promise<number> {
-    const install = resolveInstall();
+    let install = resolveInstall();
     if (!install) {
-      this.lastError =
-        'VSCodium (reh-web) が見つかりません。PRONTELLA_VSCODE_DIR を設定するか、' +
-        `${INSTALL_ROOT} に展開してください。`;
-      throw new Error(this.lastError);
+      // 未導入なら取りに行く。PRONTELLA_VSCODE_DIR が指定されているのに
+      // 中身が無い場合も含めて、正規の置き場へ入れる。
+      await installVsCodium(INSTALL_ROOT, (p) => {
+        this.installProgress = p;
+      });
+      install = resolveInstall();
+      if (!install) {
+        throw new Error('VSCodium を導入しましたが実行ファイルを解決できません');
+      }
     }
+    this.installProgress = null;
     this.install = install;
-    this.lastError = null;
     this.errTail = '';
     fs.mkdirSync(PROFILE_DIR, { recursive: true });
     killStaleServer();

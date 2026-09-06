@@ -17,7 +17,15 @@ import { AgentSessionManager } from './agentSession.js';
 import { attachEvents } from './sessionEvents.js';
 import { getUsage } from './usage.js';
 import { attachVncBridge, getVncTarget, probeVncTarget } from './vnc.js';
-import { VSCODE_BASE_PATH, vscodeTileEnabled, vscodeWeb } from './vscodeWeb.js';
+import { VSCODE_BASE_PATH, VSCODE_PROFILE_DIR, vscodeTileEnabled, vscodeWeb } from './vscodeWeb.js';
+import {
+  assertExtensionId,
+  listExtensions,
+  readMachineSettings,
+  runExtensionCli,
+  serializeExtensionOp,
+  writeMachineSettings,
+} from './vscodeProfile.js';
 import { vscodeProxyHandler, vscodeProxyUpgrade } from './vscodeProxy.js';
 import { keepAlive } from './wsKeepAlive.js';
 
@@ -1358,6 +1366,40 @@ if (vscodeTileEnabled()) {
     vscodeWeb.stop();
     res.json(vscodeWeb.status());
   });
+
+  // --- プロファイル管理 (Remote 設定 / 拡張機能) ---
+  // 設定はサーバー側の Machine/settings.json だけが触れる。ユーザー設定は
+  // ブラウザーの IndexedDB にあり、ここからは読めも書けもしない (vscodeProfile.ts)。
+  app.get('/api/vscode/settings', (_req, res) => {
+    res.json({ text: readMachineSettings(VSCODE_PROFILE_DIR) });
+  });
+
+  app.put('/api/vscode/settings', asyncHandler(async (req, res) => {
+    const text = (req.body as { text?: unknown }).text;
+    if (typeof text !== 'string') throw new Error('text は文字列である必要があります');
+    writeMachineSettings(VSCODE_PROFILE_DIR, text);
+    res.json({ text: readMachineSettings(VSCODE_PROFILE_DIR) });
+  }));
+
+  app.get('/api/vscode/extensions', (_req, res) => {
+    res.json(listExtensions(VSCODE_PROFILE_DIR));
+  });
+
+  // 追加 / 削除は reh-web 同梱の CLI で行う。ID は必ず assertExtensionId を
+  // 通してからコマンドラインに載せる (引数インジェクション防壁)。
+  // Prontella 側の操作同士は serializeExtensionOp で直列化する。
+  const extensionOp = (action: '--install-extension' | '--uninstall-extension') =>
+    asyncHandler(async (req, res) => {
+      const target = vscodeWeb.cliTarget();
+      if (!target) throw new Error('VSCodium が未導入です。先に VS Code タイルを開いてください。');
+      const id = assertExtensionId((req.body as { id?: unknown }).id);
+      const args = action === '--install-extension' ? [action, id, '--force'] : [action, id];
+      const output = await serializeExtensionOp(() => runExtensionCli(target, args));
+      res.json({ ok: true, output, extensions: listExtensions(VSCODE_PROFILE_DIR) });
+    });
+
+  app.post('/api/vscode/extensions/install', extensionOp('--install-extension'));
+  app.post('/api/vscode/extensions/uninstall', extensionOp('--uninstall-extension'));
 
   // workbench のプロキシ。express.static より前に置く必要がある
   // (/vscode 配下は SPA フォールバックに食わせない)。

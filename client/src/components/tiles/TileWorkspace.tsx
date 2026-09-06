@@ -71,7 +71,7 @@ export default function TileWorkspace({
       )}
       {visited.has('code') && (
         <div className="tile-view" style={{ display: leaf.view === 'code' ? undefined : 'none' }}>
-          <VsCodePanel root={worktree.path} visible={leaf.view === 'code'} />
+          <VsCodePanel root={worktree.path} visible={leaf.view === 'code'} leafId={leaf.id} />
         </div>
       )}
       {visited.has('chat') && (

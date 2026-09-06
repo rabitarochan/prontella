@@ -4186,3 +4186,83 @@ button.statusbar-item:hover:not(:disabled) {
   background: var(--primary);
   transition: width 0.2s linear;
 }
+
+/* VS Code タイルのプロファイル設定モーダル */
+.vscode-settings-dialog {
+  max-width: 44rem;
+}
+.vscode-settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.vscode-settings-body h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+.vscode-settings-note {
+  font-size: 0.78rem;
+  opacity: 0.75;
+  line-height: 1.6;
+  margin-bottom: 0.6rem;
+}
+.vscode-settings-editor {
+  width: 100%;
+  min-height: 11rem;
+  font-family: Consolas, 'Cascadia Mono', Menlo, monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  padding: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+  color: var(--foreground);
+  resize: vertical;
+}
+.vscode-settings-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+.vscode-ext-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.vscode-ext-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.1rem;
+  font-size: 0.82rem;
+}
+.vscode-ext-id {
+  font-family: Consolas, 'Cascadia Mono', Menlo, monospace;
+}
+.vscode-ext-version {
+  opacity: 0.6;
+  font-size: 0.75rem;
+}
+.vscode-ext-remove {
+  margin-left: auto;
+  opacity: 0.6;
+}
+.vscode-ext-remove:hover {
+  opacity: 1;
+  color: var(--destructive);
+}
+.vscode-settings-ok {
+  font-size: 0.8rem;
+  color: var(--primary);
+}
+.vscode-settings-error {
+  font-size: 0.8rem;
+  color: var(--destructive);
+}

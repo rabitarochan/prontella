@@ -24,6 +24,8 @@ export const VSCODE_BASE_PATH = '/vscode';
 const VSCODE_DIR = path.join(CONFIG_DIR, 'vscode');
 /** 拡張機能・Machine 設定・ワークスペース保存はここに貯まる (デスクトップ版とは完全に別系統)。 */
 const PROFILE_DIR = path.join(VSCODE_DIR, 'profile');
+/** プロファイル管理 (設定・拡張機能) 側から参照する。 */
+export const VSCODE_PROFILE_DIR = PROFILE_DIR;
 /** ダウンロード済み reh-web の展開先。バージョンごとのディレクトリーを並べる。 */
 const INSTALL_ROOT = path.join(VSCODE_DIR, 'vscodium');
 
@@ -165,6 +167,16 @@ class VsCodeWebServer {
   /** プロキシが転送先を知るための唯一の入口。未起動なら null。 */
   activePort(): number | null {
     return this.port;
+  }
+
+  /**
+   * 拡張機能 CLI を叩くための実行ファイル情報。未導入なら null。
+   * 起動していなくても、導入さえされていれば CLI は使える。
+   */
+  cliTarget(): { node: string; main: string; dir: string; profileDir: string } | null {
+    const install = this.install ?? resolveInstall();
+    if (!install) return null;
+    return { node: install.node, main: install.main, dir: install.dir, profileDir: PROFILE_DIR };
   }
 
   status(): VsCodeStatus {

@@ -24,6 +24,7 @@ import type {
   TreeEntry,
   TreeStatusEntry,
   UsageSnapshot,
+  VsCodeExtension,
   VsCodeStatus,
 } from './types';
 
@@ -290,4 +291,19 @@ export const api = {
   vscodeStatus: () => request<VsCodeStatus>('/api/vscode/status'),
   vscodeEnsure: () => post<VsCodeStatus>('/api/vscode/ensure', {}),
   vscodeStop: () => post<VsCodeStatus>('/api/vscode/stop', {}),
+  // Remote 設定 (Machine/settings.json)。ユーザー設定はブラウザーの IndexedDB に
+  // あり、サーバーからは触れない — 詳細は server/vscodeProfile.ts の冒頭
+  vscodeSettings: () => request<{ text: string }>('/api/vscode/settings'),
+  saveVscodeSettings: (text: string) => put<{ text: string }>('/api/vscode/settings', { text }),
+  vscodeExtensions: () => request<VsCodeExtension[]>('/api/vscode/extensions'),
+  installVscodeExtension: (id: string) =>
+    post<{ ok: boolean; output: string; extensions: VsCodeExtension[] }>(
+      '/api/vscode/extensions/install',
+      { id },
+    ),
+  uninstallVscodeExtension: (id: string) =>
+    post<{ ok: boolean; output: string; extensions: VsCodeExtension[] }>(
+      '/api/vscode/extensions/uninstall',
+      { id },
+    ),
 };

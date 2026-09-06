@@ -381,3 +381,9 @@ export interface VsCodeStatus {
   basePath: string;
   lastError: string | null;
 }
+
+/** VS Code タイルに導入済みの拡張機能。 */
+export interface VsCodeExtension {
+  id: string;
+  version: string | null;
+}

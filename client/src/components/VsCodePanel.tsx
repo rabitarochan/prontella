@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Settings } from 'lucide-react';
 import { api } from '../api';
 import { useT } from '../i18n';
 import type { VsCodeStatus } from '../types';
+import { useTileBarSlots } from '../layout/tileBarSlots';
 import { attachOverlay, detachOverlay, setOverlayVisible } from './vscode/overlayHost';
 import { vscodeFolderParam } from './vscode/folderParam';
+import VsCodeSettingsModal from './vscode/VsCodeSettingsModal';
 
 /** 準備中に status を追う間隔。ダウンロードの進捗表示がカクつかない程度。 */
 const POLL_MS = 500;
@@ -19,8 +23,20 @@ function formatMB(bytes: number): string {
  * 初回は VSCodium 本体 (圧縮 108MB) のダウンロードが走る。サーバーの ensure は
  * 待たずに着手だけするので、ここで status をポーリングして進捗を出す。
  */
-export default function VsCodePanel({ root, visible }: { root: string; visible: boolean }) {
+export default function VsCodePanel({
+  root,
+  visible,
+  leafId,
+}: {
+  root: string;
+  visible: boolean;
+  leafId: string;
+}) {
   const t = useT();
+  // タイルバーのスロット (TilePane が登録する) へヘッダー UI を差し込む。
+  // TilePane は remount 自由なのでストア経由で受け渡す — FilesTab 等と同じ形。
+  const barSlot = useTileBarSlots((s) => s.slots[leafId] ?? null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<VsCodeStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +103,19 @@ export default function VsCodePanel({ root, visible }: { root: string; visible: 
 
   return (
     <div className="vscode-panel">
+      {visible &&
+        barSlot &&
+        createPortal(
+          <button
+            className="icon-btn"
+            title={t('vscode.openSettings')}
+            onClick={() => setSettingsOpen(true)}
+          >
+            <Settings />
+          </button>,
+          barSlot,
+        )}
+      {settingsOpen && <VsCodeSettingsModal onClose={() => setSettingsOpen(false)} />}
       <div className="vscode-panel-host" ref={hostRef} />
       {!ready && (
         <div className="vscode-panel-state">

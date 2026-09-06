@@ -11,6 +11,7 @@ const CORE_STRINGS = {
   // ---- 共通 ----
   'common.loading': { ja: '読み込み中...', en: 'Loading…' },
   'common.close': { ja: '閉じる', en: 'Close' },
+  'wt.openInEditor': { ja: 'エディターで開く (VS Code)', en: 'Open in editor (VS Code)' },
   'common.cancel': { ja: 'キャンセル', en: 'Cancel' },
   'common.ok': { ja: 'OK', en: 'OK' },
   'common.add': { ja: '追加', en: 'Add' },

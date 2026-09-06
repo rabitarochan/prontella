@@ -287,6 +287,10 @@ export const api = {
     post<{ ok: boolean }>(`/api/agents/resumable/${deckId}/discard`, {}),
   killTerminal: (id: string) => post<{ ok: boolean }>(`/api/terminals/${id}/kill`, {}),
 
+  // ネイティブエディター (既定は VS Code) でワークツリーを開く
+  editorStatus: () => request<{ available: boolean; exe: string | null }>('/api/editor/status'),
+  openInEditor: (dir: string) => post<{ ok: boolean }>('/api/editor/open', { dir }),
+
   // VS Code タイル。ensure は未起動なら起動する (サーバー側で single-flight)
   vscodeStatus: () => request<VsCodeStatus>('/api/vscode/status'),
   vscodeEnsure: () => post<VsCodeStatus>('/api/vscode/ensure', {}),

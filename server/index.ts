@@ -17,6 +17,7 @@ import { AgentSessionManager } from './agentSession.js';
 import { attachEvents } from './sessionEvents.js';
 import { getUsage } from './usage.js';
 import { attachVncBridge, getVncTarget, probeVncTarget } from './vnc.js';
+import { launchEditor, resolveEditor } from './editorLaunch.js';
 import { keepAlive } from './wsKeepAlive.js';
 
 const PORT = Number(process.env.PORT) || 3711;
@@ -1174,6 +1175,46 @@ app.post('/api/fs/copy', asyncHandler(async (req, res) => {
     return;
   }
   res.json({ path: await files.copyEntry(root, rel) });
+}));
+
+// ワークツリーをネイティブのエディター (既定は VS Code) で開く。
+// 設定もキーバインドも拡張機能も本物のプロファイルのまま使えるので、
+// ブラウザー埋め込みでは越えられない壁 (キーバインドの横取り・設定が別世界) が無い。
+app.get('/api/editor/status', (_req, res) => {
+  const target = resolveEditor();
+  res.json({ available: target !== null, exe: target?.exe ?? null });
+});
+
+// 任意のパスを開ける口にしない: 登録済みリポジトリー配下 (= その worktree) に限る。
+app.post('/api/editor/open', asyncHandler(async (req, res) => {
+  const dir = (req.body as { dir?: unknown }).dir;
+  if (typeof dir !== 'string' || !dir) throw new Error('dir が必要です');
+  const abs = path.resolve(dir);
+  if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) {
+    throw new Error('ディレクトリーが存在しません');
+  }
+  const repos = config.loadConfig().repos;
+  const inside = repos.some((r) => {
+    const root = path.resolve(r.path);
+    // 大文字小文字は Windows で揺れるため正規化して比較する
+    const a = process.platform === 'win32' ? abs.toLowerCase() : abs;
+    const b = process.platform === 'win32' ? root.toLowerCase() : root;
+    return a === b || a.startsWith(b + path.sep);
+  });
+  // worktree はリポジトリー外に置けるので、登録リポジトリーの worktree 一覧も見る
+  let allowed = inside;
+  if (!allowed) {
+    for (const r of repos) {
+      const list = await git.listWorktrees(r.path).catch(() => []);
+      if (list.some((w) => path.resolve(w.path) === abs)) {
+        allowed = true;
+        break;
+      }
+    }
+  }
+  if (!allowed) throw new Error('登録済みのリポジトリー / worktree ではありません');
+  launchEditor(abs);
+  res.json({ ok: true });
 }));
 
 // OS のファイルマネージャーで対象を選択状態で開く。abs は safeResolve 済みで root 配下に

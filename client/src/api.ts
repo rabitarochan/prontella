@@ -284,4 +284,7 @@ export const api = {
   discardAgentRecord: (deckId: string) =>
     post<{ ok: boolean }>(`/api/agents/resumable/${deckId}/discard`, {}),
   killTerminal: (id: string) => post<{ ok: boolean }>(`/api/terminals/${id}/kill`, {}),
+  // ネイティブエディター (既定は VS Code) でワークツリーを開く
+  editorStatus: () => request<{ available: boolean; exe: string | null }>('/api/editor/status'),
+  openInEditor: (dir: string) => post<{ ok: boolean }>('/api/editor/open', { dir }),
 };

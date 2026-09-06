@@ -38,6 +38,12 @@ import { terminalTheme } from '../theme/terminalTheme';
  * the server broadcasts (`snapshot` / `resize` carry cols/rows), keeps that
  * grid, and only shrinks its font so the grid fits its box. When the page
  * becomes active again it fits and claims its own size back.
+ *
+ * ただしこの譲り合いは**複数ページで開いたときの調停**でしかない。サーバーが
+ * 配る `viewers` が 1 のとき (= 自分しか見ていない) は譲る相手がいないので、
+ * フォーカスが無くても主張する。これが無いと、フォーカスを外している間に枠が
+ * 変わっても fit.fit() に到達せず、追従側の refitMirror は拡大しないため
+ * 「枠より小さいターミナル」が残る (実測: 920px の枠に 750px の格子)。
  */
 /** PTY への resize 送信の最短間隔。ドラッグ中の追従感と再描画コストの折り合い (VS Code も同程度)。 */
 const RESIZE_SEND_MS = 80;
@@ -78,6 +84,13 @@ export default function XTermView({
   const pageActive = usePageActivity((s) => s.active);
   const pageActiveRef = useRef(pageActive);
   pageActiveRef.current = pageActive;
+  // サーバーが配る「このセッションを見ているソケット数」が 1 のとき true。
+  // PTY の winsize を巡る譲り合いは複数ページで開いたときの調停なので、
+  // 自分しか見ていないなら譲る相手がいない = フォーカスが無くても主張してよい。
+  // これが無いと、フォーカスを外している間に枠が変わっても fit.fit() が走らず、
+  // 追従側の refitMirror は拡大しないため「枠より小さいターミナル」が残る
+  // (単一ページでも起きる。クリックで直るが、それまで縮んで見える)。
+  const soleViewerRef = useRef(false);
   // アクティブへ遷移したときに自分の寸法を取り返すための入口 (mount effect が差す)。
   const claimRef = useRef<(() => void) | null>(null);
   const visibleRef = useRef(visible);
@@ -229,9 +242,12 @@ export default function XTermView({
       (size) => link.send({ type: 'resize', ...size }),
       RESIZE_SEND_MS,
     );
+    /** 自分が PTY のサイズを主張してよいか (アクティブ、または唯一の視聴者)。 */
+    const canClaim = () => pageActiveRef.current || soleViewerRef.current;
+
     // immediate = 再接続直後やアクティブ復帰など、待つと「サイズが追従しない」に見える場面。
     const sendResize = (immediate = false) => {
-      if (!pageActiveRef.current) {
+      if (!canClaim()) {
         scheduleRefit();
         return;
       }
@@ -271,20 +287,33 @@ export default function XTermView({
       // 直接受けられ、JSON 文字列より速い経路になる。
       onBinary: writeOrDefer,
       onMessage: (raw) => {
-        const msg = raw as { type?: string; data?: string; message?: string; cols?: unknown; rows?: unknown };
+        const msg = raw as { type?: string; data?: string; message?: string; cols?: unknown; rows?: unknown; viewers?: unknown; count?: unknown };
         if (msg.type === 'snapshot') {
           // 再アタッチ時はサーバーが追跡中の DEC モード (bracketed paste・
           // マウス) をプレフィックスに付けて送り直す (server/pty.ts の attach)。
           // snapshot は画面全体を作り直すので、保留中の出力は捨ててよい
           discardDeferred();
-          if (!pageActiveRef.current) applyRemoteSize(msg);
+          if (typeof msg.viewers === 'number') soleViewerRef.current = msg.viewers <= 1;
+          if (canClaim()) {
+            // 自分しか見ていない: PTY のサイズは前回の接続が残した値でしかないので、
+            // 鏡写しせず自分の枠に合わせ直す
+            sendResize(true);
+          } else {
+            applyRemoteSize(msg);
+          }
           term.reset();
           term.write(msg.data ?? '');
         } else if (msg.type === 'data') {
           writeOrDefer(msg.data ?? '');
         } else if (msg.type === 'resize') {
-          // 別のページが主張したサイズ。主張側 (アクティブ) は自分の fit が正なので無視する。
-          if (!pageActiveRef.current) applyRemoteSize(msg);
+          // 別のページが主張したサイズ。主張側は自分の fit が正なので無視する。
+          if (!canClaim()) applyRemoteSize(msg);
+        } else if (msg.type === 'viewers') {
+          // 視聴者が自分だけになったら、譲る相手がいないので枠を取り返す
+          const n = typeof msg.count === 'number' ? msg.count : 1;
+          const wasSole = soleViewerRef.current;
+          soleViewerRef.current = n <= 1;
+          if (!wasSole && soleViewerRef.current) sendResize(true);
         } else if (msg.type === 'exit') {
           flushDeferred();
           term.write(`\r\n\x1b[90m${t('term.processExited')}\x1b[0m\r\n`);
@@ -350,13 +379,24 @@ export default function XTermView({
     if (autoFocus) containerRef.current?.querySelector('textarea')?.focus();
   }, [visible, autoFocus]);
 
-  // ページがアクティブになったら自分の寸法を取り返す (枠が可視のときだけ。
-  // display:none 中のターミナルは visible 切替時の ResizeObserver が拾う)。
+  // ページがアクティブになったとき / 表示に戻ったときに自分の寸法を取り返す
+  // (枠が可視のときだけ。枠が 0 の間は主張しても意味がない)。
+  //
+  // 表示復帰を ResizeObserver に任せない。RO は「サイズが変わったとき」しか
+  // 発火せず、document が hidden の間はコールバックの配送自体が止まる (実測)。
+  // 一方 sendResize は非アクティブなページでは fit.fit() を呼ばず、
+  // refitMirror はフォントを縮めるだけで cols/rows を戻さない (拡大しない)。
+  // そのため「隠れている間に追従側へ回り、枠のサイズは変わらないまま再表示」
+  // という順序だと、誰も格子を戻さず枠より小さいターミナルが残ったままになる。
+  // visible は端末ごと (グループのアクティブタブか) に決まるので、同じタイル内でも
+  // 片方だけこの状態に落ちうる。
+  // 同サイズの主張はサーバー側の changed ガードでブロードキャストされないため、
+  // タブ切替のたびに呼んでも TUI の再描画は起きない。
   useEffect(() => {
     if (!pageActive) return;
     const container = containerRef.current;
     if (container && container.offsetWidth > 0 && container.offsetHeight > 0) claimRef.current?.();
-  }, [pageActive]);
+  }, [pageActive, visible]);
 
   // 復帰したら即座に消し、落ちたときだけ 1 秒待ってから出す。
   useEffect(() => {

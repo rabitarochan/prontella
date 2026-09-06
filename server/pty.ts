@@ -372,17 +372,26 @@ export class PtyManager {
         .join('');
       // cols/rows: 非アクティブなページ (フォーカスのないタブ/ウィンドウ) は自分の
       // 寸法を主張せず、この値に格子を合わせて鏡写しする (client XTermView)。
+      // viewers: 見ているソケットの数。譲り合いは複数ページで開いたときの調停なので、
+      // 1 なら譲る相手がいない = フォーカスが無くても自分の枠に合わせてよい
+      // (これが無いと、フォーカスを外している間に枠が変わっても fit が走らず、
+      // 追従側のフォント調整は拡大できないため小さい格子が残る)。
+      // 自分自身をまだ sockets に入れていないので +1 する。
       ws.send(
         JSON.stringify({
           type: 'snapshot',
           data: prefix + screen,
           cols: session.cols,
           rows: session.rows,
+          viewers: session.sockets.size + 1,
         }),
       );
       ws.send(JSON.stringify({ type: 'status', status: session.status }));
       if (queued.length > 0) ws.send(Buffer.from(queued.join(''), 'utf8'), { binary: true });
-      if (!session.exited) session.sockets.add(ws);
+      if (!session.exited) {
+        session.sockets.add(ws);
+        this.broadcastViewers(session);
+      }
     });
     ws.on('message', (raw) => {
       let msg: { type: string; data?: string; cols?: unknown; rows?: unknown };
@@ -407,8 +416,15 @@ export class PtyManager {
     ws.on('close', () => {
       session.sockets.delete(ws);
       session.attaching.delete(queued);
+      // 残った側が「自分しか見ていない」に戻ったことを知る必要がある
+      this.broadcastViewers(session);
     });
     return true;
+  }
+
+  /** 見ているソケットの数を配る。クライアントは 1 なら常に自分の枠を主張してよい。 */
+  private broadcastViewers(session: Session): void {
+    this.broadcast(session, { type: 'viewers', count: session.sockets.size });
   }
 
   /**

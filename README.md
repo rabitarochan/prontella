@@ -1,120 +1,124 @@
 # Prontella
 
-複数の Git リポジトリー × 複数の Worktree 上で動く Claude Code エージェントを一元管理するデッキ。
+A deck for managing Claude Code agents running across multiple Git repositories and multiple worktrees.
 
-Claude Code の起動方法は 2 系統あり、どちらも**サブスクリプション課金のまま**利用できます (API キーは使いません):
+There are two ways to start Claude Code, and **both keep using your subscription** (no API key involved):
 
-- **ターミナル (term ビュー)**: PTY (実ターミナル) 上で対話モードのまま起動。従来どおりの TUI
-- **チャット (chat ビュー)**: Claude Agent SDK で起動し、構造化された独自チャット UI (ストリーミング表示・ツールカード・許可ダイアログ) で操作。
-  認証は利用者自身の `claude /login` (サブスク OAuth) に委ねられ、deck は資格情報に一切触れません。
-  環境変数 `ANTHROPIC_API_KEY` があると SDK がそちらを優先して**従量課金になる**ため、サーバー起動時に警告を出します
+- **Terminal (term view)**: launched in interactive mode on a PTY (a real terminal) — the usual TUI.
+- **Chat (chat view)**: launched through the Claude Agent SDK and driven from a structured chat UI of our own
+  (streaming output, tool cards, permission dialogs).
+  Authentication is left entirely to your own `claude /login` (subscription OAuth); the deck never touches your credentials.
+  If `ANTHROPIC_API_KEY` is set, the SDK prefers it and **you get billed per token**, so the server warns about it at startup.
 
-## アーキテクチャ
+## Architecture
 
-- **サーバー** (`server/`): Node.js + Express + ws + node-pty
-  - Git 操作は `git` CLI を `execFile` で実行 (porcelain 形式をパース)
-  - ターミナルは node-pty で生成し WebSocket (`/ws/term?id=`) で中継
-  - チャットセッションは Claude Agent SDK (`server/agentSession.ts`) で生成し WebSocket (`/ws/agent?id=`) で
-    構造化イベント (text delta / tool_use / 許可要求) を中継。ステータスは SDK メッセージストリームから直接生成
-    (ヒューリスティック不要)。許可プロンプトは `canUseTool` をクライアントの許可ダイアログへ中継して解決
-  - エージェントステータスは 2 系統で検知 (hooks が優先、ヒューリスティックはフォールバック)
-    - **Claude Code hooks**: 「✦ Claude 起動」時に `claude --settings ~/.prontella/hook-settings.json` を注入。
-      各フックイベント (SessionStart / UserPromptSubmit / PreToolUse / PostToolUse / Notification / Stop / SessionEnd) を
-      `~/.prontella/deck-hook.mjs` が `POST /api/agent-events` へ転送する。TUI 文言に依存せず正確・即時
-      (どのセッションかは PTY の環境変数 `PRONTELLA_PORT` / `PRONTELLA_TERM` で識別。
-      ユーザー自身の hooks 設定とはマージされ共存する)
-    - **TUI ヒューリスティック** (手動起動した claude 等のフォールバック): PTY 出力を ANSI 除去して監視
-      - `esc to interrupt` / スピナーグリフ → **実行中 (busy)**
-      - `❯ 1.` 等の許可プロンプト → **確認待ち (waiting)**
-      - スピナーが 3 秒止まる → **待機中 (idle)**
-  - 全セッションのステータス変化は WebSocket (`/ws/events`) でクライアントへ push
-- **クライアント** (`client/`): Vite + React + xterm.js + Zustand
-- 設定は `~/.prontella/config.json` に保存 (登録リポジトリー一覧)
-- Windows / macOS / Linux 対応 (シェルは PowerShell / `$SHELL` を自動選択)
+- **Server** (`server/`): Node.js + Express + ws + node-pty
+  - Git operations run the `git` CLI via `execFile` (parsing porcelain output).
+  - Terminals are created with node-pty and relayed over WebSocket (`/ws/term?id=`).
+  - Chat sessions are created with the Claude Agent SDK (`server/agentSession.ts`) and relayed over WebSocket
+    (`/ws/agent?id=`) as structured events (text deltas, tool_use, permission requests). Status comes straight from
+    the SDK message stream — no heuristics needed. Permission prompts are resolved by forwarding `canUseTool` to the
+    client's permission dialog.
+  - Agent status is detected two ways (hooks win; heuristics are the fallback):
+    - **Claude Code hooks**: launching via "✦ Start Claude" injects `claude --settings ~/.prontella/hook-settings.json`.
+      Each hook event (SessionStart / UserPromptSubmit / PreToolUse / PostToolUse / Notification / Stop / SessionEnd)
+      is forwarded by `~/.prontella/deck-hook.mjs` to `POST /api/agent-events`. Accurate and immediate, with no
+      dependence on TUI wording. (The session is identified by the PTY environment variables `PRONTELLA_PORT` /
+      `PRONTELLA_TERM`. Your own hook settings are merged in and keep working.)
+    - **TUI heuristics** (fallback for a `claude` you started yourself): PTY output is watched with ANSI stripped.
+      - `esc to interrupt` / spinner glyphs → **busy**
+      - a permission prompt such as `❯ 1.` → **waiting**
+      - spinner quiet for 3 seconds → **idle**
+  - Status changes for every session are pushed to clients over WebSocket (`/ws/events`).
+- **Client** (`client/`): Vite + React + xterm.js + Zustand
+- Settings are stored in `~/.prontella/config.json` (the list of registered repositories).
+- Works on Windows / macOS / Linux (the shell is chosen automatically: PowerShell or `$SHELL`).
 
-## 機能
+## Features
 
-- リポジトリー登録とデッキ表示 (全 Worktree のブランチ・変更数・エージェント状態を一覧)
-- Git Worktree の追加 (新規/既存ブランチ) と削除 — 既定パスは `../<repo>.worktrees/<branch>`
-- Worktree ビューは VS Code 風のタイルレイアウト (分割・ドラッグリサイズ・worktree ごとに永続化)。
-  **各タイルが 2 段階のタブを持つ**: タイルヘッダーで ファイル / Git / ターミナル を切り替え (切り替えても状態は保持)
-  - **ファイル**: ファイルツリー (react-arborist + VS Code codicons) + 開いたファイルをタブで切り替える Monaco Editor (Ctrl+S 保存)
-  - **Git**: 3 ペイン構成 — ワークスペース (サイドバー) と ステージ済み|変更 リストは常時表示、
-    リストで選択したファイルの左右 diff だけがタブで開く
-  - **ターミナル**: タイルが所有するターミナルをタブで切り替え (タブにエージェントのステータスドット表示)。
-    別タイルに分割してターミナルを並べることも可能
-- 「Git」タブ: Sourcetree 風レイアウト — 左サイドバー (ファイルステータス / 履歴 / ブランチ / リモート / スタッシュ) + メインビュー
-- Monaco DiffEditor によるサイドバイサイド差分、ステージ/アンステージ (個別・一括)、変更の破棄、コミット (amend 対応)
-- フェッチ / プル / プッシュ (upstream 未設定時は自動で `-u origin`)
-- ブランチタブ: 一覧 (ローカル/リモート)・作成・切り替え・削除・マージ (コンフリクト時はマージ中止ボタン)
-- スタッシュ (保存 / 適用 / pop / 削除、未追跡ファイル含む)
-- Sourcetree 風コミットグラフ (全ブランチの DAG をレーン描画、ブランチ/タグのラベルチップ、`--all` トグル)
-- コミット詳細 (変更ファイル一覧 + ファイルごとの差分。マージコミットは第一親との差分)
-- Worktree ごとのターミナル (複数可) と「✦ Claude 起動」ボタン
-- エージェントステータスのリアルタイム表示 (実行中 / 確認待ち / 待機中 / シェル / 未起動)
-- 通知: エージェントが**確認待ち**になった瞬間 / **実行完了**した時にデスクトップ通知 + チャイム。
-  タブタイトルにも確認待ち件数をバッジ表示 (他のタブで作業していても分かる)
-- 要対応キュー: トップバーのベル 🔔 から確認待ち・待機中のエージェントを経過時間つきで一覧、
-  クリックで該当 Worktree へジャンプ。通知とサウンドの ON/OFF もここで切り替え
+- Register repositories and view them as a deck (branch, change count, and agent status for every worktree).
+- Add Git worktrees (new or existing branch) and remove them — the default path is `../<repo>.worktrees/<branch>`.
+- The worktree view is a VS Code-style tile layout (split, drag to resize, persisted per worktree).
+  **Each tile has two levels of tabs**: the tile header switches between Files / Git / Terminal, and state survives switching.
+  - **Files**: a file tree (react-arborist + VS Code codicons) plus a Monaco editor with a tab per open file (Ctrl+S to save).
+  - **Git**: a three-pane layout — the workspace sidebar and the Staged | Changes lists are always visible, and only the
+    side-by-side diff of the file you select opens as a tab.
+  - **Terminal**: tabs for the terminals the tile owns (each tab shows an agent status dot). You can split into another
+    tile to place terminals side by side.
+- **Open in editor**: opens the worktree in your native VS Code, so your real settings, keybindings, and extensions all
+  apply. Override the command with `PRONTELLA_EDITOR_CMD` (for VSCodium, Cursor, and so on). The button is hidden when
+  no editor is found.
+- Git tab: a Sourcetree-like layout — a left sidebar (file status / history / branches / remotes / stashes) plus the main view.
+- Side-by-side diffs with the Monaco DiffEditor, stage/unstage (one file or all), discarding changes, and commits (amend supported).
+- Fetch / pull / push (pushing adds `-u origin` automatically when no upstream is set).
+- Branches tab: list (local and remote), create, switch, delete, and merge (with an abort button during conflicts).
+- Stashes (save / apply / pop / drop, including untracked files).
+- A Sourcetree-like commit graph (the DAG of all branches drawn in lanes, branch and tag label chips, an `--all` toggle).
+- Commit details (the list of changed files plus a diff per file; merge commits diff against their first parent).
+- Terminals per worktree (as many as you like) and a "✦ Start Claude" button.
+- Live agent status (busy / waiting / idle / shell / not started).
+- Notifications: a desktop notification and a chime the moment an agent starts **waiting** or **finishes**.
+  The tab title also carries a badge with the waiting count, so you notice it while working in another tab.
+- Attention queue: the bell 🔔 in the top bar lists waiting and idle agents with how long they have been that way;
+  click one to jump to its worktree. Notifications and sound are toggled from here too.
 
-## 使い方
+## Usage
 
-### npx で実行 (配布版)
+### Run with npx (published build)
 
 ```sh
-npx prontella            # 起動してブラウザを開く
+npx prontella            # start the server and open a browser
 npx prontella --port 4000 --no-open
 ```
 
-- 要 Node.js 24+ と git。node-pty は Windows / macOS 向けプレビルドバイナリ同梱のためビルドツール不要 (Linux のみ gcc 等が必要)
-- ブラウザを閉じてもサーバーが生きている限りターミナルセッションは維持されます
+- Requires Node.js 24+ and git. node-pty ships prebuilt binaries for Windows and macOS, so no build tools are needed
+  (only Linux needs gcc and friends).
+- Terminal sessions survive closing the browser, as long as the server keeps running.
 
-### リポジトリーから
+### From the repository
 
 ```sh
 npm install
 
-# 開発 (サーバー :3711 + Vite :5173)
-npm run dev          # http://localhost:5173
+# development (server on :3711, Vite on :8110)
+npm run dev          # http://localhost:8110
 
-# 本番相当 (ビルドしてランチャーから起動)
+# production-like (build, then start through the launcher)
 npm run build
 npm start            # = node bin/prontella.js
 ```
 
-### npm への公開
+### Publishing to npm
 
 ```sh
 npm login
-npm publish          # prepublishOnly が自動でビルドします
+npm publish          # prepublishOnly builds for you
 ```
 
-サイドバーの「＋」からリポジトリーのパスを登録 → デッキにカードが並びます。
-Worktree を開き「✦ Claude 起動」でそのディレクトリーをカレントに Claude Code が起動します。
+Register a repository path with the "+" in the sidebar and cards appear on the deck.
+Open a worktree and hit "✦ Start Claude" to launch Claude Code with that directory as the working directory.
 
-## 補足
+## Notes
 
-- サーバーは `127.0.0.1` のみで listen します (ファイル書き込み・PTY を持つため外部公開しないこと)
-- ターミナルと chat セッションは、deck を起動したシェルの環境ではなく **OS で新しく端末を
-  開いたときと同じ環境**で動きます (Windows: Machine/User の環境変数から再構成、
-  macOS/Linux: ログインシェルから取得)。deck をどの端末から起動しても中身が変わらず、
-  `NODE_ENV` や `PORT` のような deck 側の変数が紛れ込みません。ターミナルへ渡したい変数は
-  シェルの export ではなく OS のユーザー環境変数に設定してください
-- Windows のターミナルは `pwsh` (PowerShell 7 以降) があればそれを、無ければ
-  `powershell.exe` (Windows PowerShell 5.1) を起動します。5.1 に同梱の PSReadLine は 2.0.0 で
-  予測入力 (Predictive IntelliSense) が使えないため、既定を PowerShell 7 側に寄せています。
-  明示したい場合は環境変数 `PRONTELLA_SHELL` にコマンド名か絶対パスを指定してください
-  (例: `PRONTELLA_SHELL=powershell.exe`)。指定が見つからないときは警告を出して既定に戻ります
-- Windows のターミナルは、OS 同梱の ConPTY ではなく **node-pty が同梱する新しい ConPTY**
-  (Windows Terminal 1.23 系) を使います。OS 同梱版は子プロセスの VT を一度画面バッファに
-  起こしてから再レンダリングする旧世代で、新しい方は VT を素通しします。実測で大量出力の
-  スクロールが約 1.5 倍速く、最初のバイトが届くまでの時間が 5〜7 倍短くなります
-  (`node scripts/bench/conpty-ab.mjs` で再現できます)。何か問題が出たら
-  `PRONTELLA_CONPTY_DLL=0` で OS 同梱の ConPTY に戻せます。起動に失敗した場合は
-  警告を出して自動的に OS 同梱版へフォールバックします
-- `scripts/ws-debug.mjs` はターミナル出力とステータス検知のデバッグ用ヘルパー
-- 「✦ Claude 起動」以外で起動した claude (ターミナルに手打ちなど) は hooks が入らないため、
-  TUI 文言ヒューリスティックのみで検知します。文言変更で精度が落ちた場合は `server/pty.ts` の
-  `BUSY_RE` / `PROMPT_RE` を調整してください。手動起動でも hooks 検知を効かせたい場合は
-  `claude --settings ~/.prontella/hook-settings.json` で起動すれば OK です
-- デスクトップ通知は初回にベル 🔔 のドロップダウンから許可してください (ブラウザの通知許可が必要)
+- The server listens on `127.0.0.1` only. It writes files and owns PTYs, so do not expose it.
+- Terminals and chat sessions run in **the same environment you would get from a freshly opened terminal**, not in the
+  environment of the shell that started the deck (on Windows it is rebuilt from the Machine and User environment
+  variables; on macOS/Linux it is read from a login shell). This way the deck behaves the same no matter which terminal
+  you start it from, and the deck's own variables such as `NODE_ENV` or `PORT` never leak in. To pass a variable to
+  terminals, set it as an OS user environment variable rather than exporting it in your shell.
+- On Windows the terminal is `pwsh` (PowerShell 7 or later) when available, otherwise `powershell.exe`
+  (Windows PowerShell 5.1). The PSReadLine bundled with 5.1 is 2.0.0 and has no Predictive IntelliSense, which is why
+  the default leans toward PowerShell 7. To pick one explicitly, set `PRONTELLA_SHELL` to a command name or an absolute
+  path (for example `PRONTELLA_SHELL=powershell.exe`). If it cannot be found, the deck warns and falls back to the default.
+- On Windows the terminal uses **the newer ConPTY that ships with node-pty** (the Windows Terminal 1.23 line) rather than
+  the one bundled with the OS. The OS version is the older generation that renders a child's VT into a screen buffer and
+  then re-renders it; the newer one passes VT straight through. Measured, scrolling a large amount of output is about
+  1.5x faster and time-to-first-byte is 5-7x shorter (reproduce it with `node scripts/bench/conpty-ab.mjs`). If anything
+  breaks, `PRONTELLA_CONPTY_DLL=0` goes back to the OS ConPTY. If loading fails, the deck warns and falls back automatically.
+- `scripts/ws-debug.mjs` is a helper for debugging terminal output and status detection.
+- `scripts/term-size-probe.js` collects diagnostics when a terminal renders smaller than its frame (paste it into the
+  browser console; it only reads).
+- A `claude` started any other way (typed into a terminal, say) has no hooks, so it is detected by TUI wording heuristics
+  alone. If a wording change hurts accuracy, adjust `BUSY_RE` / `PROMPT_RE` in `server/pty.ts`. To get hook-based
+  detection for a manual launch, start it with `claude --settings ~/.prontella/hook-settings.json`.
+- Desktop notifications need to be allowed once, from the bell 🔔 dropdown (the browser asks for permission).

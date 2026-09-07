@@ -57,3 +57,33 @@
   PredictionSource:History) → 修正前 (5.1 + 2.0.0 = パラメーター自体が無い) → 修正後
   (pwsh 7.6.5 + 2.4.5 = HistoryAndPlugin/InlineView)。`CLAUDE_DECK_SHELL` による
   opt-out と、解決できない値での警告つきフォールバックも実測。
+
+## 003: Windows で `.cmd` / `.bat` は spawn できない — ラッパーの実体まで降りる (決定則 + 手順 4)
+
+- date: 2026-09-07
+- context: VS Code をタイルに埋め込む作業と、その後に採ったネイティブ起動ボタンの実装で、
+  **同じ壁を 2 回踏んだ**。①VSCodium の `bin/codium-server.cmd` を spawn しようとして失敗
+  ②`PATH` から解決した `code.cmd` を spawn しようとして失敗。どちらも `spawn EINVAL` で、
+  PATH 解決自体は成功しているのに落ちるため、最初は「PATH に無い」と誤読した。
+  既存スキルは `windowsExecutableCandidates()` による PATH/PATHEXT 走査までは扱っていたが、
+  **解決した先が `.cmd` だったときにどうするか**が空白だった。
+- change: 決定則「Windows で `.cmd` / `.bat` は spawn できない」を追加し、
+  「新しい spawn を足すときの手順」に拡張子の確認 (手順 4) を挿入。
+  Why = Node は CVE-2024-27980 対策以降 `shell` 無しでの `.cmd` / `.bat` 起動を拒否する。
+  エラーが `ENOENT` ではなく `EINVAL` なので切り分けが PATH へ逸れる。
+  How = `.cmd` が起動している実体まで自分で降りる。①隣接する `.exe` を候補名で試し、
+  **見つからなければ元の値に戻す** (`nativeAppFor()`) ②確実を期すなら `.cmd` の中身を読む
+  (`codium-server.cmd` は同梱 `node.exe` + `out/server-main.js` の薄いラッパーだったので
+  そちらを直接叩く形にし、ユーザーの Node への依存も外れた)。
+  **代替案「`shell: true` を付ける」は退けた** — cmd.exe に渡す文字列になるので
+  空白入りパス (`C:\Program Files\...`) やブランチ名の記号がクォート事故に化け、
+  引数インジェクションの入口を自分で開くことになる (`pj-git-route` の防壁と同じ理由)。
+  **代替案「`.cmd` のまま PATHEXT の優先順を変えて `.exe` を先に引かせる」も退けた** —
+  `code` は `.exe` を PATH 上に置かない (実体は `<root>/Code.exe` で bin には無い) ため、
+  走査順をいじっても当たらない。配置の知識で解決するしかない。
+- supersedes: —
+- result: ネイティブ起動は実測でウィンドウが目的のフォルダーで開くことを確認 (main にマージ済み、
+  `server/editorLaunch.ts`)。VSCodium 側も `node.exe` 直叩きでサーバー起動に成功
+  (`feat/vscode-tile`)。**検証を「エラーが出ない」にしない**ことも同時に記録した —
+  GUI の fire-and-forget 起動は `child.on('error', () => {})` で握り潰すのが定石なので、
+  EINVAL は画面にもログにも出ないまま「押しても何も起きない」になる。

@@ -106,7 +106,37 @@ PATH が正しく入る。渡す側の env は POSIX 用 allowlist + ブート�
    固有の変数は第 1 引数の extra で足す(extra が勝つ)
 3. `process.env` を直接読んでいないか確認する。読むなら同じ系統の関数から取る
    (例: `pty.ts` の `defaultShell()` は `terminalEnv().SHELL`)
-4. 汚染検証(下記)を回す
+4. **PATH から解決した実行ファイルの拡張子を見る**。`.cmd` / `.bat` ならそのまま
+   spawn できない(下記の決定則)
+5. 汚染検証(下記)を回す
+
+## 決定則: Windows で `.cmd` / `.bat` は spawn できない — ラッパーの実体まで降りる
+
+`PATH` から解決した実行ファイルが `.cmd` / `.bat` だったら、**そのまま `spawn` してはいけない**。
+Node は CVE-2024-27980 (Windows のコマンドインジェクション) 対策以降、`shell` 無しでの
+`.cmd` / `.bat` 起動を拒否し **`spawn EINVAL`** で落ちる。`ENOENT` ではないので
+「PATH に無い」と読み違えやすい。`windowsExecutableCandidates()` の PATHEXT 走査は
+`.CMD` も候補に含むため、**PATH 解決が成功した直後にここで落ちる**。
+
+**`shell: true` で逃げない。** cmd.exe に渡す文字列になるので、`C:\Program Files\...` の
+ような空白入りパスやブランチ名の記号がクォート事故に化ける。ここは引数インジェクションの
+入口でもある(`pj-git-route` の防壁と同じ扱い)。
+
+打ち手: **`.cmd` は薄いラッパーでしかないので、それが起動している実体を自分で解決する。**
+
+- `<root>/bin/code.cmd` → `<root>/Code.exe`。VS Code / VSCodium / Cursor は同じ配置なので
+  候補名を順に `existsSync` で試す。**見つからなければ元の値に戻す** — 解決に失敗しても
+  壊さない (`server/editorLaunch.ts` の `nativeAppFor()` が実装例)
+- `.cmd` の中身を読むのが最も確実。実測した `bin/codium-server.cmd` は
+  `"%ROOT_DIR%\node.exe" "%ROOT_DIR%\out\server-main.js" %RESTVAR%` の薄いラッパーだったので、
+  **同梱 `node.exe` + スクリプトを直接 spawn する**形にした。副次的に、ユーザー側の
+  Node バージョンにも依存しなくなる
+- macOS は逆に `code` が PATH に無い環境があるので `open -a "Visual Studio Code"` を
+  フォールバックに置く。POSIX は `spawn` に PATH 解決を任せてよい(シェルを介さないため)
+
+**検証**: 「押してもエラーが出ない」を合格にしない。GUI アプリの fire-and-forget 起動は
+`detached` + `child.on('error', () => {})` で例外を握り潰すのが定石なので、**EINVAL は
+画面にもログにも出ない**。実際にアプリが目的のフォルダーで開くところまで見る。
 
 ## 決定則: 再構成で失われた「能力」を env で取り返さない
 

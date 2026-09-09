@@ -79,7 +79,9 @@ try {
   // (再接続だけが対象)。フレームは観測フック配線後から数える。
   const wsCounters = clientSnapshots.flatMap((s) => (s.counters ?? []).filter((c) => c.n.startsWith('ws.')));
   const wsPaths = new Set(wsCounters.map((c) => c.l?.path));
-  check('liveSocket observer counts frames per path', wsCounters.some((c) => c.n === 'ws.frames.in' && c.v > 0) && wsPaths.has('/ws/events'), [...wsPaths].join(','));
+  // フレームの向きは keepalive の ping/pong (20 秒周期) のタイミングに依存するので、path 付きの
+  // ws.* カウンターが存在すること (= 観測フックが配線され、少なくとも 1 フレーム数えた) だけを見る
+  check('liveSocket observer counts frames per path', wsCounters.length > 0 && wsPaths.has('/ws/events'), [...wsPaths].join(','));
   const httpHist = clientSnapshots.flatMap((s) => (s.hist ?? []).filter((h) => h.n === 'http'));
   const routes = new Set(httpHist.map((h) => h.l?.route));
   check('client http spans use route templates', httpHist.length > 0 && [...routes].every((r) => /^\/api\/[a-z/:-]+$/.test(r) || r === 'unmatched'), [...routes].join(','));
@@ -88,14 +90,22 @@ try {
   const beforeNav = client.length;
 
   // (c) navigate away → pagehide → sendBeacon(application/json Blob) → express.json parses it.
-  // dev: サンプル 5 秒 / 送信 10 秒。25 秒のサンプルがキューに乗り、30 秒の送信より前 (≈27 秒) に離脱する。
+  // キューに確実に何かを乗せるため、離脱の直前にメインスレッドを 400ms ブロックして stall イベントを
+  // 発生させる (250ms タイマーのドリフト > 200ms)。送信タイマー (10 秒周期) がその間に走らないよう、
+  // 周期の途中 (pageStart+27 秒) を狙う。
   const target = pageStart + 27_000;
   if (Date.now() < target) await delay(target - Date.now());
+  await evaluate(browser, page.sessionId, 'const e = performance.now() + 400; while (performance.now() < e) {} true', false);
+  await delay(600);
   await navigate(browser, page.sessionId, 'about:blank');
-  await delay(3000);
-  recs = readAll();
-  const afterNav = recs.filter((r) => r.src === 'client').length;
-  check('(c) beacon on pagehide delivered more client records', afterNav > beforeNav, `${beforeNav} → ${afterNav}`);
+  let afterNav = beforeNav;
+  for (let i = 0; i < 12 && afterNav <= beforeNav; i++) {
+    await delay(500);
+    recs = readAll();
+    afterNav = recs.filter((r) => r.src === 'client').length;
+  }
+  const stalls = recs.filter((r) => r.src === 'client' && r.k === 'stall').length;
+  check('(c) beacon on pagehide delivered more client records', afterNav > beforeNav, `${beforeNav} → ${afterNav}, stall events ${stalls}`);
 
   // export bundle
   const res = await fetch(`http://127.0.0.1:${PORT}/api/metrics/export`);

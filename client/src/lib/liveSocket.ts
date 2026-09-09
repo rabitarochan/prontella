@@ -47,6 +47,28 @@ const links = new Set<LiveSocketImpl>();
 let wired = false;
 
 /**
+ * メトリクス用の観測フック (client/src/metrics が差し込む)。このモジュールは metrics を
+ * import しない — 単体テストが計測基盤を引き込まないため。path はクエリを剥いだもの
+ * (`/ws/term`) で、セッション id は渡さない。
+ */
+export interface LiveSocketObserver {
+  onPhase(path: string, phase: LinkPhase, attempt: number): void;
+  onFrame(path: string, dir: 'in' | 'out', bytes: number, binary: boolean): void;
+}
+let observer: LiveSocketObserver | null = null;
+export function setLiveSocketObserver(next: LiveSocketObserver | null): void {
+  observer = next;
+}
+/** 生存中のソケット数 (リーク検知の比に使う)。 */
+export function liveSocketCount(): number {
+  return links.size;
+}
+function pathLabel(path: string): string {
+  const q = path.indexOf('?');
+  return q >= 0 ? path.slice(0, q) : path;
+}
+
+/**
  * 復帰契機のグローバル購読 (プロセスで一度だけ)。ソケットごとに登録すると
  * ターミナルの枚数だけリスナーが増えるため、ここで一括して配る。
  */
@@ -70,8 +92,10 @@ class LiveSocketImpl implements LiveSocket {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private pongTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly label: string;
 
   constructor(private opts: LiveSocketOptions) {
+    this.label = pathLabel(opts.path);
     links.add(this);
     wireGlobalProbes();
     this.setPhase('connecting');
@@ -79,6 +103,7 @@ class LiveSocketImpl implements LiveSocket {
   }
 
   private setPhase(phase: LinkPhase): void {
+    observer?.onPhase(this.label, phase, this.attempt);
     this.opts.onPhase?.(phase);
   }
 
@@ -110,12 +135,15 @@ class LiveSocketImpl implements LiveSocket {
       if (event.data instanceof ArrayBuffer) {
         // 何であれ受信は生存の証拠。出力が流れている間は ping を待たずに期限を解く。
         this.clearPongDeadline();
+        observer?.onFrame(this.label, 'in', event.data.byteLength, true);
         this.opts.onBinary?.(new Uint8Array(event.data));
         return;
       }
+      const text = String(event.data);
+      observer?.onFrame(this.label, 'in', text.length, false);
       let msg: Record<string, unknown>;
       try {
-        msg = JSON.parse(String(event.data));
+        msg = JSON.parse(text);
       } catch {
         return;
       }
@@ -218,7 +246,9 @@ class LiveSocketImpl implements LiveSocket {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     try {
-      ws.send(JSON.stringify(payload));
+      const json = JSON.stringify(payload);
+      observer?.onFrame(this.label, 'out', json.length, false);
+      ws.send(json);
       return true;
     } catch {
       return false;

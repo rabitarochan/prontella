@@ -25,9 +25,22 @@ import type {
   TreeStatusEntry,
   UsageSnapshot,
 } from './types';
+import { metrics } from './metrics/core';
+import { routeTemplate } from './metrics/routeTemplate';
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  // メトリクス: ルートはテンプレートに潰す (クエリのパスは記録しない)。off なら分岐 1 つで抜ける。
+  const end = metrics.enabled
+    ? metrics.startSpan('http', { route: routeTemplate(url), method: (init?.method ?? 'GET').toUpperCase() })
+    : null;
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch (err) {
+    end?.({ err: true });
+    throw err;
+  }
+  end?.({ status: res.status });
   const body = (await res.json().catch(() => ({}))) as T & { error?: string };
   if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
   return body;

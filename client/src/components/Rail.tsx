@@ -2,6 +2,7 @@ import { useLang, useT } from '../i18n';
 import { enterMonitor, enterVnc, exitMonitor, exitVnc } from '../layout/mainMode';
 import { useMonitorView } from '../layout/monitorViewStore';
 import { useVncView } from '../layout/vncViewStore';
+import { useMetricsConfig } from '../metrics';
 import { useDeck } from '../store';
 import AttentionBell from './AttentionBell';
 import Sidebar from './Sidebar';
@@ -19,6 +20,7 @@ export default function Rail({ onOpenPalette }: { onOpenPalette: () => void }) {
   const setLang = useLang((s) => s.setLang);
   const vncActive = useVncView((s) => s.active);
   const monitorActive = useMonitorView((s) => s.active);
+  const metricsTier = useMetricsConfig((s) => s.tier);
 
   return (
     <aside className="rail">
@@ -51,6 +53,13 @@ export default function Rail({ onOpenPalette }: { onOpenPalette: () => void }) {
             {lang.toUpperCase()}
           </button>
           <ThemeToggle />
+          {metricsTier !== 'off' && (
+            <span
+              className="rail-metrics-dot"
+              title={t('metrics.railTooltip', { tier: metricsTier })}
+              aria-label={t('metrics.railTooltip', { tier: metricsTier })}
+            />
+          )}
         </span>
       </div>
       <button className="rail-search" title={t('rail.searchTooltip')} onClick={onOpenPalette}>

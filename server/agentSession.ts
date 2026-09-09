@@ -13,6 +13,7 @@ import {
 import type { WebSocket } from 'ws';
 import { terminalEnv } from './childEnv.js';
 import { CONFIG_DIR, writeJsonAtomic } from './config.js';
+import { metrics } from './metrics/index.js';
 import { normalizePath, type AgentStatus, type SessionInfo } from './pty.js';
 import { broadcastEvent, registerSnapshotProvider } from './sessionEvents.js';
 
@@ -256,6 +257,23 @@ interface AgentSession {
   /** 明示 kill = 記録も破棄。サーバー都合の終了では立てない */
   discard: boolean;
   persistTimer: NodeJS.Timeout | null;
+  /** メトリクス: 現在のターンの開始時刻 (prompt 送信) と、最初の stream_event を観測済みか */
+  turnStartedAt: number | null;
+  firstDeltaSeen: boolean;
+}
+
+// SDK メッセージ型別のカウンター (ホットパス: stream_event はトークンごとに届く)
+const SDK_MSG = {
+  system: metrics.counter('sdk.msg', { sdk: 'system' }),
+  stream_event: metrics.counter('sdk.msg', { sdk: 'stream_event' }),
+  assistant: metrics.counter('sdk.msg', { sdk: 'assistant' }),
+  user: metrics.counter('sdk.msg', { sdk: 'user' }),
+  result: metrics.counter('sdk.msg', { sdk: 'result' }),
+  other: metrics.counter('sdk.msg', { sdk: 'other' }),
+} as const;
+
+function countSdkMessage(type: string): void {
+  (SDK_MSG[type as keyof typeof SDK_MSG] ?? SDK_MSG.other).add();
 }
 
 export class AgentSessionManager {
@@ -316,7 +334,10 @@ export class AgentSessionManager {
       sdkSessionId: resume?.sdkSessionId ?? null,
       discard: false,
       persistTimer: null,
+      turnStartedAt: null,
+      firstDeltaSeen: false,
     };
+    metrics.event('session', { kind: 'sdk', open: 1, resumed: Boolean(resume) }, { sid: session.id, cwd: session.cwd });
     if (resume) {
       // 旧レコードは新しい deckId で保存し直すため破棄する
       try {
@@ -429,6 +450,21 @@ export class AgentSessionManager {
     if (!cwd) return all;
     const target = normalizePath(cwd);
     return all.filter((s) => normalizePath(s.cwd) === target);
+  }
+
+  /** メトリクスのスナップショット用 (数値のみ)。 */
+  stats(): Record<string, number> {
+    let sockets = 0;
+    let events = 0;
+    let pending = 0;
+    let subagents = 0;
+    for (const s of this.sessions.values()) {
+      sockets += s.sockets.size;
+      events += s.events.length;
+      pending += s.pending.size;
+      subagents += s.subagents.size;
+    }
+    return { sdkSessions: this.sessions.size, sdkSockets: sockets, sdkEvents: events, sdkPending: pending, sdkSubagents: subagents };
   }
 
   /** 再開できる保存済みセッション (稼働中のものは除く)。 */
@@ -616,6 +652,8 @@ export class AgentSessionManager {
       ts: Date.now(),
     });
     this.setStatus(session, 'busy');
+    session.turnStartedAt = Date.now();
+    session.firstDeltaSeen = false;
     // 画像は base64 の image content block として本文の前に並べる
     const content =
       images && images.length > 0
@@ -766,6 +804,11 @@ export class AgentSessionManager {
         // 予期しない終了 (エラー等): 記録を残して resume 可能にする
         this.persistNow(session);
       }
+      metrics.event(
+        'session',
+        { kind: 'sdk', open: 0, ageMs: Date.now() - session.createdAt, events: session.events.length },
+        { sid: session.id },
+      );
       this.broadcast(session, { type: 'exit' });
       for (const ws of session.sockets) ws.close();
       this.sessions.delete(session.id);
@@ -774,6 +817,7 @@ export class AgentSessionManager {
   }
 
   private handleMessage(session: AgentSession, msg: SDKMessage): void {
+    countSdkMessage(msg.type);
     // subagent 内部のメッセージ (parent_tool_use_id あり) はトランスクリプトには
     // 流さないが、ステータスバーの「何をやっているか」表示のために活動だけ拾う
     if ('parent_tool_use_id' in msg && msg.parent_tool_use_id) {
@@ -815,6 +859,11 @@ export class AgentSessionManager {
         break;
       }
       case 'stream_event': {
+        if (session.turnStartedAt !== null && !session.firstDeltaSeen) {
+          // prompt 送信から最初のストリームイベントまで (体感の「反応の速さ」)
+          session.firstDeltaSeen = true;
+          metrics.recordSpan('sdk.firstDelta', Date.now() - session.turnStartedAt, undefined, { sid: session.id });
+        }
         const event = msg.event as {
           type?: string;
           delta?: { type?: string; text?: string; thinking?: string };
@@ -908,6 +957,13 @@ export class AgentSessionManager {
         break;
       }
       case 'result': {
+        if (session.turnStartedAt !== null) {
+          metrics.recordSpan('sdk.turn', Date.now() - session.turnStartedAt, undefined, {
+            sid: session.id,
+            sdkDurationMs: typeof msg.duration_ms === 'number' ? msg.duration_ms : null,
+          });
+          session.turnStartedAt = null;
+        }
         // contextWindow は modelUsage (モデル別集計) から現在モデルの値を拾う
         const modelUsage = (msg as { modelUsage?: Record<string, { contextWindow?: number; canonicalModel?: string }> }).modelUsage;
         if (modelUsage) {

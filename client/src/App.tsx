@@ -17,6 +17,7 @@ import { useMonitorView } from './layout/monitorViewStore';
 import { useVncView } from './layout/vncViewStore';
 import { usePageActivity, wirePageActivity } from './lib/pageActivity';
 import { createPollLoop } from './lib/pollLoop';
+import { metrics } from './metrics/core';
 
 // 全 worktree の git 状態 (/api/repos) の更新間隔。フォーカスのあるページだけ短く、
 // 別ウィンドウで眺めているだけ (可視だがフォーカスなし) なら長くする。
@@ -72,7 +73,10 @@ export default function App() {
     const loop = createPollLoop({
       // reuseInFlight を渡してよいのはポーラーだけ。変異直後の refresh が進行中の
       // 取得に相乗りすると古い状態を表示する (store.ts の refresh のコメント参照)。
-      run: () => refresh({ reuseInFlight: true }),
+      run: () => {
+        metrics.count('repos.poll.tick', 1, { act: usePageActivity.getState().active ? 'active' : 'inactive' });
+        return refresh({ reuseInFlight: true });
+      },
       delayMs: () => {
         if (document.visibilityState === 'hidden') return 0;
         return usePageActivity.getState().active ? POLL_MS : POLL_UNFOCUSED_MS;

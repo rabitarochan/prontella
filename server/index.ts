@@ -14,9 +14,16 @@ import { buildPartialPatchLines, checkApplyHunksRequest, hashHunk, splitDiffHunk
 import { PtyManager, aggregateStatus, conptyMode } from './pty.js';
 import { ensureHookAssets, warnIfHooksBlocked } from './hooks.js';
 import { AgentSessionManager } from './agentSession.js';
-import { attachEvents } from './sessionEvents.js';
+import { attachEvents, eventsSocketCount } from './sessionEvents.js';
 import { createSnapshotCache, type SnapshotCache } from './reposSnapshot.js';
 import { getUsage } from './usage.js';
+import { initMetrics, metrics, metricsInfo, packageVersion, setMetricsTier, writeHeapSnapshot, writeRecord } from './metrics/index.js';
+import { ingestClientRecords } from './metrics/ingest.js';
+import { buildAnonBundle, bundleFileName } from './metrics/bundle.js';
+import { httpMetricsMiddleware } from './metrics/http.js';
+import { isUserSettableTier } from './metrics/config.js';
+import { instrumentSocket } from './metrics/ws.js';
+import { HOOK_EVENTS } from './hooks.js';
 import { attachVncBridge, getVncTarget, probeVncTarget } from './vnc.js';
 import { launchEditor, resolveEditor } from './editorLaunch.js';
 import { keepAlive } from './wsKeepAlive.js';
@@ -37,6 +44,9 @@ process.on('unhandledRejection', (reason) => {
 });
 
 const app = express();
+// HTTP 計測は body-parser より前 (後ろだと 413 等の body-parser エラーを観測できない)。
+// tier が off のときは next() を呼ぶだけ。
+app.use(httpMetricsMiddleware(metrics));
 app.use(express.json({ limit: '10mb' }));
 // ---- /api/repos スナップショットの鮮度ゲート --------------------------------
 //
@@ -102,6 +112,13 @@ warmTerminalEnv();
 
 const ptyManager = new PtyManager(PORT);
 const agentManager = new AgentSessionManager();
+
+// メトリクス収集 (既定 off)。PRONTELLA_METRICS=dev|anon か config.json の metrics.tier で有効化。
+// off のときはタイマーもファイルも作らない。
+initMetrics({
+  stats: () => ({ ...ptyManager.stats(), ...agentManager.stats(), wsEvents: eventsSocketCount() }),
+  log: (message) => console.log(`[prontella] ${message}`),
+});
 
 // worktree の集約ステータスは PTY と chat (SDK) の両セッションを合算する
 function agentStatusFor(cwd: string) {
@@ -279,8 +296,27 @@ function withAgentStatus(skeleton: ReposSkeleton) {
 }
 
 app.get('/api/repos', asyncHandler(async (_req, res) => {
-  res.json(withAgentStatus(await reposSnapshot.get(computeReposSkeleton)));
+  const result = withAgentStatus(await reposSnapshot.get(computeReposSkeleton));
+  // ムダな処理の指標: ポーリングに対して応答が前回と同一だった割合 (agent 合成後の本体で比較する。
+  // スナップショットキャッシュに乗った分も「同一」として現れる)。ハッシュは応答 JSON の FNV-1a で、
+  // 内容は残さない。
+  if (metrics.enabled) {
+    const hash = fnv1a(JSON.stringify(result));
+    metrics.count(hash === lastReposHash ? 'repos.poll.unchanged' : 'repos.poll.changed');
+    lastReposHash = hash;
+  }
+  res.json(result);
 }));
+
+let lastReposHash = 0;
+function fnv1a(text: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h;
+}
 
 app.post('/api/repos', asyncHandler(async (req, res) => {
   const repoPath = String(req.body.path ?? '');
@@ -1444,7 +1480,12 @@ app.post('/api/agent-events', asyncHandler(async (req, res) => {
   // 旧 deck-hook.mjs 形式 (body.term) も当面受ける。設定 JSON はデッキ起動時に
   // 上書きされるが、更新前に起動していた claude プロセスが残ることがある。
   const term = header || (typeof body.term === 'string' ? body.term : '');
-  if (term) ptyManager.applyHookEvent(term, body);
+  const hookName = body.hook_event_name;
+  metrics.count('hook.event', 1, {
+    hook: typeof hookName === 'string' && (HOOK_EVENTS as readonly string[]).includes(hookName) ? hookName : 'Notification',
+  });
+  const applied = term ? ptyManager.applyHookEvent(term, body) : false;
+  if (!applied) metrics.count('hook.unknownTerm');
   res.json({});
 }));
 
@@ -1472,6 +1513,69 @@ app.get('/api/vnc/status', asyncHandler(async (_req, res) => {
   const { reachable } = await probeVncTarget();
   res.json({ host: target.host, port: target.port, reachable });
 }));
+
+// ---- metrics -----------------------------------------------------------------
+
+app.get('/api/metrics/config', (_req, res) => {
+  res.json(metricsInfo());
+});
+
+// tier は 'off' | 'anon' のみ受け付ける (dev は環境変数か config.json の手編集でのみ)。
+// 型は typeof で絞り、配列・オブジェクトは 400。環境変数で固定されているときは 409。
+app.put('/api/metrics/config', (req, res) => {
+  const body: unknown = req.body;
+  const tier = body !== null && typeof body === 'object' ? (body as { tier?: unknown }).tier : undefined;
+  if (!isUserSettableTier(tier)) {
+    res.status(400).json({ error: "tier は 'off' か 'anon' を指定してください" });
+    return;
+  }
+  if (metricsInfo().locked) {
+    res.status(409).json({ error: 'メトリクスの tier は環境変数 PRONTELLA_METRICS で固定されています' });
+    return;
+  }
+  res.json(setMetricsTier(tier));
+});
+
+// dev 層のみ: V8 ヒープスナップショット。off/anon では存在しないルートとして 404。
+app.post('/api/metrics/heap-snapshot', asyncHandler(async (_req, res) => {
+  if (metricsInfo().tier !== 'dev') {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  res.json(await writeHeapSnapshot());
+}));
+
+// 匿名メトリクスの診断バンドル。現在の tier に関係なく、溜まっている anon データを gzip で返す。
+app.get('/api/metrics/export', (_req, res) => {
+  const { gz, files, lines } = buildAnonBundle(packageVersion());
+  res.setHeader('Content-Type', 'application/gzip');
+  res.setHeader('Content-Disposition', `attachment; filename="${bundleFileName()}"`);
+  res.setHeader('X-Prontella-Metrics-Files', String(files));
+  res.setHeader('X-Prontella-Metrics-Lines', String(lines));
+  res.send(gz);
+});
+
+// クライアントのバッチ。サーバーの tier が off なら読まずに捨てる (204)。本文の上限・件数・
+// 形は metrics/ingest.ts が検査し、内容の匿名性はサーバーの tier で writeRecord が判定する。
+app.post('/api/metrics/ingest', (req, res) => {
+  if (metricsInfo().tier === 'off') {
+    res.status(204).end();
+    return;
+  }
+  const lengthHeader = req.get('content-length');
+  const contentLength = lengthHeader !== undefined && /^\d+$/.test(lengthHeader) ? Number(lengthHeader) : null;
+  const result = ingestClientRecords(req.body, contentLength, (record) => writeRecord(record, 'client'));
+  if (result.rejected === 'too-large') {
+    res.status(413).json({ error: 'metrics batch too large' });
+    return;
+  }
+  if (result.rejected !== null) {
+    res.status(400).json({ error: `invalid metrics batch (${result.rejected})` });
+    return;
+  }
+  if (result.dropped > 0) metrics.count('metrics.self.ingestDropped', result.dropped);
+  res.json({ accepted: result.accepted, dropped: result.dropped });
+});
 
 // ---- static client (production build) ---------------------------------------
 
@@ -1509,6 +1613,7 @@ server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url ?? '', 'http://localhost');
   if (url.pathname === '/ws/term') {
     wss.handleUpgrade(req, socket, head, (ws) => {
+      instrumentSocket(metrics, ws, '/ws/term');
       const id = url.searchParams.get('id') ?? '';
       if (!ptyManager.attach(id, ws)) {
         ws.send(JSON.stringify({ type: 'error', message: 'ターミナルが見つかりません' }));
@@ -1519,6 +1624,7 @@ server.on('upgrade', (req, socket, head) => {
     });
   } else if (url.pathname === '/ws/agent') {
     wss.handleUpgrade(req, socket, head, (ws) => {
+      instrumentSocket(metrics, ws, '/ws/agent');
       const id = url.searchParams.get('id') ?? '';
       if (!agentManager.attach(id, ws)) {
         ws.send(JSON.stringify({ type: 'error', message: 'セッションが見つかりません' }));
@@ -1531,6 +1637,7 @@ server.on('upgrade', (req, socket, head) => {
     // 全セッションのステータス変化を購読するグローバルチャンネル (通知・要対応キュー用)。
     // PTY と chat の両マネージャーが sessionEvents 経由で流す
     wss.handleUpgrade(req, socket, head, (ws) => {
+      instrumentSocket(metrics, ws, '/ws/events');
       attachEvents(ws);
       keepAlive(ws);
     });
@@ -1538,7 +1645,10 @@ server.on('upgrade', (req, socket, head) => {
     // noVNC → ホストの VNC サーバーへの生 RFB ブリッジ。接続先はサーバー側設定のみで
     // 決まり、クエリパラメーターは意図的に読まない (読んだらオープンプロキシになる)。
     // 生バイナリを流すので keepAlive は付けない (JSON の pong が RFB を壊す)。
-    wss.handleUpgrade(req, socket, head, (ws) => attachVncBridge(ws));
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      instrumentSocket(metrics, ws, '/ws/vnc');
+      attachVncBridge(ws);
+    });
   } else {
     socket.destroy();
   }

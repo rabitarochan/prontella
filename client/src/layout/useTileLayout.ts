@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useT } from '../i18n';
 import type { TerminalSession } from '../types';
 import { pruneEditorState, TILE_LAYOUT_STORAGE_PREFIX } from '../editorState';
+import { reportTileCount } from '../metrics/core';
 import { pruneTermState } from './termState';
 import {
   adoptSessions,
@@ -102,6 +103,7 @@ export function useTileLayout(
     // タイル閉鎖やレイアウト初期化(reset)で消えた leaf の editorState /
     // termState スライスを回収する
     const liveLeafIds = layout.root ? leaves(layout.root).map((l) => l.id) : [];
+    reportTileCount(liveLeafIds.length);
     pruneEditorState(worktreePath, liveLeafIds);
     pruneTermState(worktreePath, liveLeafIds);
   }, [worktreePath, layout]);

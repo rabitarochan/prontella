@@ -9,7 +9,22 @@ import { openLiveSocket, type LinkPhase } from '../lib/liveSocket';
 import { BASE_FONT_SIZE } from '../lib/mirrorFont';
 import { clearMirrorScale, refitMirror } from '../lib/mirrorFontDom';
 import { usePageActivity, wirePageActivity } from '../lib/pageActivity';
+import { metrics } from '../metrics/core';
 import { useTheme } from '../theme/themeStore';
+
+// メトリクスのカウンターハンドル (モジュールで 1 回取得、ホットパスでは整数加算のみ)。
+// 「ムダな処理」の候補: 隠れタブへの出力 (hiddenBytes)、保留したまま捨てた出力 (deferredDiscarded)。
+const XM = {
+  visibleBytes: metrics.counter('xterm.write.visible.bytes'),
+  hiddenBytes: metrics.counter('xterm.write.hidden.bytes'),
+  deferredOverflow: metrics.counter('xterm.deferred.overflow'),
+  deferredDiscarded: metrics.counter('xterm.deferred.discarded.bytes'),
+  resizeFit: metrics.counter('resize.fit'),
+  resizeSent: metrics.counter('resize.sent'),
+  webglCreated: metrics.counter('webgl.created'),
+  webglDisposed: metrics.counter('webgl.disposed'),
+  webglLost: metrics.counter('webgl.lost'),
+};
 import { terminalTheme } from '../theme/terminalTheme';
 
 /**
@@ -110,9 +125,13 @@ export default function XTermView({
       let webgl: WebglAddon | undefined;
       try {
         webgl = new WebglAddon();
-        webgl.onContextLoss(() => disposeWebgl());
+        webgl.onContextLoss(() => {
+          XM.webglLost.add();
+          disposeWebgl();
+        });
         term.loadAddon(webgl);
         webglRef.current = webgl;
+        XM.webglCreated.add();
       } catch {
         // WebGL unavailable, or activation failed partway through — release
         // whatever got partially set up (xterm's AddonManager guards against
@@ -142,6 +161,7 @@ export default function XTermView({
     const webgl = webglRef.current;
     if (!webgl) return;
     webglRef.current = null;
+    XM.webglDisposed.add();
     // WebglAddon.dispose() switches xterm back to the DOM renderer and
     // removes its own <canvas> from the DOM, but it does NOT lose the WebGL
     // context — left alone, the context is only reclaimed by GC, which is
@@ -218,17 +238,32 @@ export default function XTermView({
       for (const chunk of items) term.write(chunk);
     };
     const discardDeferred = () => {
+      // 保留したまま snapshot で置き換えられた出力 = 受信も保留も丸ごとムダだった量
+      XM.deferredDiscarded.add(deferredBytes);
       deferred = [];
       deferredBytes = 0;
     };
+    let writeSeq = 0;
     const writeOrDefer = (chunk: string | Uint8Array) => {
       if (visibleRef.current) {
+        XM.visibleBytes.add(chunk.length);
+        // dev 層のみ 1/16 サンプルで write → パース完了までの時間を測る (コールバックは
+        // xterm の WriteBuffer が処理し終えた時点で呼ばれる)
+        if (metrics.includeAttrs && (writeSeq++ & 15) === 0) {
+          const t0 = performance.now();
+          term.write(chunk, () => metrics.recordSpan('xterm.write', performance.now() - t0));
+          return;
+        }
         term.write(chunk);
         return;
       }
+      XM.hiddenBytes.add(chunk.length);
       deferred.push(chunk);
       deferredBytes += chunk.length;
-      if (deferredBytes > DEFER_MAX_BYTES) flushDeferred();
+      if (deferredBytes > DEFER_MAX_BYTES) {
+        XM.deferredOverflow.add();
+        flushDeferred();
+      }
     };
     flushDeferredRef.current = flushDeferred;
 
@@ -239,7 +274,10 @@ export default function XTermView({
     // 描き直してカクつく。ローカルの fit は即時 (格子は追従する) で、PTY へ届ける
     // 値だけ最新のものを RESIZE_SEND_MS ごとに 1 回にする。
     const resizeThrottle = createLatestThrottle<{ cols: number; rows: number }>(
-      (size) => link.send({ type: 'resize', ...size }),
+      (size) => {
+        XM.resizeSent.add();
+        link.send({ type: 'resize', ...size });
+      },
       RESIZE_SEND_MS,
     );
     /** 自分が PTY のサイズを主張してよいか (アクティブ、または唯一の視聴者)。 */
@@ -258,6 +296,7 @@ export default function XTermView({
       } catch {
         return;
       }
+      XM.resizeFit.add();
       resizeThrottle.push({ cols: term.cols, rows: term.rows });
       if (immediate) resizeThrottle.flush();
     };

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api } from './api';
+import { metrics } from './metrics/core';
 import { applyRepoMeta, isActive } from './repoSections';
 import type { Repo } from './types';
 
@@ -174,8 +175,10 @@ export const useDeck = create<DeckState>((set, get) => ({
         // error からの回復 (error !== null) や初回ロードはこの条件に当たらないため
         // 従来どおり set() を通る。
         if (reposJson === lastReposJson && current.loaded && current.error === null && restoreAttempted) {
+          metrics.count('repos.refresh.unchanged');
           return;
         }
+        metrics.count('repos.refresh.changed');
         lastReposJson = reposJson;
         set((state) => {
           if (!restoreAttempted && state.selected === null) {

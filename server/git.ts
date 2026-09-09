@@ -4,6 +4,8 @@ import path from 'node:path';
 import { childEnv } from './childEnv.js';
 import { decodeBuffer, decodeWithEncoding } from './encoding.js';
 import { MAX_FILE_SIZE } from './files.js';
+import { metrics } from './metrics/index.js';
+import { gitSubcommand } from './metrics/names.js';
 
 const US = '\x1f'; // unit separator for log formatting
 
@@ -16,6 +18,8 @@ export function runGit(
   timeoutMs = 30_000,
   extraEnv?: NodeJS.ProcessEnv,
 ): Promise<string> {
+  // メトリクス: ラベルはサブコマンド (語彙内) のみ。cwd と引数は dev 層でだけ slow イベントに付く。
+  const endSpan = metrics.startSpan('git', { git: gitSubcommand(args) }, { cwd, args: args.join(' ') });
   return new Promise((resolve, reject) => {
     execFile(
       'git',
@@ -33,8 +37,13 @@ export function runGit(
         env: { ...childEnv({ GIT_TERMINAL_PROMPT: '0' }), ...extraEnv },
       },
       (err, stdout, stderr) => {
-        if (err) reject(new Error(stderr.trim() || err.message));
-        else resolve(stdout);
+        if (err) {
+          endSpan({ err: true });
+          reject(new Error(stderr.trim() || err.message));
+        } else {
+          endSpan();
+          resolve(stdout);
+        }
       },
     );
   });
@@ -47,6 +56,7 @@ export function runGit(
  * (パッチにバイナリを含み得るため UTF-8 前提の execFile は使わない)。
  */
 export function runGitInput(cwd: string, args: string[], input: Buffer, timeoutMs = 30_000): Promise<Buffer> {
+  const endSpan = metrics.startSpan('git', { git: gitSubcommand(args) }, { cwd, args: args.join(' '), stdin: input.length });
   return new Promise((resolve, reject) => {
     const child = spawn('git', ['-c', 'core.quotepath=false', ...args], {
       cwd,
@@ -58,10 +68,13 @@ export function runGitInput(cwd: string, args: string[], input: Buffer, timeoutM
     const stderrChunks: Buffer[] = [];
     let totalBytes = 0;
     let settled = false;
+    // 決着点は 4 つ (タイムアウト / 出力上限 / spawn エラー / close)。settled を立てる場所で 1 回だけ終える。
+    const finish = (err: boolean) => endSpan(err ? { err: true } : undefined);
 
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
+      finish(true);
       child.kill();
       reject(new Error(`git ${args.join(' ')} がタイムアウトしました (${timeoutMs}ms)`));
     }, timeoutMs);
@@ -73,6 +86,7 @@ export function runGitInput(cwd: string, args: string[], input: Buffer, timeoutM
       totalBytes += chunk.length;
       if (totalBytes > MAX_OUTPUT_BYTES) {
         settled = true;
+        finish(true);
         clearTimeout(timer);
         child.kill();
         reject(new Error(`git ${args.join(' ')} の出力が上限 (${MAX_OUTPUT_BYTES} バイト) を超えました`));
@@ -88,12 +102,14 @@ export function runGitInput(cwd: string, args: string[], input: Buffer, timeoutM
     child.on('error', (err) => {
       if (settled) return;
       settled = true;
+      finish(true);
       clearTimeout(timer);
       reject(err);
     });
     child.on('close', (code) => {
       if (settled) return;
       settled = true;
+      finish(code !== 0);
       clearTimeout(timer);
       if (code !== 0) {
         reject(new Error(Buffer.concat(stderrChunks).toString('utf8').trim() || `git exited with code ${code}`));

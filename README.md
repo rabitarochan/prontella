@@ -115,6 +115,14 @@ Open a worktree and hit "✦ Start Claude" to launch Claude Code with that direc
   then re-renders it; the newer one passes VT straight through. Measured, scrolling a large amount of output is about
   1.5x faster and time-to-first-byte is 5-7x shorter (reproduce it with `node scripts/bench/conpty-ab.mjs`). If anything
   breaks, `PRONTELLA_CONPTY_DLL=0` goes back to the OS ConPTY. If loading fails, the deck warns and falls back automatically.
+- **Metrics are off by default and never leave your machine.** Performance metrics can be collected in two tiers:
+  `anon` (no paths, repository or branch names, session titles, prompts, or user/host names; every string must match a
+  closed vocabulary or the record is dropped) and `dev` (verbose, for working on Prontella itself). Turn `anon` on from
+  the command palette ("Diagnostics: enable anonymous metrics"), or set `PRONTELLA_METRICS=anon|dev|off` (the variable
+  locks the setting). Records are JSONL under `~/.prontella/metrics/<tier>/`, capped at 20 MB (anon) / 200 MB (dev).
+  `node scripts/metrics/summarize.mjs --tier dev` renders a Markdown report (slow operations, memory trend, hangs,
+  wasted work); "Diagnostics: download anonymous metrics bundle" (or `node scripts/metrics/export.mjs`) produces a
+  gzip you can attach to a bug report. In the `dev` tier, `POST /api/metrics/heap-snapshot` writes a V8 heap snapshot.
 - `scripts/ws-debug.mjs` is a helper for debugging terminal output and status detection.
 - `scripts/term-size-probe.js` collects diagnostics when a terminal renders smaller than its frame (paste it into the
   browser console; it only reads).

@@ -12,6 +12,7 @@ import { api } from '../api';
 import { useT, type StringKey } from '../i18n';
 import { useSubmitKey, type SubmitKeyMode } from '../layout/submitKeyStore';
 import { openLiveSocket, type LinkPhase, type LiveSocket } from '../lib/liveSocket';
+import { metrics } from '../metrics/core';
 import { highlightInto } from '../markdown/highlight';
 import { renderMarkdownToFragment } from '../markdown/render';
 import type {
@@ -30,6 +31,11 @@ import StatusBadge from './StatusBadge';
 // TUI の Shift+Tab 巡回と同じ並び。bypassPermissions / dontAsk は UI に出さない
 // (server/agentSession.ts の UI_MODES と手動同期)
 const MODES = ['default', 'acceptEdits', 'plan', 'auto'] as const;
+/** メトリクスのラベル語彙 (server/metrics/names.ts の CHAT_MESSAGE_TYPES と同じ)。語彙外は 'other'。 */
+const CHAT_MSG_TYPES: ReadonlySet<string> = new Set([
+  'snapshot', 'event', 'delta', 'status', 'meta', 'commands', 'models', 'stats', 'subagents',
+  'permission_request', 'exit', 'error',
+]);
 type UiMode = (typeof MODES)[number];
 const MODE_LABEL_KEY: Record<UiMode, StringKey> = {
   default: 'chat.modeManual',
@@ -567,6 +573,8 @@ export default function ChatView({
           canAlways?: boolean;
           message?: string;
         };
+        metrics.count('chat.msg', 1, { msg: CHAT_MSG_TYPES.has(msg.type ?? '') ? (msg.type as string) : 'other' });
+        if (msg.type === 'delta' && typeof msg.text === 'string') metrics.count('chat.delta.chars', msg.text.length);
         switch (msg.type) {
           case 'snapshot':
             setEvents(msg.events ?? []);

@@ -67,6 +67,13 @@ let statsProvider: () => Partial<AppStats> = () => ({});
 let exitHookInstalled = false;
 let log: (message: string) => void = () => {};
 
+let cachedVersion: string | null | undefined;
+/** package.json の version (dev: server/metrics → ../../、配布: dist/server/metrics → ../../../)。 */
+export function packageVersion(): string | null {
+  if (cachedVersion === undefined) cachedVersion = readPackageVersion();
+  return cachedVersion;
+}
+
 function readPackageVersion(): string | null {
   const here = path.dirname(fileURLToPath(import.meta.url));
   for (const candidate of [path.resolve(here, '../../package.json'), path.resolve(here, '../../../package.json')]) {
@@ -81,7 +88,7 @@ function readPackageVersion(): string | null {
 }
 
 function metaRecord(tier: MetricsTier): MetricRecord {
-  const version = readPackageVersion();
+  const version = packageVersion();
   return {
     k: 'meta',
     t: Date.now(),

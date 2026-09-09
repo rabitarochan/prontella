@@ -8,6 +8,10 @@ import './theme/monacoTheme';
 import './index.css';
 import '@xterm/xterm/css/xterm.css';
 import '@vscode/codicons/dist/codicon.css';
+import { bootMetrics } from './metrics';
+
+// メトリクス収集 (サーバーの tier が権威。off なら何も入らない)。描画を待たせない。
+void bootMetrics();
 
 // /m 以下はスマホ向けの限定ページ (エージェントパネルのみ)。デスクトップ版の
 // 挙動には一切影響させないため、ルーターは使わず入口でパス判定だけ行う。

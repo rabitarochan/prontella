@@ -8,6 +8,7 @@ import { enterMonitor, enterVnc, exitMonitor, exitVnc } from '../layout/mainMode
 import { useMonitorView } from '../layout/monitorViewStore';
 import { getActiveWorktreeCommands } from '../layout/worktreeCommands';
 import { useVncView } from '../layout/vncViewStore';
+import { setMetricsTier, useMetricsConfig } from '../metrics';
 import { isActive } from '../repoSections';
 import { getActiveFilesTab, type FilesTabHandle } from '../search/registry';
 import { useDeck } from '../store';
@@ -45,6 +46,8 @@ export default function CommandPalette({
   const setThemeMode = useTheme((s) => s.setMode);
   const vncActive = useVncView((s) => s.active);
   const monitorActive = useMonitorView((s) => s.active);
+  const metricsTier = useMetricsConfig((s) => s.tier);
+  const metricsLocked = useMetricsConfig((s) => s.locked);
   const { repos, select } = useDeck();
   const sessions = useAgentEvents((s) => s.sessions);
   const [query, setQuery] = useState('');
@@ -128,6 +131,29 @@ export default function CommandPalette({
       icon: 'vm',
       label: t('vnc.paletteToggle'),
       run: () => (vncActive ? exitVnc() : enterVnc()),
+    });
+    // メトリクス (既定 off・ローカル保存のみ)。dev は API から切り替えられないので、
+    // 環境変数で固定されているときは状態表示だけの項目にする。
+    all.push({
+      id: 'cmd:metrics:toggle',
+      section: 'commands',
+      icon: 'pulse',
+      label: metricsLocked
+        ? t('metrics.paletteLocked', { tier: metricsTier })
+        : metricsTier === 'off'
+          ? t('metrics.paletteEnable')
+          : t('metrics.paletteDisable'),
+      run: () => {
+        if (metricsLocked) return;
+        void setMetricsTier(metricsTier === 'off' ? 'anon' : 'off').catch(() => {});
+      },
+    });
+    all.push({
+      id: 'cmd:metrics:export',
+      section: 'commands',
+      icon: 'cloud-download',
+      label: t('metrics.paletteExport'),
+      run: () => window.open('/api/metrics/export', '_blank'),
     });
     all.push(
       {

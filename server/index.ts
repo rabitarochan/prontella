@@ -16,7 +16,9 @@ import { ensureHookAssets, warnIfHooksBlocked } from './hooks.js';
 import { AgentSessionManager } from './agentSession.js';
 import { attachEvents, eventsSocketCount } from './sessionEvents.js';
 import { getUsage } from './usage.js';
-import { initMetrics, metrics, metricsInfo, setMetricsTier } from './metrics/index.js';
+import { initMetrics, metrics, metricsInfo, packageVersion, setMetricsTier, writeRecord } from './metrics/index.js';
+import { ingestClientRecords } from './metrics/ingest.js';
+import { buildAnonBundle, bundleFileName } from './metrics/bundle.js';
 import { httpMetricsMiddleware } from './metrics/http.js';
 import { isUserSettableTier } from './metrics/config.js';
 import { instrumentSocket } from './metrics/ws.js';
@@ -199,8 +201,25 @@ app.get('/api/repos', asyncHandler(async (_req, res) => {
       }
     }),
   );
+  // ムダな処理の指標: クライアントの 4/15 秒ポーリングに対して、応答が前回と同一だった割合。
+  // ハッシュは応答 JSON の FNV-1a (内容は残さない)。
+  if (metrics.enabled) {
+    const hash = fnv1a(JSON.stringify(result));
+    metrics.count(hash === lastReposHash ? 'repos.poll.unchanged' : 'repos.poll.changed');
+    lastReposHash = hash;
+  }
   res.json(result);
 }));
+
+let lastReposHash = 0;
+function fnv1a(text: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h;
+}
 
 app.post('/api/repos', asyncHandler(async (req, res) => {
   const repoPath = String(req.body.path ?? '');
@@ -1418,6 +1437,38 @@ app.put('/api/metrics/config', (req, res) => {
     return;
   }
   res.json(setMetricsTier(tier));
+});
+
+// 匿名メトリクスの診断バンドル。現在の tier に関係なく、溜まっている anon データを gzip で返す。
+app.get('/api/metrics/export', (_req, res) => {
+  const { gz, files, lines } = buildAnonBundle(packageVersion());
+  res.setHeader('Content-Type', 'application/gzip');
+  res.setHeader('Content-Disposition', `attachment; filename="${bundleFileName()}"`);
+  res.setHeader('X-Prontella-Metrics-Files', String(files));
+  res.setHeader('X-Prontella-Metrics-Lines', String(lines));
+  res.send(gz);
+});
+
+// クライアントのバッチ。サーバーの tier が off なら読まずに捨てる (204)。本文の上限・件数・
+// 形は metrics/ingest.ts が検査し、内容の匿名性はサーバーの tier で writeRecord が判定する。
+app.post('/api/metrics/ingest', (req, res) => {
+  if (metricsInfo().tier === 'off') {
+    res.status(204).end();
+    return;
+  }
+  const lengthHeader = req.get('content-length');
+  const contentLength = lengthHeader !== undefined && /^\d+$/.test(lengthHeader) ? Number(lengthHeader) : null;
+  const result = ingestClientRecords(req.body, contentLength, (record) => writeRecord(record, 'client'));
+  if (result.rejected === 'too-large') {
+    res.status(413).json({ error: 'metrics batch too large' });
+    return;
+  }
+  if (result.rejected !== null) {
+    res.status(400).json({ error: `invalid metrics batch (${result.rejected})` });
+    return;
+  }
+  if (result.dropped > 0) metrics.count('metrics.self.ingestDropped', result.dropped);
+  res.json({ accepted: result.accepted, dropped: result.dropped });
 });
 
 // ---- static client (production build) ---------------------------------------

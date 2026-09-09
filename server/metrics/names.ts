@@ -214,6 +214,8 @@ export const ROUTES = [
   '/api/git/unstage',
   '/api/git/unstage-all',
   '/api/metrics/config',
+  '/api/metrics/export',
+  '/api/metrics/ingest',
   '/api/repos',
   '/api/repos/:id',
   '/api/repos/:id/branches',

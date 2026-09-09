@@ -16,6 +16,7 @@ import WorktreeView from './components/WorktreeView';
 import { useMonitorView } from './layout/monitorViewStore';
 import { useVncView } from './layout/vncViewStore';
 import { usePageActivity, wirePageActivity } from './lib/pageActivity';
+import { metrics } from './metrics/core';
 
 // 全 worktree の git 状態 (/api/repos) の更新間隔。フォーカスのあるページだけ短く、
 // 別ウィンドウで眺めているだけ (可視だがフォーカスなし) なら長くする。エージェントの
@@ -75,7 +76,10 @@ export default function App() {
       currentMs = ms;
       if (ms === 0) return;
       if (kick) void refresh();
-      timer = setInterval(() => void refresh(), ms);
+      timer = setInterval(() => {
+        metrics.count('repos.poll.tick', 1, { act: usePageActivity.getState().active ? 'active' : 'inactive' });
+        void refresh();
+      }, ms);
     };
     apply(false);
     const onVisibilityChange = () => apply(document.visibilityState !== 'hidden');

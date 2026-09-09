@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { findWorktree, resolveAndSelect, useAgentEvents, waitingSessions } from '../agentEvents';
+import { findWorktree, resolveAndSelect, useAgentEvents, useAgentStatusResolver, waitingSessions } from '../agentEvents';
 import { formatElapsed, useLang, useT } from '../i18n';
 import { isActive, isArchived } from '../repoSections';
 import { useDeck } from '../store';
@@ -21,6 +21,8 @@ export default function DeckView() {
   const lang = useLang((s) => s.lang);
   const { repos, select } = useDeck();
   const sessions = useAgentEvents((s) => s.sessions);
+  // エージェント状態は /ws/events のプッシュから導出する (ポーリング間隔に依存させない)。
+  const agentStatus = useAgentStatusResolver();
   const waiting = useMemo(() => waitingSessions(sessions), [sessions]);
   const [now, setNow] = useState(() => Date.now());
   // AttentionBell と同じ 10 秒 tick。確認待ちが無い間は止める
@@ -30,7 +32,7 @@ export default function DeckView() {
     const timer = setInterval(() => setNow(Date.now()), 10_000);
     return () => clearInterval(timer);
   }, [waiting.length]);
-  // ベルの D5 と同じ理由でグローバルエラーバーは使わない (4 秒ポーリング成功で消えるため)
+  // ベルの D5 と同じ理由でグローバルエラーバーは使わない (ポーリング成功で消えるため)
   const [locateError, setLocateError] = useState<string | null>(null);
 
   const pick = async (session: TerminalSession) => {
@@ -89,12 +91,12 @@ export default function DeckView() {
           return (
             <div
               key={wt.path}
-              className={`card card-${wt.agent.status}`}
+              className={`card card-${agentStatus(wt)}`}
               onClick={() => select({ repoId: repo.id, worktreePath: wt.path })}
             >
               <div className="card-head">
                 <span className="card-repo">{repo.name}</span>
-                <StatusBadge status={wt.agent.status} />
+                <StatusBadge status={agentStatus(wt)} />
               </div>
               <div className="card-branch">
                 {repo.gitMode === 'none'

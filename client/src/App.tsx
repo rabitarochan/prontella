@@ -16,11 +16,19 @@ import WorktreeView from './components/WorktreeView';
 import { useMonitorView } from './layout/monitorViewStore';
 import { useVncView } from './layout/vncViewStore';
 import { usePageActivity, wirePageActivity } from './lib/pageActivity';
+import { createPollLoop } from './lib/pollLoop';
 
 // 全 worktree の git 状態 (/api/repos) の更新間隔。フォーカスのあるページだけ短く、
-// 別ウィンドウで眺めているだけ (可視だがフォーカスなし) なら長くする。エージェントの
-// ステータスは /ws/events のプッシュで届くので、ここが遅くても「確認待ち」の検知は遅れない。
-const POLL_MS = 4000;
+// 別ウィンドウで眺めているだけ (可視だがフォーカスなし) なら長くする。
+//
+// このポーリングが運ぶのは **git の情報だけ** (ahead/behind・変更件数)。エージェントの
+// ステータスはベルもタブタイトルもデッキ/サイドバーのバッジも /ws/events のプッシュから
+// 導出しているので (agentStatus.ts)、ここが遅くても状態表示は一切遅れない。
+//
+// 4 秒だった間隔を 12 秒にしたのは、1 回の /api/repos が git を約 40 プロセス起動して
+// 3〜9 秒かかり、4 秒間隔ではバックグラウンドの git がほぼ常時回りっぱなしになるため。
+// 自分の操作の反映は変異直後の refresh() が即時に行うので、体感は落ちない。
+const POLL_MS = 12_000;
 const POLL_UNFOCUSED_MS = 15_000;
 
 export default function App() {
@@ -53,38 +61,33 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void refresh();
     connectAgentEvents();
     wirePageActivity();
-    let timer: ReturnType<typeof setInterval> | null = null;
-    let currentMs = 0;
-    // 非表示 = 停止 (サーバー側の git.exe 起動を抑える) / 可視かつフォーカスあり = 4 秒 /
-    // 可視だがフォーカスなし (別ウィンドウで眺めているだけ) = 15 秒。
-    const desiredMs = () => {
-      if (document.visibilityState === 'hidden') return 0;
-      return usePageActivity.getState().active ? POLL_MS : POLL_UNFOCUSED_MS;
-    };
-    // kick = 間隔が変わる契機で即 1 回 refresh する (再表示・フォーカス復帰)。
-    const apply = (kick: boolean) => {
-      const ms = desiredMs();
-      if (ms === currentMs) return;
-      if (timer !== null) {
-        clearInterval(timer);
-        timer = null;
-      }
-      currentMs = ms;
-      if (ms === 0) return;
-      if (kick) void refresh();
-      timer = setInterval(() => void refresh(), ms);
-    };
-    apply(false);
-    const onVisibilityChange = () => apply(document.visibilityState !== 'hidden');
+    // 非表示 = 停止 (サーバー側の git.exe 起動を抑える) / 可視かつフォーカスあり = POLL_MS /
+    // 可視だがフォーカスなし (別ウィンドウで眺めているだけ) = POLL_UNFOCUSED_MS。
+    //
+    // setInterval ではなくチェーン式 (前回が終わってから次を予約) にしているのは、
+    // /api/repos が間隔より長くかかると setInterval ではリクエストが無限に積み上がり、
+    // 実測で in-flight 21 本・1 リクエスト 40 秒超まで悪化したため (lib/pollLoop.ts 参照)。
+    const loop = createPollLoop({
+      // reuseInFlight を渡してよいのはポーラーだけ。変異直後の refresh が進行中の
+      // 取得に相乗りすると古い状態を表示する (store.ts の refresh のコメント参照)。
+      run: () => refresh({ reuseInFlight: true }),
+      delayMs: () => {
+        if (document.visibilityState === 'hidden') return 0;
+        return usePageActivity.getState().active ? POLL_MS : POLL_UNFOCUSED_MS;
+      },
+    });
+    // start() が初回の即時 refresh を兼ねる。
+    loop.start();
+    // apply(kick) = 間隔が変わる契機。kick=true で即 1 回 refresh する (再表示・フォーカス復帰)。
+    const onVisibilityChange = () => loop.apply(document.visibilityState !== 'hidden');
     document.addEventListener('visibilitychange', onVisibilityChange);
-    const unsubscribe = usePageActivity.subscribe((s) => apply(s.active));
+    const unsubscribe = usePageActivity.subscribe((s) => loop.apply(s.active));
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       unsubscribe();
-      if (timer !== null) clearInterval(timer);
+      loop.stop();
     };
   }, [refresh]);
 

@@ -508,6 +508,34 @@ export class PtyManager {
     return all.filter((s) => normalizePath(s.cwd) === target);
   }
 
+  /** メトリクスのスナップショット用 (数値のみ)。 */
+  stats(): Record<string, number> {
+    let sockets = 0;
+    let mirrorLines = 0;
+    let mirrorLinesMax = 0;
+    let pendingChars = 0;
+    let pendingCharsMax = 0;
+    let attaching = 0;
+    for (const s of this.sessions.values()) {
+      sockets += s.sockets.size;
+      const lines = s.mirror.stats().lines;
+      mirrorLines += lines;
+      if (lines > mirrorLinesMax) mirrorLinesMax = lines;
+      pendingChars += s.pending.length;
+      if (s.pending.length > pendingCharsMax) pendingCharsMax = s.pending.length;
+      attaching += s.attaching.size;
+    }
+    return {
+      ptySessions: this.sessions.size,
+      ptySockets: sockets,
+      mirrorLines,
+      mirrorLinesMax,
+      pendingChars,
+      pendingCharsMax,
+      attaching,
+    };
+  }
+
   /** Aggregate agent status for a worktree path: most attention-needing wins. */
   statusFor(cwd: string): { status: AgentStatus | 'none'; terminalId: string | null } {
     return aggregateStatus(this.list(cwd));

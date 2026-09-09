@@ -28,6 +28,11 @@ export function attachEvents(ws: WebSocket): void {
   ws.on('error', () => sockets.delete(ws));
 }
 
+/** メトリクス用: 購読中のソケット数。 */
+export function eventsSocketCount(): number {
+  return sockets.size;
+}
+
 export function broadcastEvent(msg: object): void {
   const payload = JSON.stringify(msg);
   for (const ws of sockets) {

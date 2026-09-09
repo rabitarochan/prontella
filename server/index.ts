@@ -14,8 +14,11 @@ import { buildPartialPatchLines, checkApplyHunksRequest, hashHunk, splitDiffHunk
 import { PtyManager, aggregateStatus, conptyMode } from './pty.js';
 import { ensureHookAssets, warnIfHooksBlocked } from './hooks.js';
 import { AgentSessionManager } from './agentSession.js';
-import { attachEvents } from './sessionEvents.js';
+import { attachEvents, eventsSocketCount } from './sessionEvents.js';
 import { getUsage } from './usage.js';
+import { initMetrics, metrics, metricsInfo, setMetricsTier } from './metrics/index.js';
+import { httpMetricsMiddleware } from './metrics/http.js';
+import { isUserSettableTier } from './metrics/config.js';
 import { attachVncBridge, getVncTarget, probeVncTarget } from './vnc.js';
 import { launchEditor, resolveEditor } from './editorLaunch.js';
 import { keepAlive } from './wsKeepAlive.js';
@@ -36,6 +39,9 @@ process.on('unhandledRejection', (reason) => {
 });
 
 const app = express();
+// HTTP 計測は body-parser より前 (後ろだと 413 等の body-parser エラーを観測できない)。
+// tier が off のときは next() を呼ぶだけ。
+app.use(httpMetricsMiddleware(metrics));
 app.use(express.json({ limit: '10mb' }));
 
 // ターミナル/Agent SDK に渡す「OS 既定の環境」をここで一度だけ構築してキャッシュする。
@@ -45,6 +51,13 @@ warmTerminalEnv();
 
 const ptyManager = new PtyManager(PORT);
 const agentManager = new AgentSessionManager();
+
+// メトリクス収集 (既定 off)。PRONTELLA_METRICS=dev|anon か config.json の metrics.tier で有効化。
+// off のときはタイマーもファイルも作らない。
+initMetrics({
+  stats: () => ({ ...ptyManager.stats(), ...agentManager.stats(), wsEvents: eventsSocketCount() }),
+  log: (message) => console.log(`[prontella] ${message}`),
+});
 
 // worktree の集約ステータスは PTY と chat (SDK) の両セッションを合算する
 function agentStatusFor(cwd: string) {
@@ -1377,6 +1390,28 @@ app.get('/api/vnc/status', asyncHandler(async (_req, res) => {
   const { reachable } = await probeVncTarget();
   res.json({ host: target.host, port: target.port, reachable });
 }));
+
+// ---- metrics -----------------------------------------------------------------
+
+app.get('/api/metrics/config', (_req, res) => {
+  res.json(metricsInfo());
+});
+
+// tier は 'off' | 'anon' のみ受け付ける (dev は環境変数か config.json の手編集でのみ)。
+// 型は typeof で絞り、配列・オブジェクトは 400。環境変数で固定されているときは 409。
+app.put('/api/metrics/config', (req, res) => {
+  const body: unknown = req.body;
+  const tier = body !== null && typeof body === 'object' ? (body as { tier?: unknown }).tier : undefined;
+  if (!isUserSettableTier(tier)) {
+    res.status(400).json({ error: "tier は 'off' か 'anon' を指定してください" });
+    return;
+  }
+  if (metricsInfo().locked) {
+    res.status(409).json({ error: 'メトリクスの tier は環境変数 PRONTELLA_METRICS で固定されています' });
+    return;
+  }
+  res.json(setMetricsTier(tier));
+});
 
 // ---- static client (production build) ---------------------------------------
 

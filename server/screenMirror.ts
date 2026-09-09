@@ -57,6 +57,11 @@ export class ScreenMirror {
     return this.term.rows;
   }
 
+  /** メトリクス用: 保持している行数 (画面 + スクロールバック)。dispose 後は 0。 */
+  stats(): { lines: number } {
+    return { lines: this.disposed ? 0 : this.term.buffer.active.length };
+  }
+
   /**
    * ここまでに write した出力を処理し終えた時点の画面を ANSI 文字列で返す
    * (コールバック)。dispose 済みなら呼ばれない。

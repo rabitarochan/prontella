@@ -431,6 +431,21 @@ export class AgentSessionManager {
     return all.filter((s) => normalizePath(s.cwd) === target);
   }
 
+  /** メトリクスのスナップショット用 (数値のみ)。 */
+  stats(): Record<string, number> {
+    let sockets = 0;
+    let events = 0;
+    let pending = 0;
+    let subagents = 0;
+    for (const s of this.sessions.values()) {
+      sockets += s.sockets.size;
+      events += s.events.length;
+      pending += s.pending.size;
+      subagents += s.subagents.size;
+    }
+    return { sdkSessions: this.sessions.size, sdkSockets: sockets, sdkEvents: events, sdkPending: pending, sdkSubagents: subagents };
+  }
+
   /** 再開できる保存済みセッション (稼働中のものは除く)。 */
   resumable(cwd?: string): { deckId: string; title: string; cwd: string; savedAt: number }[] {
     let files: string[] = [];

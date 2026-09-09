@@ -31,7 +31,7 @@ const HOOK_TIMEOUT_SEC = 3;
 // 購読するイベント。◎ = 2026-08-30 に実測で発火を確認、△ = 未計測。
 // △ のイベントは「状態を保つ/精緻化する」向きにしかマッピングしていないので、
 // 発火しなくても届いても、誤って実行中を解除することはない (claudeHookState.ts 参照)。
-const HOOK_EVENTS = [
+export const HOOK_EVENTS = [
   'SessionStart', //        △ print モードでは出ない。対話起動でのみ出る
   'UserPromptSubmit', //    ◎
   'PreToolUse', //          ◎ (agent_id 付きで子のツールも届く)

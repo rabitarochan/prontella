@@ -19,6 +19,8 @@ import { getUsage } from './usage.js';
 import { initMetrics, metrics, metricsInfo, setMetricsTier } from './metrics/index.js';
 import { httpMetricsMiddleware } from './metrics/http.js';
 import { isUserSettableTier } from './metrics/config.js';
+import { instrumentSocket } from './metrics/ws.js';
+import { HOOK_EVENTS } from './hooks.js';
 import { attachVncBridge, getVncTarget, probeVncTarget } from './vnc.js';
 import { launchEditor, resolveEditor } from './editorLaunch.js';
 import { keepAlive } from './wsKeepAlive.js';
@@ -1362,7 +1364,12 @@ app.post('/api/agent-events', asyncHandler(async (req, res) => {
   // 旧 deck-hook.mjs 形式 (body.term) も当面受ける。設定 JSON はデッキ起動時に
   // 上書きされるが、更新前に起動していた claude プロセスが残ることがある。
   const term = header || (typeof body.term === 'string' ? body.term : '');
-  if (term) ptyManager.applyHookEvent(term, body);
+  const hookName = body.hook_event_name;
+  metrics.count('hook.event', 1, {
+    hook: typeof hookName === 'string' && (HOOK_EVENTS as readonly string[]).includes(hookName) ? hookName : 'Notification',
+  });
+  const applied = term ? ptyManager.applyHookEvent(term, body) : false;
+  if (!applied) metrics.count('hook.unknownTerm');
   res.json({});
 }));
 
@@ -1449,6 +1456,7 @@ server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url ?? '', 'http://localhost');
   if (url.pathname === '/ws/term') {
     wss.handleUpgrade(req, socket, head, (ws) => {
+      instrumentSocket(metrics, ws, '/ws/term');
       const id = url.searchParams.get('id') ?? '';
       if (!ptyManager.attach(id, ws)) {
         ws.send(JSON.stringify({ type: 'error', message: 'ターミナルが見つかりません' }));
@@ -1459,6 +1467,7 @@ server.on('upgrade', (req, socket, head) => {
     });
   } else if (url.pathname === '/ws/agent') {
     wss.handleUpgrade(req, socket, head, (ws) => {
+      instrumentSocket(metrics, ws, '/ws/agent');
       const id = url.searchParams.get('id') ?? '';
       if (!agentManager.attach(id, ws)) {
         ws.send(JSON.stringify({ type: 'error', message: 'セッションが見つかりません' }));
@@ -1471,6 +1480,7 @@ server.on('upgrade', (req, socket, head) => {
     // 全セッションのステータス変化を購読するグローバルチャンネル (通知・要対応キュー用)。
     // PTY と chat の両マネージャーが sessionEvents 経由で流す
     wss.handleUpgrade(req, socket, head, (ws) => {
+      instrumentSocket(metrics, ws, '/ws/events');
       attachEvents(ws);
       keepAlive(ws);
     });
@@ -1478,7 +1488,10 @@ server.on('upgrade', (req, socket, head) => {
     // noVNC → ホストの VNC サーバーへの生 RFB ブリッジ。接続先はサーバー側設定のみで
     // 決まり、クエリパラメーターは意図的に読まない (読んだらオープンプロキシになる)。
     // 生バイナリを流すので keepAlive は付けない (JSON の pong が RFB を壊す)。
-    wss.handleUpgrade(req, socket, head, (ws) => attachVncBridge(ws));
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      instrumentSocket(metrics, ws, '/ws/vnc');
+      attachVncBridge(ws);
+    });
   } else {
     socket.destroy();
   }

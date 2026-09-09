@@ -30,7 +30,7 @@ export const METRIC_NAMES = [
   'git',
   // ---- server: PTY
   'pty.chunk',
-  'pty.chunk.bytes',
+  'pty.chunk.chars',
   'pty.flush',
   'pty.flush.bytes',
   'pty.flush.unwatched.bytes',

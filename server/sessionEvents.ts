@@ -1,5 +1,9 @@
 import type { WebSocket } from 'ws';
+import { metrics } from './metrics/index.js';
 import type { SessionInfo } from './pty.js';
+
+const broadcasts = metrics.counter('events.broadcast');
+const noSubscribers = metrics.counter('events.noSubscribers');
 
 /**
  * /ws/events のグローバルチャンネル。PTY セッションと SDK (chat) セッションの
@@ -34,6 +38,12 @@ export function eventsSocketCount(): number {
 }
 
 export function broadcastEvent(msg: object): void {
+  broadcasts.add();
+  if (sockets.size === 0) {
+    // 購読者がいないのに JSON 化するのはムダ (集計の「ムダな処理」項目)
+    noSubscribers.add();
+    return;
+  }
   const payload = JSON.stringify(msg);
   for (const ws of sockets) {
     if (ws.readyState === ws.OPEN) ws.send(payload);

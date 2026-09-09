@@ -15,6 +15,7 @@ import {
   type HookSubagent,
 } from './claudeHookState.js';
 import { claudeCommand } from './hooks.js';
+import { metrics } from './metrics/index.js';
 import { broadcastEvent, registerSnapshotProvider } from './sessionEvents.js';
 import { ScreenMirror } from './screenMirror.js';
 import { parseResizeMessage } from './termProtocol.js';
@@ -253,6 +254,23 @@ export function conptyMode(): string | null {
     : 'node-pty 同梱 conpty.dll (Windows Terminal 1.23 系)';
 }
 
+// ホットパス (onData / flush) 用のカウンターハンドル。取得は起動時 1 回、以後は整数加算のみ。
+const M = {
+  chunk: metrics.counter('pty.chunk'),
+  chunkChars: metrics.counter('pty.chunk.chars'),
+  flush: metrics.counter('pty.flush'),
+  flushBytes: metrics.counter('pty.flush.bytes'),
+  flushUnwatched: metrics.counter('pty.flush.unwatched.bytes'),
+  flushBurst: metrics.counter('pty.flush.burst'),
+  sendSkipped: metrics.counter('ws.send.skipped', { path: '/ws/term' }),
+  resizeChanged: metrics.counter('pty.resize.changed'),
+  resizeNoop: metrics.counter('pty.resize.noop'),
+  activityPublish: metrics.counter('activity.publish'),
+  activityCoalesced: metrics.counter('activity.coalesced'),
+  attach: metrics.counter('pty.attach'),
+  reattach: metrics.counter('pty.reattach'),
+};
+
 export class PtyManager {
   private sessions = new Map<string, Session>();
   private timer: NodeJS.Timeout;
@@ -322,9 +340,11 @@ export class PtyManager {
     };
     this.sessions.set(session.id, session);
 
+    metrics.event('session', { kind: 'pty', open: 1 }, { sid: id, cwd: session.cwd, claude: run === 'claude' });
     proc.onData((data) => this.onData(session, data));
     proc.onExit(() => {
       this.flush(session);
+      metrics.event('session', { kind: 'pty', open: 0, ageMs: Date.now() - session.createdAt }, { sid: id });
       if (session.activityTimer) clearTimeout(session.activityTimer);
       session.activityTimer = null;
       session.exited = true;
@@ -358,9 +378,13 @@ export class PtyManager {
     // 出力を「snapshot 経由で 1 回」か「後送り経由で 1 回」のどちらかで必ず 1 回
     // だけ受け取る (snapshot 前の pending はここで flush して既存ソケットへ流す)。
     this.flush(session);
+    M.attach.add();
+    if (session.sockets.size > 0) M.reattach.add();
     const queued: string[] = [];
     session.attaching.add(queued);
+    const endSnapshot = metrics.startSpan('mirror.snapshot');
     session.mirror.snapshot((screen) => {
+      endSnapshot({ bytes: screen.length, lines: session.mirror.stats().lines });
       session.attaching.delete(queued);
       if (ws.readyState !== ws.OPEN) return;
       // serialize は DEC モードも書き出すが、追跡中のモード (bracketed paste・マウス・
@@ -435,6 +459,8 @@ export class PtyManager {
    */
   private resizePty(session: Session, cols: number, rows: number): void {
     const changed = cols !== session.cols || rows !== session.rows;
+    if (changed) M.resizeChanged.add();
+    else M.resizeNoop.add();
     session.cols = cols;
     session.rows = rows;
     session.mirror.resize(cols, rows);
@@ -485,10 +511,14 @@ export class PtyManager {
    * まで増えるので、短い窓で合体させてから 1 回だけ流す。
    */
   private scheduleActivityPublish(session: Session): void {
-    if (session.activityTimer) return;
+    if (session.activityTimer) {
+      M.activityCoalesced.add();
+      return;
+    }
     session.activityTimer = setTimeout(() => {
       session.activityTimer = null;
       if (session.exited) return;
+      M.activityPublish.add();
       broadcastEvent({ type: 'session', session: this.toInfo(session) });
     }, ACTIVITY_FLUSH_MS);
     session.activityTimer.unref();
@@ -557,11 +587,14 @@ export class PtyManager {
       data = data.replace(DA1_QUERY, '');
     }
 
+    M.chunk.add();
+    M.chunkChars.add(data.length);
     session.mirror.write(data);
     for (const queue of session.attaching) queue.push(data);
     session.pending += data;
     if (session.pending.length > MAX_PENDING) {
       // Burst guard: flush immediately rather than let pending (and latency) grow unbounded.
+      M.flushBurst.add();
       this.flush(session);
     } else if (!session.flushTimer) {
       session.flushTimer = setTimeout(() => this.flush(session), FLUSH_MS);
@@ -667,7 +700,12 @@ export class PtyManager {
       // PTY 出力はバイナリフレームで流す。JSON だと制御文字のエスケープ (ESC 等) で
       // 膨らみ、クライアントは文字列をパースしてから xterm へ渡すが、バイナリなら
       // xterm が UTF-8 のバイト列を直接受ける (client/src/lib/liveSocket.ts の onBinary)。
-      this.broadcastBinary(session, Buffer.from(session.pending, 'utf8'));
+      const payload = Buffer.from(session.pending, 'utf8');
+      M.flush.add();
+      M.flushBytes.add(payload.length);
+      // 誰も見ていないセッションの出力をエンコードして流す分は「ムダな処理」の候補
+      if (session.sockets.size === 0) M.flushUnwatched.add(payload.length);
+      this.broadcastBinary(session, payload);
       session.pending = '';
     }
   }
@@ -676,12 +714,14 @@ export class PtyManager {
     const payload = JSON.stringify(msg);
     for (const ws of session.sockets) {
       if (ws.readyState === ws.OPEN) ws.send(payload);
+      else M.sendSkipped.add();
     }
   }
 
   private broadcastBinary(session: Session, payload: Buffer): void {
     for (const ws of session.sockets) {
       if (ws.readyState === ws.OPEN) ws.send(payload, { binary: true });
+      else M.sendSkipped.add();
     }
   }
 

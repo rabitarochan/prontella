@@ -1,14 +1,16 @@
+import { useCallback } from 'react';
 import { create } from 'zustand';
 import { t } from './i18n';
 import { chime, desktopNotify } from './notify';
 import { openLiveSocket } from './lib/liveSocket';
+import { resolveAgentStatus } from './agentStatus';
 import { locateSession, normPath } from './sessionLocate';
 import { useDeck } from './store';
-import type { ActiveRepo, TerminalSession, Worktree } from './types';
+import type { ActiveRepo, AgentStatus, TerminalSession, Worktree } from './types';
 
 // /ws/events を購読して全セッションのステータスを保持し、
 // 「要対応」への遷移 (→waiting, busy→idle) で通知を出すストア。
-// デッキ一覧の 4 秒ポーリングとは独立に、遷移を即座に受け取る。
+// デッキ一覧のポーリング (/api/repos) とは独立に、遷移を即座に受け取る。
 
 // ヒューリスティック検知の揺れ (スピナー停止→再開) による busy/idle の
 // フリップで完了通知が乱発しないよう、idle が少し続いてから通知する。
@@ -70,6 +72,31 @@ export function sessionLabel(session: TerminalSession): string {
   if (location?.kind === 'worktree') return `${location.repo.name} / ${location.worktree.branch ?? '(detached)'}`;
   if (location?.kind === 'archived') return t('notify.archivedSessionLabel', { name: location.repo.name });
   return session.cwd.split(/[\\/]/).pop() || session.cwd;
+}
+
+/** resolveAgentStatus に渡せる最小の worktree 形。Worktree と ArchivedRepo 由来の
+ *  疑似エントリーの両方を受けられるよう、必要な 2 フィールドだけを要求する。 */
+type AgentStatusTarget = { path: string; agent: { status: AgentStatus } };
+
+/**
+ * worktree のエージェント状態を /ws/events 由来で解決する関数を返す。
+ *
+ * map ループの中でフックは呼べないため、コンポーネントで 1 回だけ呼び、
+ * 得た関数を各行に適用する使い方をする。
+ */
+export function useAgentStatusResolver(): (worktree: AgentStatusTarget) => AgentStatus {
+  const sessions = useAgentEvents((s) => s.sessions);
+  const loaded = useAgentEvents((s) => s.loaded);
+  return useCallback(
+    (worktree: AgentStatusTarget) => resolveAgentStatus(sessions, loaded, worktree),
+    [sessions, loaded],
+  );
+}
+
+/** レンダー外 (イベントハンドラー) から同じ規則で引くとき用。 */
+export function agentStatusOf(worktree: AgentStatusTarget): AgentStatus {
+  const { sessions, loaded } = useAgentEvents.getState();
+  return resolveAgentStatus(sessions, loaded, worktree);
 }
 
 export function waitingSessions(sessions: Record<string, TerminalSession>): TerminalSession[] {

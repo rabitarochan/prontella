@@ -1,6 +1,6 @@
 import { useEffect, useState, type DragEvent, type MouseEvent } from 'react';
 import { api } from '../api';
-import { loadPref, savePref } from '../agentEvents';
+import { agentStatusOf, loadPref, savePref, useAgentStatusResolver } from '../agentEvents';
 import { useT } from '../i18n';
 import { beginRepoMutation, useDeck } from '../store';
 import { removeWorktreeLocalState } from '../editorState';
@@ -35,6 +35,8 @@ export default function Sidebar() {
   } = useDeck();
   const { confirm: confirmDialog, dialog } = useConfirm();
   const { prompt: promptDialog, dialog: promptDlg } = usePrompt();
+  // エージェント状態は /ws/events のプッシュから導出する (ポーリング間隔に依存させない)。
+  const agentStatus = useAgentStatusResolver();
   const [worktreeTarget, setWorktreeTarget] = useState<ActiveRepo | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(() => loadPref(ARCHIVED_OPEN_KEY, false));
   const [menu, setMenu] = useState<{ x: number; y: number; repo: Repo } | null>(null);
@@ -181,9 +183,10 @@ export default function Sidebar() {
   // (setRepoArchived 自体は成功しても needsRefresh を返さない — アーカイブへの変換はローカルの
   // applyRepoMeta だけで完結する — ので、選択解除後の再描画のために refresh() をここで呼ぶ)。
   const archiveRepo = async (repo: ActiveRepo) => {
-    const hasBusyAgent = repo.worktrees.some(
-      (wt) => wt.agent.status === 'busy' || wt.agent.status === 'waiting',
-    );
+    const hasBusyAgent = repo.worktrees.some((wt) => {
+      const status = agentStatusOf(wt);
+      return status === 'busy' || status === 'waiting';
+    });
     if (hasBusyAgent) {
       const ok = await confirmDialog({
         title: t('sidebar.archiveRepoTitle'),
@@ -314,7 +317,7 @@ export default function Sidebar() {
             onClick={() => select({ repoId: repo.id, worktreePath: wt.path })}
             title={wt.path}
           >
-            <StatusBadge status={wt.agent.status} dot />
+            <StatusBadge status={agentStatus(wt)} dot />
             <span className="wt-branch">
               {repo.gitMode === 'none'
                 ? t('common.noGit')

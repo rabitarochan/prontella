@@ -16,7 +16,7 @@ import { ensureHookAssets, warnIfHooksBlocked } from './hooks.js';
 import { AgentSessionManager } from './agentSession.js';
 import { attachEvents, eventsSocketCount } from './sessionEvents.js';
 import { getUsage } from './usage.js';
-import { initMetrics, metrics, metricsInfo, packageVersion, setMetricsTier, writeRecord } from './metrics/index.js';
+import { initMetrics, metrics, metricsInfo, packageVersion, setMetricsTier, writeHeapSnapshot, writeRecord } from './metrics/index.js';
 import { ingestClientRecords } from './metrics/ingest.js';
 import { buildAnonBundle, bundleFileName } from './metrics/bundle.js';
 import { httpMetricsMiddleware } from './metrics/http.js';
@@ -1438,6 +1438,15 @@ app.put('/api/metrics/config', (req, res) => {
   }
   res.json(setMetricsTier(tier));
 });
+
+// dev 層のみ: V8 ヒープスナップショット。off/anon では存在しないルートとして 404。
+app.post('/api/metrics/heap-snapshot', asyncHandler(async (_req, res) => {
+  if (metricsInfo().tier !== 'dev') {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  res.json(await writeHeapSnapshot());
+}));
 
 // 匿名メトリクスの診断バンドル。現在の tier に関係なく、溜まっている anon データを gzip で返す。
 app.get('/api/metrics/export', (_req, res) => {

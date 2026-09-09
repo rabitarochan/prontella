@@ -215,6 +215,7 @@ export const ROUTES = [
   '/api/git/unstage-all',
   '/api/metrics/config',
   '/api/metrics/export',
+  '/api/metrics/heap-snapshot',
   '/api/metrics/ingest',
   '/api/repos',
   '/api/repos/:id',

@@ -1,7 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import v8 from 'node:v8';
 import {
   loadMetricsConfig,
   metricsDir,
@@ -14,6 +16,7 @@ import { Registry, type MetricRecord } from './registry.js';
 import { startSampler, type AppStats, type SamplerHandle } from './sampler.js';
 import { checkAnon } from './scrub.js';
 import { createJsonlSink, type Sink, type SinkStats } from './sink.js';
+import { startWatchdog, type Watchdog } from './watchdog.js';
 
 /**
  * メトリクスの合成ルート。
@@ -56,6 +59,7 @@ interface Active {
   cfg: MetricsConfig;
   sink: Sink;
   sampler: SamplerHandle;
+  watchdog: Watchdog | null;
 }
 
 /** サーバープロセスごとの乱数 id。クライアントの記録と結合する鍵で、個人を識別しない。 */
@@ -125,6 +129,7 @@ function stopActive(): void {
   metrics.includeAttrs = false;
   metrics.onEvent = () => {};
   current.sampler.stop();
+  current.watchdog?.stop();
   current.sink.close();
 }
 
@@ -151,7 +156,9 @@ function apply(next: MetricsConfig): void {
       };
     },
   });
-  active = { cfg: next, sink, sampler };
+  // Worker はそれ自体が CPU 約 0.4% なので dev だけ
+  const watchdog = tier === 'dev' ? startWatchdog(metrics) : null;
+  active = { cfg: next, sink, sampler, watchdog };
   writeRecord(metaRecord(tier), 'server');
   log(`metrics: tier=${tier} (${next.source}) → ${next.dir}`);
 }
@@ -197,6 +204,39 @@ export function setMetricsTier(tier: 'off' | 'anon'): MetricsInfo {
   setConfiguredTier(tier);
   apply(loadMetricsConfig());
   return metricsInfo();
+}
+
+const HEAP_SNAPSHOT_COOLDOWN_MS = 10 * 60 * 1000;
+let heapSnapshotInFlight = false;
+let lastHeapSnapshotAt = 0;
+
+/**
+ * dev 層のみ: V8 ヒープスナップショットを metrics ディレクトリーに書く。数秒ループを止め、
+ * ファイルは数百 MB になるので single-flight + 10 分クールダウン。ディレクトリー上限の対象外
+ * (sink は *.jsonl しか消さない)。
+ */
+export async function writeHeapSnapshot(): Promise<{ file: string; bytes: number; ms: number }> {
+  if (cfg.tier !== 'dev' || !active) throw new Error('heap snapshot is available only in the dev tier');
+  if (heapSnapshotInFlight) throw new Error('heap snapshot already in progress');
+  const since = Date.now() - lastHeapSnapshotAt;
+  if (since < HEAP_SNAPSHOT_COOLDOWN_MS) {
+    throw new Error(`heap snapshot cooldown: retry in ${Math.ceil((HEAP_SNAPSHOT_COOLDOWN_MS - since) / 1000)}s`);
+  }
+  heapSnapshotInFlight = true;
+  try {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const file = path.join(cfg.dir, `heap-${stamp}.heapsnapshot`);
+    await fsPromises.mkdir(cfg.dir, { recursive: true });
+    const t0 = performance.now();
+    const written = v8.writeHeapSnapshot(file);
+    const ms = performance.now() - t0;
+    const { size } = await fsPromises.stat(written);
+    lastHeapSnapshotAt = Date.now();
+    metrics.event('self', { heapSnapshotMs: Math.round(ms), heapSnapshotBytes: size });
+    return { file: written, bytes: size, ms: Math.round(ms) };
+  } finally {
+    heapSnapshotInFlight = false;
+  }
 }
 
 /** テスト・終了用。 */

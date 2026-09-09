@@ -1,0 +1,116 @@
+{
+  "label": "metrics-dev-4",
+  "at": "2026-09-09T02:10:59.090Z",
+  "git": {
+    "commit": "23ebd8a6256c97ae0eca320ba9e6132cb118d231",
+    "branch": "feat/metrics"
+  },
+  "versions": {
+    "node": "v24.18.1",
+    "xterm": "^6.0.0",
+    "nodePty": "^1.1.0"
+  },
+  "config": {
+    "sessions": 6,
+    "seconds": 20,
+    "hz": 10,
+    "lines": 20,
+    "port": 4751,
+    "cdp": 9733
+  },
+  "m1": {
+    "attachMs": 2097,
+    "snapshotBytes": 294957,
+    "snapshotCount": 6,
+    "perf": {
+      "TaskDuration": -3.560013,
+      "ScriptDuration": -1.2317390000000001,
+      "LayoutDuration": -0.35403100000000004,
+      "RecalcStyleDuration": -0.125686,
+      "JSHeapUsedSize": 8695312
+    },
+    "longtaskCount": 2,
+    "longtaskMs": 257
+  },
+  "m2": {
+    "wallSeconds": 49.55,
+    "serverCpuSecondsPerWallSecond": 0.967,
+    "serverCpuByName": {
+      "node": 7.109,
+      "conhost": 0,
+      "OpenConsole": 1.219,
+      "pwsh": 38,
+      "claude": 1.609
+    },
+    "serverRssBytesBefore": 1145806848,
+    "serverRssBytesAfter": 1307811840,
+    "pageA": {
+      "perf": {
+        "TaskDuration": 2.612757,
+        "ScriptDuration": 0.8054290000000002,
+        "LayoutDuration": 0.08904199999999995,
+        "RecalcStyleDuration": 0.114576,
+        "JSHeapUsedSize": -5169888
+      },
+      "longtaskCount": 0,
+      "longtaskMs": 0,
+      "wsFramesReceived": {
+        "snapshot": 0,
+        "status": 0,
+        "viewers": 0,
+        "resize": 0,
+        "binary": 3615,
+        "data": 3615,
+        "pong": 18
+      },
+      "wsBytesReceived": 2721025
+    },
+    "pageB": {
+      "perf": {
+        "TaskDuration": 2.3911,
+        "ScriptDuration": 0.704291,
+        "LayoutDuration": 0.06086800000000003,
+        "RecalcStyleDuration": 0.10542,
+        "JSHeapUsedSize": -6733256
+      },
+      "longtaskCount": 0,
+      "longtaskMs": 0,
+      "wsFramesReceived": {
+        "snapshot": 0,
+        "status": 0,
+        "viewers": 0,
+        "resize": 0,
+        "binary": 3615,
+        "data": 3615,
+        "pong": 12
+      },
+      "wsBytesReceived": 2720935
+    }
+  },
+  "m3": {
+    "driverPage": "worktree(A)",
+    "driverFocus": {
+      "hasFocus": true,
+      "visibilityState": "visible"
+    },
+    "dragMs": 2276,
+    "resizeFramesSentByDriver": 31,
+    "resizeFramesReceivedByOther": 31,
+    "driverLongtaskCount": 2,
+    "driverLongtaskMs": 141,
+    "serverCpuSecondsPerWallSecond": 0.13,
+    "serverCpuByName": {
+      "node": 0.297,
+      "conhost": 0,
+      "OpenConsole": 0,
+      "pwsh": 0,
+      "claude": 0
+    }
+  },
+  "m4": {
+    "closedSockets": 6,
+    "reconnectMs": 1038,
+    "longtaskCount": 1,
+    "longtaskMs": 73
+  }
+}

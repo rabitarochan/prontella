@@ -7,8 +7,7 @@ import type { Registry } from './registry.js';
  * - stall: 250ms タイマーのドリフト。可視状態で 200ms 超なら `stall` (バックグラウンドの
  *   タイマー間引きと区別するため、非表示中は数えない)
  * - event timing: 104ms 超の入力応答 (INP 相当)。ターゲットを粗い種別に潰して記録する
- * - rafgap (dev のみ): rAF が 250ms 以上止まった = レンダラー/コンポジターの停止。
- *   常時 rAF ループを回すコストがあるので anon では入れない
+ * - rafgap (dev のみ): 1 秒ごとの rAF プローブが 250ms 以上遅れた = レンダラー/コンポジターの停止
  *
  * どれも `enabled` でないレジストリには何も記録しない。
  */
@@ -17,6 +16,7 @@ const HANG_MS = 500;
 const STALL_TICK_MS = 250;
 const STALL_MS = 200;
 const RAF_GAP_MS = 250;
+const RAF_PROBE_MS = 1_000;
 const INPUT_THRESHOLD_MS = 104;
 
 type Attribution = 'window' | 'iframe' | 'unknown' | 'xterm' | 'monaco-editor' | 'tree' | 'other';
@@ -90,19 +90,23 @@ export function installHooks(registry: Registry, opts: { tier: 'anon' | 'dev' })
   disposers.push(() => clearInterval(stallTimer));
 
   if (opts.tier === 'dev') {
-    let last = performance.now();
+    // 常時 rAF ループは毎フレーム JS タスクを立てて計測自身が負荷になる (2026-09-09 の bench で
+    // dev 層のページ TaskDuration が +17〜31%)。1 秒ごとに rAF を 1 回だけ要求し、
+    // 「要求からコールバックまでの遅延」でレンダラーの停止を測る。
     let raf = 0;
-    const loop = () => {
-      const now = performance.now();
-      const gap = now - last;
-      last = now;
-      if (gap > RAF_GAP_MS && document.visibilityState === 'visible') {
-        registry.event('rafgap', { ms: Math.round(gap), act: activity() });
-      }
-      raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
-    disposers.push(() => cancelAnimationFrame(raf));
+    const probe = setInterval(() => {
+      if (document.visibilityState !== 'visible' || raf) return;
+      const requested = performance.now();
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        const latency = performance.now() - requested;
+        if (latency > RAF_GAP_MS) registry.event('rafgap', { ms: Math.round(latency), act: activity() });
+      });
+    }, RAF_PROBE_MS);
+    disposers.push(() => {
+      clearInterval(probe);
+      if (raf) cancelAnimationFrame(raf);
+    });
   }
 
   return () => {

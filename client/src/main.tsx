@@ -9,6 +9,7 @@ import './index.css';
 import '@xterm/xterm/css/xterm.css';
 import '@vscode/codicons/dist/codicon.css';
 import { bootMetrics } from './metrics';
+import { MetricsProfiler } from './metrics/react';
 
 // メトリクス収集 (サーバーの tier が権威。off なら何も入らない)。描画を待たせない。
 void bootMetrics();
@@ -18,5 +19,7 @@ void bootMetrics();
 const isMobilePath = window.location.pathname.replace(/\/+$/, '') === '/m';
 
 createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>{isMobilePath ? <MobileApp /> : <App />}</React.StrictMode>,
+  <React.StrictMode>
+    <MetricsProfiler>{isMobilePath ? <MobileApp /> : <App />}</MetricsProfiler>
+  </React.StrictMode>,
 );

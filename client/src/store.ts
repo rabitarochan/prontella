@@ -14,7 +14,15 @@ interface DeckState {
   loaded: boolean;
   selected: Selection | null;
   error: string | null;
-  refresh: () => Promise<void>;
+  /**
+   * repos を取り直す。
+   *
+   * reuseInFlight: 進行中の取得があればそれに相乗りする。**ポーラーだけが渡してよい**。
+   * 変異 (コミット・stage・worktree 追加など) の直後の refresh が相乗りすると、
+   * 「変異前に始まった取得」の結果を受け取ってしまい、コミット直後に古い状態を
+   * 表示する。既定 (false) は常に新規取得。
+   */
+  refresh: (opts?: { reuseInFlight?: boolean }) => Promise<void>;
   select: (selection: Selection | null) => void;
   setError: (error: string | null) => void;
   /** 楽観更新する。失敗したら退避しておいた直前の配列に戻し setError する。 */
@@ -84,9 +92,13 @@ let restoreAttempted = false;
 
 // 直近に set() した repos の内容 (JSON化) を覚えておき、次回取得分と一致するなら
 // set() 自体を呼ばない。useDeck をセレクターなしで購読している App 以下のツリーは
-// 4 秒ごとに毎回再レンダーされてしまうため、内容が変わらないポーリングでは
+// ポーリングのたびに毎回再レンダーされてしまうため、内容が変わらないポーリングでは
 // 再レンダーの引き金を作らないようにする。
 let lastReposJson: string | null = null;
+
+// 進行中の refresh()。reuseInFlight を渡した呼び出し (= ポーラー) だけがここに相乗りする。
+// 変異直後の refresh は相乗りさせない — 詳細は DeckState.refresh のコメント。
+let inflightRefresh: Promise<void> | null = null;
 
 // repos 配列を変更する操作(並び替え/ピン留め/アーカイブ/追加/削除)の mutation epoch。
 // ポーリング refresh() が変異結果を踏み消すのを防ぐ (詳細は各関数のコメント参照)。
@@ -146,38 +158,52 @@ export const useDeck = create<DeckState>((set, get) => ({
   loaded: false,
   selected: null,
   error: null,
-  refresh: async () => {
-    const epoch = reposEpoch;
-    try {
-      const repos = await api.repos();
-      if (epoch !== reposEpoch) return; // 別の変異に割り込まれた古いレスポンス
-      const reposJson = JSON.stringify(repos);
-      const current = get();
-      // 内容が前回と同一で、かつ既に loaded/エラー解消済み/復元試行済みなら
-      // 何もすることがない (set() で新しい repos 配列を作ると参照が変わり、
-      // useDeck() をセレクターなしで購読している側が無条件で再レンダーされる)。
-      // error からの回復 (error !== null) や初回ロードはこの条件に当たらないため
-      // 従来どおり set() を通る。
-      if (reposJson === lastReposJson && current.loaded && current.error === null && restoreAttempted) {
-        metrics.count('repos.refresh.unchanged');
-        return;
-      }
-      metrics.count('repos.refresh.changed');
-      lastReposJson = reposJson;
-      set((state) => {
-        if (!restoreAttempted && state.selected === null) {
-          restoreAttempted = true;
-          return { repos, loaded: true, error: null, selected: restoreSelection(repos) };
+  refresh: async (opts) => {
+    // 進行中の取得への相乗りは opt-in。ポーラー以外 (変異直後の refresh) が
+    // 相乗りすると、変異前に始まった取得の結果を受け取って古い状態を表示する。
+    if (opts?.reuseInFlight === true && inflightRefresh !== null) return inflightRefresh;
+    const run = (async () => {
+      const epoch = reposEpoch;
+      try {
+        const repos = await api.repos();
+        if (epoch !== reposEpoch) return; // 別の変異に割り込まれた古いレスポンス
+        const reposJson = JSON.stringify(repos);
+        const current = get();
+        // 内容が前回と同一で、かつ既に loaded/エラー解消済み/復元試行済みなら
+        // 何もすることがない (set() で新しい repos 配列を作ると参照が変わり、
+        // useDeck() をセレクターなしで購読している側が無条件で再レンダーされる)。
+        // error からの回復 (error !== null) や初回ロードはこの条件に当たらないため
+        // 従来どおり set() を通る。
+        if (reposJson === lastReposJson && current.loaded && current.error === null && restoreAttempted) {
+          metrics.count('repos.refresh.unchanged');
+          return;
         }
-        return { repos, loaded: true, error: null };
-      });
-    } catch (e) {
-      if (epoch !== reposEpoch) return; // 別の変異に割り込まれた古いレスポンス
-      // repos は渡さず直前の一覧を保持し、エラーだけ表示する
-      // (サーバー一時エラーで UI が即座に空にならないようにする)
-      // ここでは restoreAttempted を立てない — 次回成功時に復元を再挑戦させる。
-      set({ error: e instanceof Error ? e.message : String(e), loaded: true });
-    }
+        metrics.count('repos.refresh.changed');
+        lastReposJson = reposJson;
+        set((state) => {
+          if (!restoreAttempted && state.selected === null) {
+            restoreAttempted = true;
+            return { repos, loaded: true, error: null, selected: restoreSelection(repos) };
+          }
+          return { repos, loaded: true, error: null };
+        });
+      } catch (e) {
+        if (epoch !== reposEpoch) return; // 別の変異に割り込まれた古いレスポンス
+        // repos は渡さず直前の一覧を保持し、エラーだけ表示する
+        // (サーバー一時エラーで UI が即座に空にならないようにする)
+        // ここでは restoreAttempted を立てない — 次回成功時に復元を再挑戦させる。
+        set({ error: e instanceof Error ? e.message : String(e), loaded: true });
+      }
+    })();
+    // finally() は **新しい Promise を返す**。ここで run と比較すると永久に一致せず、
+    // inflightRefresh が null に戻らないままポーリングが全部相乗りして止まる
+    // (実ブラウザーで踏んだ: 45 秒で /api/repos が 1 回しか飛ばなかった)。
+    // 比較対象は「自分が格納したのと同じ Promise」でなければならない。
+    const tracked: Promise<void> = run.finally(() => {
+      if (inflightRefresh === tracked) inflightRefresh = null;
+    });
+    inflightRefresh = tracked;
+    return tracked;
   },
   select: (selected) => {
     try {

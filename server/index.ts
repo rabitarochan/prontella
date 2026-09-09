@@ -15,6 +15,7 @@ import { PtyManager, aggregateStatus, conptyMode } from './pty.js';
 import { ensureHookAssets, warnIfHooksBlocked } from './hooks.js';
 import { AgentSessionManager } from './agentSession.js';
 import { attachEvents, eventsSocketCount } from './sessionEvents.js';
+import { createSnapshotCache, type SnapshotCache } from './reposSnapshot.js';
 import { getUsage } from './usage.js';
 import { initMetrics, metrics, metricsInfo, packageVersion, setMetricsTier, writeHeapSnapshot, writeRecord } from './metrics/index.js';
 import { ingestClientRecords } from './metrics/ingest.js';
@@ -47,6 +48,62 @@ const app = express();
 // tier が off のときは next() を呼ぶだけ。
 app.use(httpMetricsMiddleware(metrics));
 app.use(express.json({ limit: '10mb' }));
+// ---- /api/repos スナップショットの鮮度ゲート --------------------------------
+//
+// GET /api/repos は git を約 40 プロセス起動する重い処理 (18 repo / 22 worktree で
+// 1 本 3〜9 秒)。応答より短い間隔でポーリングされると in-flight が積み上がって
+// 自己輻輳する (実測: 同時 21 本で 1 リクエスト 40 秒超、同時数を増やしても
+// スループットは一切上がらない)。reposSnapshot が同時実行を 1 本に畳む。
+//
+// 畳んだときの唯一の危険は「コミット直後の refresh に、コミット**前**に始まった
+// 計算の結果を渡してしまう」こと。それを防ぐのがこの epoch (世代カウンター) で、
+// GET/HEAD/OPTIONS 以外のリクエストを **無条件に**「状態を変えうる」とみなして進める。
+//
+// ルートを選別しないのは意図的。書き込み系ルートは現時点で 56 本あり (/api/git/* だけで
+// 38 本)、そこから「git 状態を変えるもの」を人手で選ぶ設計は、1 本の入れ忘れが
+// そのまま「コミットしたのに UI が古いまま」という再現しづらいバグになる。
+// 偽陽性 (/api/fs/reveal, /api/editor/open, POST /api/terminals など git 状態を
+// 変えないもの) のコストは「次の 1 回だけ再計算」で、いずれも低頻度のユーザー操作。
+const REPOS_TTL_MS = 1000;
+const reposSnapshot: SnapshotCache<ReposSkeleton> = createSnapshotCache({ ttlMs: REPOS_TTL_MS });
+
+// 唯一の除外。/api/agent-events は Claude Code の hook 受け口で、**ツール呼び出しごとに
+// エージェントから飛んでくる唯一の高頻度 POST**。除外しないとエージェント稼働中は
+// キャッシュが常時無効化され、対策そのものが死ぬ。安全な根拠は 2 つあり、両方必要:
+//   (1) ハンドラーは ptyManager.applyHookEvent を呼ぶだけで git 状態を一切変えない。
+//   (2) agent フィールドはキャッシュに載せず withAgentStatus が毎レスポンス合成する。
+// **(2) と対で成立する除外**なので、agent をキャッシュに載せる変更をするなら
+// この除外も同時に外すこと (computeReposSkeleton のコメント参照)。
+const EPOCH_EXEMPT = new Set(['/api/agent-events']);
+
+app.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  if (EPOCH_EXEMPT.has(req.path)) return next();
+
+  // (1) 変異の開始。これで「変異の最中に始まった計算」がキャッシュに載らなくなる。
+  reposSnapshot.invalidate();
+
+  // (2) レスポンス送出の直前に同期で進める。res.on('finish') を使わないのは、
+  // finish がソケット書き込みのコールバック由来で、クライアントが本文を受け取って
+  // 次の GET /api/repos を投げるほうが先になり得るため。res.json / res.status().json は
+  // すべて res.end に集約されるので、パッチ 1 箇所で全ルートを覆える。
+  // close は「res.end に到達しなかった (中断・クラッシュ)」場合の保険で、
+  // 通常経路では bumped ガードにより二重に進まない。
+  let bumped = false;
+  const bump = () => {
+    if (bumped) return;
+    bumped = true;
+    reposSnapshot.invalidate();
+  };
+  const originalEnd = res.end.bind(res) as (...args: unknown[]) => unknown;
+  res.end = function patchedEnd(...args: unknown[]) {
+    bump();
+    return originalEnd(...args);
+  } as unknown as typeof res.end;
+  res.on('close', bump);
+
+  next();
+});
 
 // ターミナル/Agent SDK に渡す「OS 既定の環境」をここで一度だけ構築してキャッシュする。
 // セッション生成は同期処理なので、遅延構築にすると起動直後の 1 本目だけ
@@ -119,9 +176,19 @@ function toRepoMeta(repos: config.RepoConfig[]): Array<{ id: string; pinned: boo
   return repos.map((r) => ({ id: r.id, pinned: r.pinned === true, archived: r.archived === true }));
 }
 
-app.get('/api/repos', asyncHandler(async (_req, res) => {
+// GET /api/repos の応答のうち、git を叩いて作る「重い部分」だけを組み立てる。
+// エージェント状態 (agent フィールド) はここに含めない — withAgentStatus が
+// レスポンスごとに合成する。
+//
+// なぜ分けるか: agent は PTY/SDK のイベントで変わり HTTP を通らないため、
+// reposSnapshot の鮮度保証 (epoch) では追えない。一方 agentStatusFor は
+// プロセス起動を伴わない in-memory 参照なので、キャッシュに載せず毎回合成すれば
+// 「キャッシュのせいでステータスが古い」という問題自体が消える。
+// **この決定は EPOCH_EXEMPT (/api/agent-events を epoch bump から除外すること) と
+// 一蓮托生**で、片方だけ変えてはいけない (下の EPOCH_EXEMPT のコメント参照)。
+async function computeReposSkeleton() {
   const { repos } = config.loadConfig();
-  const result = await Promise.all(
+  return await Promise.all(
     repos.map(async (repo) => {
       // アーカイブ済みは git を一切呼ばない(fs.existsSync も resolveGitRoot も listWorktrees も
       // getBranchStatus も呼ばない)。返す形は 6 キーちょうど固定。
@@ -145,8 +212,8 @@ app.get('/api/repos', asyncHandler(async (_req, res) => {
       if (!gitRoot) {
         // none: git リポジトリーではない
         const pseudo = {
-          path: repo.path, head: '', branch: null, isMain: true, locked: false,
-          status: null, agent: agentStatusFor(repo.path),
+          path: repo.path, head: '', branch: null as string | null, isMain: true, locked: false,
+          status: null as git.BranchStatus | null,
         };
         worktreeCache.set(repo.id, [pseudo.path]);
         return { ...repo, pinned: repo.pinned === true, archived: false, gitMode: 'none', worktrees: [pseudo], error: null };
@@ -167,7 +234,7 @@ app.get('/api/repos', asyncHandler(async (_req, res) => {
           const entry = {
             path: repo.path, head: container?.head ?? '', branch: container?.branch ?? null,
             isMain: true /* 削除✕を出さない */, locked: container?.locked ?? false,
-            status, agent: agentStatusFor(repo.path),
+            status,
           };
           worktreeCache.set(repo.id, [entry.path]);
           return { ...repo, pinned: repo.pinned === true, archived: false, gitMode: 'subdir', worktrees: [entry], error: null };
@@ -183,12 +250,16 @@ app.get('/api/repos', asyncHandler(async (_req, res) => {
         const detailed = await Promise.all(
           worktrees.map(async (wt) => {
             let status: git.BranchStatus | null = null;
-            try {
-              status = await git.getBranchStatus(wt.path);
-            } catch {
-              // worktree directory may be missing/prunable
+            // ディレクトリーが消えた worktree (prune 待ち) に git を起動しても必ず失敗する。
+            // 先に存在を見て、無駄なプロセス起動を 1 つ省く。
+            if (fs.existsSync(wt.path)) {
+              try {
+                status = await git.getBranchStatus(wt.path);
+              } catch {
+                // worktree directory may be missing/prunable
+              }
             }
-            return { ...wt, status, agent: agentStatusFor(wt.path) };
+            return { ...wt, status };
           }),
         );
         worktreeCache.set(repo.id, detailed.map((wt) => wt.path));
@@ -201,8 +272,34 @@ app.get('/api/repos', asyncHandler(async (_req, res) => {
       }
     }),
   );
-  // ムダな処理の指標: クライアントの 4/15 秒ポーリングに対して、応答が前回と同一だった割合。
-  // ハッシュは応答 JSON の FNV-1a (内容は残さない)。
+}
+
+export type ReposSkeleton = Awaited<ReturnType<typeof computeReposSkeleton>>;
+
+/**
+ * スケルトンに agent フィールドを合成してレスポンス本体を作る。
+ *
+ * - キャッシュされたスケルトンは同時レスポンス間で共有されるため、**必ずスプレッドで
+ *   コピーする**(破壊的代入はそのままデータ競合になる)。
+ * - アーカイブ済み repo は「キー 6 個ちょうど・worktrees なし」が
+ *   client/src/types.ts の ArchivedRepo との契約なので素通しする。
+ * - スプレッド後に agent を足す順序は分割前と同じ(worktree オブジェクトの末尾)。
+ *   既存キーを上書きしても挿入位置は変わらないため、JSON のキー順は分割前と一致する
+ *   (client の lastReposJson 比較と Express の ETag が同じ文字列を見続けるために重要)。
+ */
+function withAgentStatus(skeleton: ReposSkeleton) {
+  return skeleton.map((repo) =>
+    'worktrees' in repo
+      ? { ...repo, worktrees: repo.worktrees.map((wt) => ({ ...wt, agent: agentStatusFor(wt.path) })) }
+      : repo,
+  );
+}
+
+app.get('/api/repos', asyncHandler(async (_req, res) => {
+  const result = withAgentStatus(await reposSnapshot.get(computeReposSkeleton));
+  // ムダな処理の指標: ポーリングに対して応答が前回と同一だった割合 (agent 合成後の本体で比較する。
+  // スナップショットキャッシュに乗った分も「同一」として現れる)。ハッシュは応答 JSON の FNV-1a で、
+  // 内容は残さない。
   if (metrics.enabled) {
     const hash = fnv1a(JSON.stringify(result));
     metrics.count(hash === lastReposHash ? 'repos.poll.unchanged' : 'repos.poll.changed');

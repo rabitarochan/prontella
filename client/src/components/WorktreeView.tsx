@@ -7,6 +7,7 @@ import {
   clearActiveWorktreeCommands,
   setActiveWorktreeCommands,
 } from '../layout/worktreeCommands';
+import { useAgentStatusResolver } from '../agentEvents';
 import { useConfirm } from './ConfirmDialog';
 import OpenInEditorButton from './OpenInEditorButton';
 import StatusBadge from './StatusBadge';
@@ -20,6 +21,8 @@ import TileGrid from './tiles/TileGrid';
 export default function WorktreeView({ repo, worktree }: { repo: ActiveRepo; worktree: Worktree }) {
   const t = useT();
   const { confirm: confirmDialog, dialog } = useConfirm();
+  // エージェント状態は /ws/events のプッシュから導出する (ポーリング間隔に依存させない)。
+  const agentStatus = useAgentStatusResolver();
   const { sessions, create, createAgent, kill } = useTerminalSessions(worktree.path);
   const tiles = useTileLayout(worktree.path, sessions, create, kill, createAgent);
 
@@ -46,7 +49,7 @@ export default function WorktreeView({ repo, worktree }: { repo: ActiveRepo; wor
               ? t('common.noGit')
               : (worktree.branch ?? t('common.detached', { head: worktree.head }))}
           </span>
-          <StatusBadge status={worktree.agent.status} />
+          <StatusBadge status={agentStatus(worktree)} />
         </div>
         <div className="wt-header-actions">
           <OpenInEditorButton dir={worktree.path} />

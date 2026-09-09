@@ -158,7 +158,7 @@ export function unquoteGitPath(quoted: string): string {
 /**
  * dir 自身または祖先で最初に `.git` が見つかったディレクトリー(git worktree root)。
  * 見つからなければ null。git プロセスを起動しない fs ウォークアップのみで判定する
- * (GET /api/repos の 4 秒ポーリングに乗るため軽量である必要がある)。linked
+ * (GET /api/repos のポーリングに乗るため軽量である必要がある)。linked
  * worktree の下位でも `.git` ファイルに当たり、正しい worktree root を返す。
  */
 export function resolveGitRoot(dir: string): string | null {
@@ -236,7 +236,11 @@ export interface BranchStatus {
 export async function getBranchStatus(dir: string): Promise<BranchStatus> {
   // untracked-files=all: count individual files inside untracked directories,
   // consistent with the file list shown in the UI
-  const out = await runGit(dir, ['status', '--porcelain=v2', '--branch', '--untracked-files=all']);
+  // --no-optional-locks: 読み取り専用の呼び出しなので index を書き戻させない。
+  // 付けないと、ポーリングが全 worktree で index.lock を取りに行き、ユーザーや
+  // エージェントの git 操作を "Unable to create '.git/index.lock': File exists" で
+  // 落としうる。
+  const out = await runGit(dir, ['--no-optional-locks', 'status', '--porcelain=v2', '--branch', '--untracked-files=all']);
   const status: BranchStatus = {
     branch: '(detached)',
     upstream: null,
@@ -283,7 +287,11 @@ export interface StatusFile {
 export async function getStatusFiles(dir: string): Promise<StatusFile[]> {
   // untracked-files=all: expand untracked directories into individual files
   // (default shows only "dir/" for a fully-untracked directory)
-  const out = await runGit(dir, ['status', '--porcelain=v2', '--untracked-files=all']);
+  // --no-optional-locks: 読み取り専用の呼び出しなので index を書き戻させない。
+  // 付けないと、ポーリングが全 worktree で index.lock を取りに行き、ユーザーや
+  // エージェントの git 操作を "Unable to create '.git/index.lock': File exists" で
+  // 落としうる。
+  const out = await runGit(dir, ['--no-optional-locks', 'status', '--porcelain=v2', '--untracked-files=all']);
   const files: StatusFile[] = [];
   for (const line of out.split('\n')) {
     if (line.startsWith('1 ')) {
@@ -350,7 +358,11 @@ export async function getTreeStatus(dir: string): Promise<TreeStatusEntry[]> {
   // Default (normal) untracked mode so fully-untracked / fully-ignored directories
   // collapse into a single "dir/" entry instead of expanding into thousands of
   // files (e.g. node_modules). Descendants are colored by prefix on the client.
-  const out = await runGit(dir, ['status', '--porcelain=v2', '--ignored']);
+  // --no-optional-locks: 読み取り専用の呼び出しなので index を書き戻させない。
+  // 付けないと、ポーリングが全 worktree で index.lock を取りに行き、ユーザーや
+  // エージェントの git 操作を "Unable to create '.git/index.lock': File exists" で
+  // 落としうる。
+  const out = await runGit(dir, ['--no-optional-locks', 'status', '--porcelain=v2', '--ignored']);
   const entries: TreeStatusEntry[] = [];
   for (const line of out.split('\n')) {
     if (line.startsWith('1 ')) {

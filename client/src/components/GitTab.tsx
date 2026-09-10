@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Group, Separator } from 'react-resizable-panels';
 import { api } from '../api';
+import { bumpGitEpoch } from '../gitEpoch';
 import { useT, type StringKey } from '../i18n';
 import { PANE_DEFAULT_PCT, paneSplitSizes } from '../layout/paneWidths';
 import { usePaneWidths } from '../layout/paneWidthStore';
@@ -217,7 +218,8 @@ export default function GitTab({
     load();
     void refreshDeck();
     setReloadKey((k) => k + 1);
-  }, [load, refreshDeck]);
+    bumpGitEpoch(dir);
+  }, [load, refreshDeck, dir]);
 
   const act = async (fn: () => Promise<unknown>, successMsg?: string) => {
     setBusy(true);
@@ -227,6 +229,9 @@ export default function GitTab({
       load();
       await refreshDeck();
       setReloadKey((k) => k + 1); // force changes/history views to refetch
+      // ファイルパネルのガター差分の基準 (index の内容) も変わり得るので知らせる。
+      // 失敗パス側にも同じ理由で入れてある (git が非ゼロ終了しても index は動いていることがある)。
+      bumpGitEpoch(dir);
       if (successMsg) setMessage(`✓ ${successMsg}`);
     } catch (e) {
       setMessage(`⚠ ${e instanceof Error ? e.message : String(e)}`);
@@ -240,6 +245,7 @@ export default function GitTab({
       load();
       await refreshDeck();
       setReloadKey((k) => k + 1);
+      bumpGitEpoch(dir);
     } finally {
       setBusy(false);
     }

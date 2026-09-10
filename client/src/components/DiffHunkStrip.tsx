@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { classifyHunkLine, HUNK_CONFLICT_MESSAGE, hunkStats } from '../diffHunk';
+import { bumpGitEpoch } from '../gitEpoch';
 import { useT } from '../i18n';
 import { useDeck } from '../store';
 import type { DiffHunk } from '../types';
@@ -15,6 +16,8 @@ export default function DiffHunkStrip({
   dir,
   path,
   scope,
+  disabled,
+  disabledReason,
   onApplied,
   onHunkStateChanged,
   onReveal,
@@ -22,6 +25,15 @@ export default function DiffHunkStrip({
   dir: string;
   path: string;
   scope: 'worktree' | 'staged';
+  /**
+   * 全操作を止める (現状の用途: DiffPane 側に未保存の編集がある間)。
+   * discard は作業ツリーのファイルを書き換えるので未保存の編集を破壊し、
+   * stage/unstage も onApplied → loadPair でエディターの内容を差し替えてしまう。
+   * 「黙って壊す」より止める方を選ぶ (不可逆操作は申告と実際を一致させる)。
+   */
+  disabled?: boolean;
+  /** disabled の理由。帯に出す。 */
+  disabledReason?: string;
   /** stage/unstage/discard 適用後、diff 本体 (DiffPane 側の pair) を取り直させる */
   onApplied: () => void;
   /**
@@ -40,7 +52,10 @@ export default function DiffHunkStrip({
   // hunks と同順・同長。楽観ロック用ハッシュ(不具合2/3の修正)。POST /api/git/apply-hunks
   // の expectedHunkHashes にそのまま echo する。
   const [hunkHashes, setHunkHashes] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [inFlight, setBusy] = useState(false);
+  // 既存の全 disabled 条件が busy を見ているので、外からの停止もここに畳み込む。
+  // 個々のボタンに条件を足して回ると、必ずどれかを取りこぼす。
+  const busy = inFlight || !!disabled;
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   // 行単位選択 UI: 一度に展開できるのは 1 ハンクだけ (アコーディオン)。selectedLines は
@@ -93,6 +108,8 @@ export default function DiffHunkStrip({
       onApplied();
       onHunkStateChanged?.();
       void refreshDeck();
+      // index (と discard なら作業ツリー) が変わったので、ファイルパネルのガター差分に知らせる。
+      bumpGitEpoch(dir);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg === HUNK_CONFLICT_MESSAGE) {
@@ -185,6 +202,9 @@ export default function DiffHunkStrip({
 
   return (
     <div className={`hunk-strip${expandedIndex !== null ? ' expanded' : ''}`}>
+      {disabled && disabledReason && (
+        <div className="hunk-strip-notice">⚠ {disabledReason}</div>
+      )}
       {notice && <div className="hunk-strip-notice">{notice}</div>}
       <div className="hunk-strip-list">
         {hunks.map((hunk, index) => {

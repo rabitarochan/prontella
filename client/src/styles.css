@@ -864,6 +864,39 @@ textarea:focus {
   /* .editor-reload-overlay の基準 */
   position: relative;
 }
+
+/* ---- ガター差分 (useGitGutter / gitDecorations.ts) ----
+   Monaco は linesDecorationsClassName の要素を行の高さいっぱいに置く。
+   add/modify は左端に細い縦帯、delete は行の下端に小さな三角を出す
+   (VS Code と同じ表現)。色は index.css の --git-gutter-* (ダークは .dark 側)。 */
+.git-gutter {
+  /* Monaco が付ける width/left を上書きする。margin-left で行番号との間隔を作る。 */
+  width: 3px !important;
+  margin-left: 3px;
+}
+.git-gutter-add {
+  background: var(--git-gutter-add);
+}
+.git-gutter-modify {
+  background: var(--git-gutter-modify);
+}
+/* 削除は「その行の下で消えた」ことを示すマーカーなので、帯ではなく三角にする。
+   背景は持たせず、::after で下端に描く。 */
+.git-gutter-delete {
+  background: none;
+  position: relative;
+}
+.git-gutter-delete::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -3px;
+  width: 0;
+  height: 0;
+  border-left: 4px solid var(--git-gutter-delete);
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+}
 /* ディスク突き合わせが遅いときだけ出る。Monaco を差し替えず上に重ねる —
    <Editor> をアンマウントすると viewState と undo 履歴が失われるため。 */
 .editor-reload-overlay {
@@ -914,6 +947,11 @@ button.statusbar-item:hover:not(:disabled) {
 }
 .statusbar-item.static {
   cursor: default;
+}
+/* パスを出さないステータスバー (差分ペイン) で、項目群を右へ寄せるための余白。
+   .statusbar-path の margin-right: auto と同じ役目 */
+.statusbar-spacer {
+  margin-right: auto;
 }
 /* statusbar-menu 系は shadcn DropdownMenu (EditorStatusBar.tsx) へ移行済み */
 
@@ -1984,6 +2022,33 @@ button.statusbar-item:hover:not(:disabled) {
   flex-direction: column;
   height: 100%;
   min-height: 0;
+}
+/* Unstaged の差分タブで右側を編集できるときに出る帯 (DiffPane の editable) */
+.diff-edit-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--fg-dim);
+  flex: none;
+}
+.diff-edit-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diff-edit-bar button {
+  margin-left: auto;
+  flex: none;
+}
+/* 再マウントを抑止したことを知らせる注記 (未保存の編集がある間だけ出る) */
+.diff-stale-note {
+  color: var(--yellow);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .diff-editor-host {
   flex: 1;

@@ -9,6 +9,7 @@ import { childEnv, warmTerminalEnv } from './childEnv.js';
 import * as config from './config.js';
 import * as git from './git.js';
 import * as files from './files.js';
+import * as diffEncoding from './diffEncoding.js';
 import * as search from './search.js';
 import { buildPartialPatchLines, checkApplyHunksRequest, hashHunk, splitDiffHunks, type ApplyDirection } from './diffPatch.js';
 import { PtyManager, aggregateStatus, conptyMode } from './pty.js';
@@ -470,41 +471,97 @@ app.get('/api/git/status', asyncHandler(async (req, res) => {
 //   scope=worktree: index vs working tree
 //   scope=staged:   HEAD vs index
 //   scope=commit:   parent vs commit (requires hash)
+//
+// 両側を **バイト列**で取り、decodeDiffPair (server/diffEncoding.ts) で「片側だけ検出 →
+// 同じエンコーディングで両側デコード」する。旧実装は作業ツリーを 'utf8' 固定・blob を
+// runGit(UTF-8 デコード)で読んでいたため、Shift_JIS 等が文字化けしていた。Git パネルの
+// 右側は編集・保存できる (DiffPane の editable) ので、化けたまま保存するとファイルを壊す。
+//
+// scope=worktree の original(index の blob)だけ filters を立てる: 相手が作業ツリーの
+// 実ファイルなので、core.autocrlf / smudge フィルター適用後の形で比べないと全行が変更に
+// なる (git.ts の getFileAtRevBuffer のコメントに実測値)。blob 同士を比べる staged/commit は
+// 両側とも生 blob なので立てない。
 app.get('/api/git/diff-pair', asyncHandler(async (req, res) => {
   const dir = requireKnownDir(req);
   const filePath = queryStr(req, 'path');
   const scope = queryStr(req, 'scope');
   const origPath = typeof req.query.origPath === 'string' ? req.query.origPath : filePath;
-  let original: string | null;
-  let modified: string | null;
+  let originalBuf: Buffer | null;
+  let modifiedBuf: Buffer | null;
+  let modifiedMissing = false;
   if (scope === 'commit') {
     const hash = queryStr(req, 'hash');
     if (!/^[0-9a-f]{4,40}$/i.test(hash)) throw new Error('不正なコミットハッシュです');
-    original = await git.getFileAtRev(dir, `${hash}^`, origPath);
-    modified = await git.getFileAtRev(dir, hash, filePath);
+    originalBuf = await git.getFileAtRevBuffer(dir, `${hash}^`, origPath);
+    modifiedBuf = await git.getFileAtRevBuffer(dir, hash, filePath);
   } else if (scope === 'staged') {
-    original = await git.getFileAtRev(dir, 'HEAD', origPath);
-    modified = await git.getFileAtRev(dir, ':0', filePath);
+    originalBuf = await git.getFileAtRevBuffer(dir, 'HEAD', origPath);
+    modifiedBuf = await git.getFileAtRevBuffer(dir, ':0', filePath);
   } else if (scope === 'worktree') {
-    original = await git.getFileAtRev(dir, ':0', origPath);
+    originalBuf = await git.getFileAtRevBuffer(dir, ':0', origPath, { filters: true });
     try {
-      modified = fs.readFileSync(path.join(dir, filePath), 'utf8');
+      // safeResolve: path は自由入力なので dir の外を読ませない (旧実装は path.join のみ)。
+      modifiedBuf = fs.readFileSync(files.safeResolve(dir, filePath));
     } catch {
-      modified = null; // deleted from the working tree
+      modifiedBuf = null; // deleted from the working tree
+      modifiedMissing = true;
     }
   } else {
     throw new Error(`不正な scope です: ${scope}`);
   }
-  const MAX = 2 * 1024 * 1024;
-  const tooLarge = (original?.length ?? 0) > MAX || (modified?.length ?? 0) > MAX;
-  const binary = !tooLarge && (original?.includes('\0') || modified?.includes('\0') || false);
+  // encoding クエリはステータスバーの「エンコーディングを指定して再読み込み」由来。
+  // 未知の名前は encoding.ts の normalizeEncoding が例外にする (asyncHandler が 500)。
+  const forced =
+    typeof req.query.encoding === 'string' && req.query.encoding ? req.query.encoding : undefined;
+  const pair = diffEncoding.decodeDiffPair(originalBuf, modifiedBuf, 'modified', forced);
   res.json({
-    original: tooLarge || binary ? '' : (original ?? ''),
-    modified: tooLarge || binary ? '' : (modified ?? ''),
-    binary,
-    tooLarge,
+    original: pair.original,
+    modified: pair.modified,
+    binary: pair.binary,
+    tooLarge: pair.tooLarge,
+    encoding: pair.encoding,
+    hasBom: pair.hasBom,
+    modifiedMissing,
   });
 }));
+
+// ファイルパネルのガター差分 (VS Code の dirty diff 相当) の比較基準。
+// index (`:0:<path>`) の内容を、作業ツリーのファイルと**同じ形**(filters 適用後)・
+// 同じエンコーディングで返す。
+//
+// diff-pair を流用しない理由: あちらは「無い」と「空」をどちらも '' で返すため、
+// **未追跡ファイルが「全行追加」に見えてしまう**。ここでは tracked で区別する。
+// 400 を返すので asyncHandler (常に 500) ではなく自前ラップにする。
+app.get('/api/git/index-content', (req, res) => {
+  handleIndexContent(req, res).catch((err: unknown) => {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  });
+});
+
+async function handleIndexContent(req: express.Request, res: express.Response): Promise<void> {
+  // typeof を先に見る (?path=a&path=b で string[] に化けるのを弾く。6.1 で実測済みの罠)。
+  const rel = req.query.path;
+  if (typeof rel !== 'string' || !rel) {
+    res.status(400).json({ error: `不正な path です: ${JSON.stringify(rel)}` });
+    return;
+  }
+  const dir = requireKnownDir(req);
+  const blob = await git.getFileAtRevBuffer(dir, ':0', rel, { filters: true });
+  if (!blob) {
+    // 未追跡 / index から削除済み / tree 外。装飾を一切出さないための印。
+    res.json({ content: null, encoding: null, tracked: false, binary: false, tooLarge: false });
+    return;
+  }
+  // エンコーディングは blob 側で検出する (filters 適用済みなので作業ツリーと同じバイト列)。
+  const decoded = diffEncoding.decodeDiffPair(blob, null, 'original');
+  res.json({
+    content: decoded.binary || decoded.tooLarge ? null : decoded.original,
+    encoding: decoded.encoding,
+    tracked: true,
+    binary: decoded.binary,
+    tooLarge: decoded.tooLarge,
+  });
+}
 
 // ファイルの行単位 blame(6.5)。ファイルツリー「ファイルの履歴...」の隣に足す読み取り専用機能。
 // path はファイルツリー右クリック由来の自由入力(GET /api/git/log の path と同じ扱い) —

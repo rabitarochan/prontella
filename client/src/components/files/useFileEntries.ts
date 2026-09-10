@@ -13,6 +13,7 @@ import type { OnMount } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import { api } from '../../api';
 import { hashText, tabKey, type OpenTabRef, type TabKind } from '../../editorState';
+import { bumpGitEpoch } from '../../gitEpoch';
 import { useT, type StringKey } from '../../i18n';
 import type { FileContent } from '../../types';
 import { basename } from '../editorTabs';
@@ -446,6 +447,10 @@ export function useFileEntries(root: string, leafId: string, init: FileEntriesIn
         // 保存でディスクは自分の内容になったので、「見送り済み」の記録は無意味になる
         // (eolOverrideRef と違い、これはユーザーの恒久的な選択ではない)。
         ignoredDiskHashRef.current.delete(path);
+        // Git パネル側の差分タブに、作業ツリーが変わったことを知らせる。
+        // (ガター差分の基準は index なので自分の装飾は変わらない — 内容変更は
+        //  useGitGutter の onDidChangeContent が既に拾っている。)
+        bumpGitEpoch(rootRef.current);
         setEntries((prev) => {
           const e = prev[key];
           if (!e || !e.file) return prev;

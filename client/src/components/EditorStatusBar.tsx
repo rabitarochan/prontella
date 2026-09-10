@@ -84,30 +84,64 @@ function CheckItem({
 
 export default function EditorStatusBar({
   editor,
+  positionEditor,
   activePath,
+  showPath = true,
   file,
+  readOnly = false,
   onReloadWithEncoding,
   onSaveWithEncoding,
   onEolOverride,
 }: {
+  /** インデント / EOL の表示元であり、変更の適用先でもあるエディター。 */
   editor: EditorInstance | null;
+  /**
+   * カーソル位置の表示元。省略時は `editor` と同じ。
+   * 差分エディターでは「フォーカスされている側」を渡す — 位置表示は左右どちらでも
+   * 追従してほしい一方、インデント / EOL の変更は編集可能な modified 側にだけ
+   * 効かせたい (original 側に pushEOL すると差分が全行変更に化ける)。
+   */
+  positionEditor?: EditorInstance | null;
   activePath: string;
-  file: FileContent;
-  onReloadWithEncoding: (encoding: string) => void;
-  onSaveWithEncoding: (encoding: string, bom: boolean) => void;
-  onEolOverride: () => void;
+  /** 左端のパス表示。差分ペインは上部ツールバーに同じパスが出るので false にする。 */
+  showPath?: boolean;
+  file: Pick<FileContent, 'encoding' | 'hasBom'>;
+  /** インデント / EOL を変更させない (読み取り専用の差分など)。表示だけ残す。 */
+  readOnly?: boolean;
+  /** 省略するとエンコーディングメニューの「指定して再読み込み」を出さない。 */
+  onReloadWithEncoding?: (encoding: string) => void;
+  /** 省略するとエンコーディングメニューの「指定して保存」を出さない。 */
+  onSaveWithEncoding?: (encoding: string, bom: boolean) => void;
+  /** EOL をユーザーが明示選択したことの記録 (FilesTab の保存時整形が使う)。省略可。 */
+  onEolOverride?: () => void;
 }) {
   const t = useT();
   const [position, setPosition] = useState<{ line: number; column: number } | null>(null);
   const [indent, setIndent] = useState<{ insertSpaces: boolean; size: number } | null>(null);
   const [eol, setEol] = useState<'LF' | 'CRLF' | null>(null);
 
-  // Monaco の状態を購読して表示へミラーする。activePath はモデル切替の再読取り用。
+  const posSource = positionEditor === undefined ? editor : positionEditor;
+
+  // カーソル位置。位置だけは別のエディターを見ることがあるので購読を分ける。
+  useEffect(() => {
+    if (!posSource) {
+      setPosition(null);
+      return;
+    }
+    const read = () => {
+      const pos = posSource.getPosition();
+      setPosition(pos ? { line: pos.lineNumber, column: pos.column } : null);
+    };
+    read();
+    const subs = [posSource.onDidChangeCursorPosition(read), posSource.onDidChangeModel(read)];
+    return () => subs.forEach((d) => d.dispose());
+  }, [posSource, activePath]);
+
+  // インデント / EOL。Monaco の状態を購読して表示へミラーする。
+  // activePath はモデル切替の再読取り用。
   useEffect(() => {
     if (!editor) return;
     const read = () => {
-      const pos = editor.getPosition();
-      setPosition(pos ? { line: pos.lineNumber, column: pos.column } : null);
       const model = editor.getModel();
       if (model) {
         const o = model.getOptions();
@@ -120,7 +154,6 @@ export default function EditorStatusBar({
     };
     read();
     const subs = [
-      editor.onDidChangeCursorPosition(read),
       editor.onDidChangeModel(read),
       editor.onDidChangeModelOptions(read),
       editor.onDidChangeModelContent(read), // EOL 変更(pushEOL)もここで届く
@@ -139,7 +172,8 @@ export default function EditorStatusBar({
     // 既に同じ EOL でも、ユーザーが明示選択した事実は記録する。理由: ファイルが既に
     // 望みの EOL・.editorconfig が別指定のケースでは pushEOL は不要だが、ここで記録
     // しないと保存時に formatOnSave が editorconfig 側へ戻してしまう。
-    onEolOverride();
+    // (差分ペインには保存時整形が無いので onEolOverride は渡されない)
+    onEolOverride?.();
     const want = kind === 'crlf' ? '\r\n' : '\n';
     if (model.getEOL() === want) return;
     // pushEOL は undo に乗り、onDidChangeModelContent 経由で draft も dirty になる
@@ -152,81 +186,103 @@ export default function EditorStatusBar({
   const indentLabel = (c: { insertSpaces: boolean; size: number }) =>
     c.insertSpaces ? t('files.indentSpaces', { n: c.size }) : t('files.indentTabs', { n: c.size });
 
+  // エンコーディング項目は、押しても何も起きないメニューを出さないために
+  // 「操作が 1 つでもあるとき」だけドロップダウンにする。
+  const hasEncodingActions = !!onReloadWithEncoding || !!onSaveWithEncoding;
+
   return (
     <div className="editor-statusbar">
       {/* パス表示: ヘッダー統合 (旧 editor-toolbar 廃止) でここへ移設。左端に置き、
           margin-right: auto で既存の右寄せ項目群と分ける */}
-      <span className="statusbar-path" title={activePath}>
-        {activePath}
-      </span>
+      {showPath ? (
+        <span className="statusbar-path" title={activePath}>
+          {activePath}
+        </span>
+      ) : (
+        // パスを出さない場合も右寄せの基準は要る (margin-right: auto の代役)
+        <span className="statusbar-spacer" />
+      )}
       {position && (
         <span className="statusbar-item static">
           {t('files.positionIndicator', { line: position.line, column: position.column })}
         </span>
       )}
-      {indent && (
-        <DropdownMenu>
-          <DropdownMenuTrigger className={TRIGGER_CLS} title={t('files.changeIndentTooltip')}>
-            {indentLabel(indent)}
-          </DropdownMenuTrigger>
-          <DropdownMenuContent side="top" align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
-            {INDENT_CHOICES.map((c) => (
-              <CheckItem
-                key={`${c.insertSpaces}-${c.size}`}
-                label={indentLabel(c)}
-                selected={indent.insertSpaces === c.insertSpaces && indent.size === c.size}
-                onSelect={() => chooseIndent(c.insertSpaces, c.size)}
-              />
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
-      {currentEncoding && (
-        <DropdownMenu>
-          <DropdownMenuTrigger className={TRIGGER_CLS} title={t('files.changeEncodingTooltip')}>
-            {currentEncoding}
-          </DropdownMenuTrigger>
-          <DropdownMenuContent side="top" align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>{t('files.reloadWithEncoding')}</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
-                {RELOAD_ITEMS.map((c) => (
-                  <CheckItem
-                    key={c.encoding}
-                    label={c.label}
-                    selected={file.encoding === c.encoding}
-                    onSelect={() => onReloadWithEncoding(c.encoding)}
-                  />
-                ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>{t('files.saveWithEncoding')}</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
-                {SAVE_ITEMS.map((c) => (
-                  <CheckItem
-                    key={c.label}
-                    label={c.label}
-                    selected={file.encoding === c.encoding && file.hasBom === c.bom}
-                    onSelect={() => onSaveWithEncoding(c.encoding, c.bom)}
-                  />
-                ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
-      {eol && (
-        <DropdownMenu>
-          <DropdownMenuTrigger className={TRIGGER_CLS} title={t('files.changeEolTooltip')}>
-            {eol}
-          </DropdownMenuTrigger>
-          <DropdownMenuContent side="top" align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
-            <CheckItem label="LF" selected={eol === 'LF'} onSelect={() => chooseEol('lf')} />
-            <CheckItem label="CRLF" selected={eol === 'CRLF'} onSelect={() => chooseEol('crlf')} />
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
+      {indent &&
+        (readOnly ? (
+          <span className="statusbar-item static">{indentLabel(indent)}</span>
+        ) : (
+          <DropdownMenu>
+            <DropdownMenuTrigger className={TRIGGER_CLS} title={t('files.changeIndentTooltip')}>
+              {indentLabel(indent)}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
+              {INDENT_CHOICES.map((c) => (
+                <CheckItem
+                  key={`${c.insertSpaces}-${c.size}`}
+                  label={indentLabel(c)}
+                  selected={indent.insertSpaces === c.insertSpaces && indent.size === c.size}
+                  onSelect={() => chooseIndent(c.insertSpaces, c.size)}
+                />
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ))}
+      {currentEncoding &&
+        (!hasEncodingActions ? (
+          <span className="statusbar-item static">{currentEncoding}</span>
+        ) : (
+          <DropdownMenu>
+            <DropdownMenuTrigger className={TRIGGER_CLS} title={t('files.changeEncodingTooltip')}>
+              {currentEncoding}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
+              {onReloadWithEncoding && (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>{t('files.reloadWithEncoding')}</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {RELOAD_ITEMS.map((c) => (
+                      <CheckItem
+                        key={c.encoding}
+                        label={c.label}
+                        selected={file.encoding === c.encoding}
+                        onSelect={() => onReloadWithEncoding(c.encoding)}
+                      />
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              )}
+              {onSaveWithEncoding && (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>{t('files.saveWithEncoding')}</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {SAVE_ITEMS.map((c) => (
+                      <CheckItem
+                        key={c.label}
+                        label={c.label}
+                        selected={file.encoding === c.encoding && file.hasBom === c.bom}
+                        onSelect={() => onSaveWithEncoding(c.encoding, c.bom)}
+                      />
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ))}
+      {eol &&
+        (readOnly ? (
+          <span className="statusbar-item static">{eol}</span>
+        ) : (
+          <DropdownMenu>
+            <DropdownMenuTrigger className={TRIGGER_CLS} title={t('files.changeEolTooltip')}>
+              {eol}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
+              <CheckItem label="LF" selected={eol === 'LF'} onSelect={() => chooseEol('lf')} />
+              <CheckItem label="CRLF" selected={eol === 'CRLF'} onSelect={() => chooseEol('crlf')} />
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ))}
     </div>
   );
 }

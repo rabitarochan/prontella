@@ -60,6 +60,13 @@
   --status-blue: #2563eb;
   --blame-uncommitted-bg: rgba(180, 83, 9, 0.08);
   --blame-dup-bg: rgba(0, 0, 0, 0.03);
+  /* エディターのガター差分 (VS Code の editorGutter.*Background 相当)。
+     overview ruler は canvas 直描きで CSS 変数を解決できないため、同じ値を
+     client/src/components/files/gitDecorations.ts の RULER_COLORS にも持つ。
+     **どちらか一方だけ変えないこと** (ガターとルーラーの色がずれる)。 */
+  --git-gutter-add: #2ea043;
+  --git-gutter-modify: #0c7d9d;
+  --git-gutter-delete: #e51400;
   --file-icon-ts: #0369a1;
   --file-icon-js: #a16207;
   --file-icon-css: #9333ea;
@@ -99,6 +106,10 @@
   --status-blue: #60a5fa;
   --blame-uncommitted-bg: rgba(251, 191, 36, 0.08);
   --blame-dup-bg: rgba(255, 255, 255, 0.025);
+  /* ライト側と同じく gitDecorations.ts の RULER_COLORS.dark と手動同期 */
+  --git-gutter-add: #3fb950;
+  --git-gutter-modify: #0c7d9d;
+  --git-gutter-delete: #f14c4c;
   --file-icon-ts: #4fc1ff;
   --file-icon-js: #e8d44d;
   --file-icon-css: #c586c0;

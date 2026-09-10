@@ -321,7 +321,11 @@ describe('integration: real git apply --cached --check', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
-  });
+    // 既定の 5 秒では足りない。このテストだけで実 git を 8 回起動するため、
+    // テストファイルが増えて worker の並列度が上がると素で 7 秒台まで伸びる
+    // (実測: 単体実行では余裕だが、全体実行で timeout する)。実プロセス起動の
+    // 待ち時間であって、遅さ自体は検証対象ではないので上限を明示的に広げる。
+  }, 30_000);
 });
 
 /**

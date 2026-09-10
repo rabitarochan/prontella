@@ -72,6 +72,7 @@ import GroupSplitView from './files/GroupSplitView';
 import { disposeModelsSoon } from './files/monacoSave';
 import { useEditorGroups } from './files/useEditorGroups';
 import { isDirtyEntry, useFileEntries, type MonacoEditor } from './files/useFileEntries';
+import { useGitGutter } from './files/useGitGutter';
 
 // sanitizeEditorState (editorState.ts) silently drops any draft over
 // MAX_DRAFT_TEXT_LENGTH on restore, so a draft that big is invisible to the
@@ -111,6 +112,9 @@ export default function FilesTab({
     drafts: initialState?.drafts ?? {},
     viewStates: initialState?.viewStates ?? {},
   });
+  // ガター差分 (VS Code の dirty diff 相当)。entries には触らず、Monaco モデルの生死を
+  // 直接購読して装飾だけを載せる (詳細は useGitGutter のコメント)。
+  const gitGutter = useGitGutter(root, leafId);
 
   const containerRef = useRef<HTMLDivElement>(null);
   // ツリー列の幅 (全タイル共通のグローバル設定)。SplitPanel が defaultSize を凍結するので、
@@ -257,6 +261,10 @@ export default function FilesTab({
     for (const g of allGroups(groupsApi.stateRef.current.root)) {
       if (g.activeKey) syncGroupActiveTab(g.id, g.activeKey);
     }
+    // ガター差分の比較基準 (index の内容) も同じきっかけで取り直す。ターミナルや
+    // 外部のエディターで git を操作した場合は gitEpoch が bump されないため、
+    // ウィンドウ復帰がその取りこぼしを拾う唯一の経路になる。
+    gitGutter.refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncGroupActiveTab]);
 

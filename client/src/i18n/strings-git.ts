@@ -389,6 +389,25 @@ export const GIT_STRINGS = {
     en: 'Unstaged changes (index ↔ working tree)',
   },
   'difftabs.reloadTooltip': { ja: '差分を取り直す', en: 'Refresh the diff' },
+  'difftabs.save': { ja: '保存', en: 'Save' },
+  'difftabs.saveTooltip': { ja: '右側の内容を保存する (Ctrl+S)', en: 'Save the right-hand side (Ctrl+S)' },
+  'difftabs.unsaved': { ja: '未保存の編集があります', en: 'Unsaved changes' },
+  'difftabs.editableHint': {
+    ja: '右側は編集できます',
+    en: 'The right-hand side is editable',
+  },
+  'difftabs.readOnlyDeleted': {
+    ja: 'このファイルは作業ツリーにないため編集できません',
+    en: 'This file is not in the working tree, so it cannot be edited.',
+  },
+  'difftabs.staleWhileEditing': {
+    ja: 'Git の状態が変わりました。保存すると最新の差分に更新されます',
+    en: 'Git state changed. Saving will refresh the diff.',
+  },
+  'difftabs.hunkDisabledDirty': {
+    ja: '未保存の編集があるため、ハンク単位の操作を止めています。先に保存してください',
+    en: 'Hunk actions are disabled while there are unsaved changes. Save first.',
+  },
   'difftabs.stashScopeLabel': { ja: 'スタッシュの差分 (読み取り専用)', en: 'Stash diff (read-only)' },
 
   // ---- DiffHunkStrip ----

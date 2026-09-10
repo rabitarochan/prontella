@@ -10,6 +10,7 @@ import type {
   FileContent,
   GitOperation,
   GitOperationAction,
+  IndexContent,
   LogEntry,
   RemoteInfo,
   Repo,
@@ -126,13 +127,18 @@ export const api = {
     dir: string,
     path: string,
     scope: 'worktree' | 'staged' | 'commit',
-    opts: { hash?: string; origPath?: string } = {},
+    opts: { hash?: string; origPath?: string; encoding?: string } = {},
   ) => {
     const params = new URLSearchParams({ dir, path, scope });
     if (opts.hash) params.set('hash', opts.hash);
     if (opts.origPath) params.set('origPath', opts.origPath);
+    // 指定すると自動判定をやめてこのエンコーディングで両側を読む (ステータスバー由来)
+    if (opts.encoding) params.set('encoding', opts.encoding);
     return request<DiffPair>(`/api/git/diff-pair?${params}`);
   },
+  /** ファイルパネルのガター差分の比較基準 (index の内容)。tracked=false は未追跡。 */
+  indexContent: (dir: string, path: string) =>
+    request<IndexContent>(`/api/git/index-content?dir=${q(dir)}&path=${q(path)}`),
   diffHunks: (dir: string, path: string, scope: 'worktree' | 'staged') =>
     request<DiffHunksResult>(`/api/git/diff-hunks?dir=${q(dir)}&path=${q(path)}&scope=${q(scope)}`),
   applyHunks: (

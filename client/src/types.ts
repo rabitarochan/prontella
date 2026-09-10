@@ -170,9 +170,27 @@ export interface CommitFile {
   status: string;
 }
 
+// GET /api/git/diff-pair のレスポンスと手動同期(共有型機構がないため)
 export interface DiffPair {
   original: string;
   modified: string;
+  binary: boolean;
+  tooLarge: boolean;
+  /** 両側のデコードに使ったエンコーディング。binary / 両側不在なら null。保存時にこれを使う。 */
+  encoding: string | null;
+  /** 検出側に BOM が付いていたか。保存時に BOM を維持するために使う。 */
+  hasBom: boolean;
+  /** scope=worktree でファイルが作業ツリーに無い(削除済み)。編集不可の判定に使う。 */
+  modifiedMissing: boolean;
+}
+
+// GET /api/git/index-content のレスポンスと手動同期。
+// tracked=false は「index に無い」(未追跡 / 削除済み)。content が '' の追跡ファイルと
+// 区別する必要があるため boolean を別に持つ。
+export interface IndexContent {
+  content: string | null;
+  encoding: string | null;
+  tracked: boolean;
   binary: boolean;
   tooLarge: boolean;
 }

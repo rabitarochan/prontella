@@ -557,6 +557,38 @@ export async function getFileAtRev(dir: string, rev: string, filePath: string): 
   }
 }
 
+/**
+ * getFileAtRev のバイト版。runGit(execFile) は stdout を UTF-8 でデコードするため、
+ * 非 UTF-8 ファイル(Shift_JIS 等)のバイト列を保てない — 呼び出し側で
+ * encoding.ts の検出にかけたいときはこちらを使う(getDiffBuffer と同じ定石)。
+ *
+ * **filters** を立てると `git show` ではなく `git cat-file --filters` を使い、
+ * **作業ツリーに書き出されるのと同じ形**(改行変換 core.autocrlf・clean/smudge フィルター
+ * 適用後)のバイト列を得る。実測 (git 2.50.1, core.autocrlf=true):
+ *   git show :0:f.txt            → "aaa\nbbb\n"     (生 blob。LF のまま)
+ *   git cat-file --filters :0:f  → "aaa\r\nbbb\r\n" (作業ツリーと同じ)
+ *   作業ツリーの f.txt            → "aaa\r\nbbb\r\n"
+ * 作業ツリーの実ファイルと突き合わせる用途(diff-pair の scope=worktree、ガターの base)は
+ * filters を立てないと **autocrlf 環境で全行が変更扱い**になる。逆に blob 同士を比べる
+ * 用途(scope=staged/commit)は両側とも生 blob なので立ててはいけない。
+ * 該当パスが無い場合は show / cat-file とも exit 128 で終わるので null に落ちる(実測)。
+ */
+export async function getFileAtRevBuffer(
+  dir: string,
+  rev: string,
+  filePath: string,
+  opts: { filters?: boolean } = {},
+): Promise<Buffer | null> {
+  const args = opts.filters
+    ? ['cat-file', '--filters', `${rev}:${filePath}`]
+    : ['show', `${rev}:${filePath}`];
+  try {
+    return await runGitInput(dir, args, Buffer.alloc(0));
+  } catch {
+    return null; // added/deleted at this revision, or outside the tree
+  }
+}
+
 export async function getDiff(
   dir: string,
   opts: { path?: string; staged?: boolean; untracked?: boolean },

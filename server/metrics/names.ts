@@ -182,6 +182,7 @@ export const ROUTES = [
   '/api/git/discard',
   '/api/git/discard-all',
   '/api/git/fetch',
+  '/api/git/index-content',
   '/api/git/init',
   '/api/git/log',
   '/api/git/merge',

@@ -3569,6 +3569,12 @@ button.statusbar-item:hover:not(:disabled) {
   color: var(--fg);
   background: var(--bg-active);
 }
+/* .side-switch-actions 側のトグル (自動リビール) — 押し込み状態を同じ見た目にする */
+.side-switch .icon-btn.active,
+.tile-bar-slot-lead .icon-btn.active {
+  color: var(--fg);
+  background: var(--bg-active);
+}
 .side-view {
   flex: 1;
   min-height: 0;

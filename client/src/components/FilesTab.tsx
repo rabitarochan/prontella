@@ -35,6 +35,7 @@ import FileHistoryModal from './FileHistoryModal';
 import FileTree, { type FileTreeHandle } from './FileTree';
 import SearchPanel from './SearchPanel';
 import SplitPanel from './SplitPanel';
+import { useAutoReveal } from '../layout/autoRevealStore';
 import { PANE_DEFAULT_PCT, paneSplitSizes } from '../layout/paneWidths';
 import { usePaneWidths } from '../layout/paneWidthStore';
 import type { DropZone } from '../layout/dropZones';
@@ -122,6 +123,9 @@ export default function FilesTab({
   // (タイル分割 / エディター分割と同じ契約。理由は SplitPanel.tsx)。
   const treeWidth = usePaneWidths((s) => s.widths.filesTree);
   const setPaneWidth = usePaneWidths((s) => s.setWidth);
+  // 自動リビール (全タイル共通のグローバル設定)。幅と違い凍結しないので即座に反映される。
+  const autoReveal = useAutoReveal((s) => s.on);
+  const setAutoReveal = useAutoReveal((s) => s.setOn);
   const [treeSize, editorSize] = paneSplitSizes(treeWidth, PANE_DEFAULT_PCT.filesTree);
   // パネル id は DOM の id 属性になる。複数タイルで衝突しないよう leafId を前置する。
   const treePanelId = `${leafId}:files-tree`;
@@ -1065,6 +1069,14 @@ export default function FilesTab({
       {side === 'tree' && (
         <span className="side-switch-actions">
           <button
+            className={`icon-btn ${autoReveal ? 'active' : ''}`}
+            onClick={() => setAutoReveal(!autoReveal)}
+            title={t(autoReveal ? 'files.autoRevealOnTooltip' : 'files.autoRevealOffTooltip')}
+            aria-pressed={autoReveal}
+          >
+            <span className="codicon codicon-target" />
+          </button>
+          <button
             className="icon-btn"
             onClick={() => treeCtl.current?.startCreate('file')}
             title={t('files.newFileTooltip')}
@@ -1114,6 +1126,7 @@ export default function FilesTab({
               onRenamed={onTreeRenamed}
               controllerRef={treeCtl}
               hideToolbar
+              autoReveal={autoReveal}
             />
           </div>
           {searchVisitedRef.current && (

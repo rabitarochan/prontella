@@ -38,6 +38,14 @@ export const FILES_STRINGS = {
   'files.discardAndReload': { ja: '破棄して再読み込み', en: 'Discard and reload' },
   'files.explorerTooltip': { ja: 'エクスプローラー', en: 'Explorer' },
   'files.searchTooltip': { ja: '検索 (Ctrl+Shift+F)', en: 'Search (Ctrl+Shift+F)' },
+  'files.autoRevealOnTooltip': {
+    ja: '開いているファイルをツリーで選択: ON',
+    en: 'Reveal active file in tree: on',
+  },
+  'files.autoRevealOffTooltip': {
+    ja: '開いているファイルをツリーで選択: OFF',
+    en: 'Reveal active file in tree: off',
+  },
   'files.selectFilePlaceholder': { ja: 'ファイルを選択してください', en: 'Select a file' },
   'files.previewTabTitle': { ja: 'プレビュー: {path}', en: 'Preview: {path}' },
   'files.binaryFileMessageWithSize': {

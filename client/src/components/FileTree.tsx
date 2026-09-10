@@ -3,6 +3,7 @@ import { Tree, type NodeRendererProps, type TreeApi } from 'react-arborist';
 import { api } from '../api';
 import { useT } from '../i18n';
 import type { TreeEntry, TreeStatusEntry } from '../types';
+import { ancestorDirs } from './files/treeReveal';
 
 interface TNode {
   id: string; // path relative to root
@@ -331,6 +332,7 @@ export default function FileTree({
   onRenamed,
   controllerRef,
   hideToolbar,
+  autoReveal,
 }: {
   root: string;
   selectedPath: string | null;
@@ -346,6 +348,8 @@ export default function FileTree({
   controllerRef?: React.MutableRefObject<FileTreeHandle | null>;
   /** 内蔵ツールバーを描画しない (操作は controllerRef 経由。notice 行だけは残る)。 */
   hideToolbar?: boolean;
+  /** selectedPath の祖先を自動で読み込み・展開し、その行までスクロールする。 */
+  autoReveal?: boolean;
 }) {
   const t = useT();
   const [nodes, setNodes] = useState<TNode[] | null>(null);
@@ -360,6 +364,8 @@ export default function FileTree({
   const treeRef = useRef<TreeApi<TNode> | null>(null);
   const loadingRef = useRef(new Set<string>());
   const handledRef = useRef(false); // guards against double confirm/cancel of an inline input
+  const nodesRef = useRef(nodes); // revealPath から stale なしに「未読み込みの階層」を判定するため
+  nodesRef.current = nodes;
   const genRef = useRef(0); // loadRoot の世代カウンター。古い非同期結果を setNodes/setError から弾く
   const prevRootRef = useRef<string | null>(null); // root が実際に切り替わったかを判定するための直前値
 
@@ -445,6 +451,80 @@ export default function FileTree({
     },
     [root],
   );
+
+  // ---- 自動リビール (VS Code の explorer.autoReveal 相当) ---------------------
+  // ツリーは遅延読み込みなので、閉じているディレクトリー配下のファイルは data に
+  // 存在せず、行そのものが描画されない。祖先を並列に取得して 1 回で木へ反映し、
+  // 開閉状態を立ててから該当行までスクロールする。
+  const revealingRef = useRef<string | null>(null); // 進行中の reveal 対象 (世代ガード)
+
+  /**
+   * react-arborist の scrollTo は内部の waitFor がリトライ上限で reject したあとも
+   * setTimeout(check, 10) を止めない実装のため、可視行にならない id を渡すと 10ms
+   * 周期のタイマーが永久に残る。可視行になったことを自前で有限回だけ待ってから呼ぶ
+   * (その時点では waitFor の初回チェックで即 resolve する)。
+   */
+  const scrollWhenVisible = useCallback((path: string, tries = 0) => {
+    const tree = treeRef.current;
+    if (!tree || revealingRef.current !== path) return;
+    // パネルが display:none / タイル非表示のあいだは行が 1 つも描画されない。
+    // 可視化されたときに reveal の effect が仕切り直すので、ここでは降りる。
+    if ((hostRef.current?.clientHeight ?? 0) <= 0) return;
+    if (path in tree.idToIndex) {
+      revealingRef.current = null;
+      void tree.scrollTo(path, 'smart')?.catch(() => {});
+      return;
+    }
+    if (tries >= 20) return; // 削除された等 — 黙って諦める
+    requestAnimationFrame(() => scrollWhenVisible(path, tries + 1));
+  }, []);
+
+  const revealPath = useCallback(
+    async (path: string) => {
+      const dirs = ancestorDirs(path);
+      // 未読み込みの階層だけ取得する (children が null、または親ごと未読み込みで木にいない)。
+      const missing = dirs.filter((d) => findNode(nodesRef.current ?? [], d)?.children == null);
+      if (missing.length > 0) {
+        let fetched: [string, TNode[]][];
+        try {
+          fetched = await Promise.all(
+            missing.map(async (d) => [d, toNodes(await api.tree(root, d))] as [string, TNode[]]),
+          );
+        } catch {
+          return; // 削除された / 権限が無い等 — 何もしない
+        }
+        if (revealingRef.current !== path) return; // 別のファイルへ切り替わった
+        const byId = new Map(fetched);
+        setNodes((prev) => {
+          if (!prev) return prev;
+          // 必ず浅い順に畳み込む: withChildren は親が既に木にいることを前提にする
+          let out = prev;
+          for (const d of dirs) {
+            const children = byId.get(d);
+            if (children) out = withChildren(out, d, children);
+          }
+          return out;
+        });
+        for (const d of missing) loadingRef.current.add(d); // loadDir の二重ロードガードと揃える
+      }
+      // data にまだ無い id でも open state は立てられる (react-arborist は redux へ
+      // dispatch するだけ)。再描画は最後の 1 回で足りる。
+      dirs.forEach((d, i) => treeRef.current?.open(d, i === dirs.length - 1));
+      scrollWhenVisible(path);
+    },
+    [root, scrollWhenVisible],
+  );
+
+  const treeReady = nodes !== null;
+  const canScroll = size.height > 0;
+  useEffect(() => {
+    if (!autoReveal || !selectedPath || !treeReady || !canScroll) return;
+    revealingRef.current = selectedPath;
+    void revealPath(selectedPath);
+    // nodes 自体は deps に入れない (revealPath が setNodes するのでループする)。
+    // 開閉状態も入れないので、ユーザーが手動で親を畳んだら次にタブが変わるまで
+    // 再展開しない (VS Code と同じ挙動)。
+  }, [autoReveal, selectedPath, treeReady, canScroll, revealPath]);
 
   /** Re-fetch one directory level, preserving expanded children, then refresh git status. */
   const refreshLevel = useCallback(

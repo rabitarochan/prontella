@@ -43,7 +43,13 @@ description: prontella の動作検証を、原則としてユーザーの実設
      非同期評価が即座に空値を返す
    - **フォーカス・blur・クリック起因の検証だけは `Input.dispatchMouseEvent`(trusted event)を使う**。
      `element.dispatchEvent(new MouseEvent(...))`(untrusted)ではブラウザー既定のフォーカス移動が
-     起きないため、**正常な実装を NG と誤判定する**(実測で踏んだ)
+     起きないため、**正常な実装を NG と誤判定する**(実測で踏んだ)。
+     **ただし、駆動手段そのものは本題に入る前に「到達確認」を取る** —
+     `Input.dispatchMouseEvent` が click を 1 つも生成しない環境がある(Chrome 152 で実測。
+     同じ接続でキーイベントは正常だった)。`document.addEventListener('click', …, true)` で
+     受信を確かめ、届かないなら `el.click()`(untrusted)へ落として**その旨を所見に明記する**。
+     フォーカス依存でない判定(状態・描画・永続化)なら untrusted でも結論は変わらない。
+     Radix の DropdownMenu だけは `pointerdown` で開くので `PointerEvent` を合成する
    - アプリ内ダイアログは React 製(ConfirmDialog)なので native dialog 処理は不要。native の
      `prompt`/`confirm` が残る箇所(Sidebar の worktree 削除等)は `Page.handleJavaScriptDialog` で
      先に応答を仕込む

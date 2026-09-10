@@ -247,3 +247,25 @@
   原因はスキルを途中までしか読まずにプローブを書いたことなので、重複を足しても再発は防げない。
 - supersedes: —
 - result: プローブをシェル組み込みへ、フィクスチャ id を hex 形式へ直して 19/19 PASS。
+
+## 012: 駆動手段は本題の前に到達確認を取る (手順 5 の trusted click 条項を改訂)
+
+- date: 2026-09-10
+- context: ファイルツリーの autoReveal を隔離実機で検証中、手順 5 のとおり
+  `Input.dispatchMouseEvent`(trusted)でサイドバーの worktree 行をクリックしたが、
+  **click イベントが 1 つも発火しなかった**(Chrome 152)。座標も要素も正しく、
+  hover の見た目まで変わるのに React の `onClick` に届かない。同じ CDP 接続で
+  キーイベント(Ctrl+P・Enter・`Input.insertText`)は正常に通っていた。
+  `document.addEventListener('click', …, true)` を仕掛けて初めて「イベント自体が
+  来ていない」と分かった。それまでは製品側(worktree 選択)の不具合を疑いかけていた。
+- change: 手順 5 の trusted click 条項に「到達確認を先に取る / 届かなければ untrusted へ
+  落として所見に明記する / フォーカス依存でない判定は untrusted でも結論が変わらない /
+  Radix DropdownMenu は `pointerdown` 合成が要る」を追記。Why = **既存条項は
+  「untrusted だと誤判定する」しか言っておらず、「trusted が空振りする」場合の
+  出口が無かった**ため、指示どおりにやるほど製品を疑う方向へ逸れる。
+  **罠リストへの新規追加はしない** — 原因は罠の知識不足ではなく手順 5 の条項が
+  片側しか書いていなかったことなので、罠を足しても同じ迷い方を防げない(011 と同じ判断)。
+- supersedes: — (手順 5 の trusted click 優先という方針自体は維持し、その前段に
+  到達確認を挟むだけ。untrusted を既定に戻すわけではない)
+- result: 到達確認 → untrusted 駆動へ切り替えて 14 項目 PASS。フォーカスを奪っていないことは
+  `document.activeElement` で別途アサートし、untrusted 化で失われる観測を補った。

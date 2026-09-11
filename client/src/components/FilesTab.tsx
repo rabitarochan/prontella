@@ -26,7 +26,7 @@ import {
 import { useT, type StringKey } from '../i18n';
 import { isMarkdownPath } from '../markdown/paths';
 import { registerFilesTab, touchFilesTab, unregisterFilesTab } from '../search/registry';
-import { switchToBuiltin } from '../lsp';
+import { switchLspMode } from '../lsp';
 import { getLspSession } from '../lsp/session';
 import { useLspStatus } from '../lsp/useLspStatus';
 import { registerLspWorkspace, unregisterLspWorkspace } from '../lsp/workspaces';
@@ -1189,7 +1189,8 @@ export default function FilesTab({
                   ? {
                       ...lspStatus,
                       onRestart: () => getLspSession(root).restart(),
-                      onUseBuiltin: () => void switchToBuiltin(),
+                      onUseBuiltin: () => void switchLspMode('builtin'),
+                      onUseLsp: () => void switchLspMode('lsp'),
                     }
                   : undefined
               }

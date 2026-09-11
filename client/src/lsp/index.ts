@@ -30,8 +30,11 @@ export async function initLsp(): Promise<void> {
   startLspDocuments();
 }
 
-/** ステータスバーの「内蔵に戻す」: 設定を builtin に書き戻してリロードする。 */
-export async function switchToBuiltin(): Promise<void> {
-  await fetch('/api/lsp/mode', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'builtin' }) });
+/**
+ * ステータスバーからの切替: 設定を書き換えてリロードする。設定 UI は無いので、これが唯一の入口
+ * (config.json の手編集を除く)。mode は起動時固定なのでリロードが要る。
+ */
+export async function switchLspMode(mode: 'builtin' | 'lsp'): Promise<void> {
+  await fetch('/api/lsp/mode', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) });
   window.location.reload();
 }

@@ -117,11 +117,13 @@ export default function EditorStatusBar({
   onEolOverride?: () => void;
   /** 言語サーバーの状態 (LSP モードのときだけ)。省略すると項目を出さない。 */
   lsp?: {
-    state: 'connecting' | 'starting' | 'ready' | 'disabled' | 'unavailable' | 'stopped';
+    /** 'builtin' は LSP モードが無効 (内蔵 TypeScript)。切替の入口としてだけ出す */
+    state: 'builtin' | 'connecting' | 'starting' | 'ready' | 'disabled' | 'unavailable' | 'stopped';
     source?: string;
     error?: string;
     onRestart: () => void;
     onUseBuiltin: () => void;
+    onUseLsp: () => void;
   };
 }) {
   const t = useT();
@@ -296,13 +298,23 @@ export default function EditorStatusBar({
         <DropdownMenu>
           <DropdownMenuTrigger
             className={TRIGGER_CLS}
-            title={lsp.error ?? (lsp.source ? t('files.lsp.tooltip', { source: lsp.source }) : undefined)}
+            title={
+              lsp.state === 'builtin'
+                ? t('files.lsp.builtinTooltip')
+                : (lsp.error ?? (lsp.source ? t('files.lsp.tooltip', { source: lsp.source }) : undefined))
+            }
           >
             {t(`files.lsp.${lsp.state}`)}
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="end" onCloseAutoFocus={(e) => e.preventDefault()}>
-            <DropdownMenuItem onSelect={lsp.onRestart}>{t('files.lsp.restart')}</DropdownMenuItem>
-            <DropdownMenuItem onSelect={lsp.onUseBuiltin}>{t('files.lsp.useBuiltin')}</DropdownMenuItem>
+            {lsp.state === 'builtin' ? (
+              <DropdownMenuItem onSelect={lsp.onUseLsp}>{t('files.lsp.useLsp')}</DropdownMenuItem>
+            ) : (
+              <>
+                <DropdownMenuItem onSelect={lsp.onRestart}>{t('files.lsp.restart')}</DropdownMenuItem>
+                <DropdownMenuItem onSelect={lsp.onUseBuiltin}>{t('files.lsp.useBuiltin')}</DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       )}

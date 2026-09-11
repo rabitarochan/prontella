@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import { lspEnabled } from './index';
 import { getLspSession, type LspStatus } from './session';
 
-/** root の LSP 接続状態 (ステータスバー用)。LSP 無効なら null。 */
-export function useLspStatus(root: string): LspStatus | null {
-  const [status, setStatus] = useState<LspStatus | null>(null);
+export type LspBarStatus = LspStatus | { state: 'builtin' };
+
+/** root の LSP 接続状態 (ステータスバー用)。LSP 無効 (mode = builtin) なら 'builtin'。 */
+export function useLspStatus(root: string): LspBarStatus | null {
+  const [status, setStatus] = useState<LspBarStatus | null>(null);
   useEffect(() => {
     if (!lspEnabled || !root) {
-      setStatus(null);
+      setStatus(lspEnabled ? null : { state: 'builtin' });
       return;
     }
     return getLspSession(root).subscribe(setStatus);

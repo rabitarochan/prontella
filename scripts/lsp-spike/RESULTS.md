@@ -47,3 +47,30 @@
 
 **Step 8 の設計**: `provideDefinition` で root 配下の対象ファイルのモデルを事前生成（内容は既存のファイル読み出し API）してから返す。
 F12 / Ctrl+クリックは `registerEditorOpener` → `openAtLine` で着地。peek は事前生成したモデルをそのまま表示する。§7 の切替の引き金には該当しない。
+
+## 実機検証（2026-09-11、隔離環境 `vt/lsp-01`: TS 7.0.2 の小プロジェクト + ビルド済み client を port 4711 で配信）
+
+設計書 §8 のうち通したもの:
+
+| # | 項目 | 結果 |
+|---|---|---|
+| 1 | 編集 → その場で補完に今書いた関数名が出る | ✓ `function zetaFn` を書いた直後の `zet` で `zetaFn, Function` |
+| 1 | 別プロセスでファイル書き換え → タブに戻る → 取り込み後の内容で候補が出る (`isFlush` 経路) | ✓ b.ts に外部追記した `fromDiskValue` が a.ts で auto-import 候補に出て、確定で `import { fromDiskValue } from "./b";` が挿入される (additionalTextEdits) |
+| 2 | 候補が重複しない (内蔵停止が効いている) | ✓ `config.` で `host` / `port` が 1 件ずつ |
+| 4/6 | LS を手動 kill → 次の補完で復帰 | ✓ `Stop-Process tsc` 後の `config.` で候補が返る |
+| 7 | エディター未生成の画面で例外が出ない | ✓ デッキ画面でコンソールエラー無し |
+| 9 | 定義ジャンプ: 別ファイル (F12 で a.ts が開きカーソルが定義位置) / peek (Alt+F12 で a.ts の**編集中の内容**がプレビューされる) / `node_modules` の 2MB 超 `.d.ts` (「定義先を開けません: …lib.dom.d.ts」を通知して止まる) | ✓ |
+| 10 | ステータスバー「内蔵の TypeScript に戻す」→ config が `builtin` に書き換わりリロード後は LSP 項目が消える | ✓ |
+| — | ホバー | ✓ `const config: { port: number; host: string; }` |
+| — | didSave | ✓ Ctrl+S で `textDocument/didSave` が流れる |
+
+未実施: 複数タイルのオーナーシップ移譲 (3)、PC スリープ復帰 (4)、5 分アイドル停止と上限 4 本 (5)、3 回連続 kill (6、単体テストで固定済み)、分割直後の未処理拒否 (8)、macOS (11)。
+
+**要確認 (LSP 起因ではない可能性が高い)**: 補完ウィジェットの候補ラベルが行の外に押し出されて見えない
+(`.suggest-icon` の幅が 414px に膨らみ、ラベルが 2 行目に落ちて行高 18px で切れる。aria-label は正しい)。
+内蔵モードでの再現確認は未了。
+
+**既知の見た目**: peek のタイトルにモデル URI 由来の `\<leafId>\src` が出る (モデル URI の第 1 セグメントが leafId のため)。
+
+**TS 7 workspace の `-ext`**: tsgo は `lib.*.d.ts` を `node_modules/@typescript/typescript-<platform>/lib/` から引くため
+root 配下 = `file` 扱いになり、`-ext` になるのは root の外に TypeScript がある構成のみ。

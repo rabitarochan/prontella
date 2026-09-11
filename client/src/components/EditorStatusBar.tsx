@@ -92,6 +92,7 @@ export default function EditorStatusBar({
   onReloadWithEncoding,
   onSaveWithEncoding,
   onEolOverride,
+  lsp,
 }: {
   /** インデント / EOL の表示元であり、変更の適用先でもあるエディター。 */
   editor: EditorInstance | null;
@@ -114,6 +115,14 @@ export default function EditorStatusBar({
   onSaveWithEncoding?: (encoding: string, bom: boolean) => void;
   /** EOL をユーザーが明示選択したことの記録 (FilesTab の保存時整形が使う)。省略可。 */
   onEolOverride?: () => void;
+  /** 言語サーバーの状態 (LSP モードのときだけ)。省略すると項目を出さない。 */
+  lsp?: {
+    state: 'connecting' | 'starting' | 'ready' | 'disabled' | 'unavailable' | 'stopped';
+    source?: string;
+    error?: string;
+    onRestart: () => void;
+    onUseBuiltin: () => void;
+  };
 }) {
   const t = useT();
   const [position, setPosition] = useState<{ line: number; column: number } | null>(null);
@@ -283,6 +292,20 @@ export default function EditorStatusBar({
             </DropdownMenuContent>
           </DropdownMenu>
         ))}
+      {lsp && (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            className={TRIGGER_CLS}
+            title={lsp.error ?? (lsp.source ? t('files.lsp.tooltip', { source: lsp.source }) : undefined)}
+          >
+            {t(`files.lsp.${lsp.state}`)}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="end" onCloseAutoFocus={(e) => e.preventDefault()}>
+            <DropdownMenuItem onSelect={lsp.onRestart}>{t('files.lsp.restart')}</DropdownMenuItem>
+            <DropdownMenuItem onSelect={lsp.onUseBuiltin}>{t('files.lsp.useBuiltin')}</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   );
 }

@@ -14,6 +14,7 @@ import * as monaco from 'monaco-editor';
 import { api } from '../../api';
 import { hashText, tabKey, type OpenTabRef, type TabKind } from '../../editorState';
 import { bumpGitEpoch } from '../../gitEpoch';
+import { notifyDocumentSaved } from '../../lsp/documents';
 import { useT, type StringKey } from '../../i18n';
 import type { FileContent } from '../../types';
 import { basename } from '../editorTabs';
@@ -451,6 +452,7 @@ export function useFileEntries(root: string, leafId: string, init: FileEntriesIn
         // (ガター差分の基準は index なので自分の装飾は変わらない — 内容変更は
         //  useGitGutter の onDidChangeContent が既に拾っている。)
         bumpGitEpoch(rootRef.current);
+        notifyDocumentSaved(leafIdRef.current, path);
         setEntries((prev) => {
           const e = prev[key];
           if (!e || !e.file) return prev;

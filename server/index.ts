@@ -1600,6 +1600,20 @@ app.get('/api/lsp/mode', (_req, res) => {
   res.json({ mode: lspConfig().typescript.mode });
 });
 
+// ステータスバーの「内蔵に戻す」/ 切替。値は 'builtin' | 'lsp' のみ。
+app.put('/api/lsp/mode', (req, res) => {
+  const body: unknown = req.body;
+  const mode = body !== null && typeof body === 'object' ? (body as { mode?: unknown }).mode : undefined;
+  if (mode !== 'builtin' && mode !== 'lsp') {
+    res.status(400).json({ error: "mode は 'builtin' か 'lsp' を指定してください" });
+    return;
+  }
+  const cfg = config.loadConfig();
+  const prev = typeof cfg.lsp === 'object' && cfg.lsp !== null && !Array.isArray(cfg.lsp) ? (cfg.lsp as Record<string, unknown>) : {};
+  config.saveConfig({ ...cfg, lsp: { ...prev, typescript: { ...lspConfig().typescript, mode } } });
+  res.json({ mode });
+});
+
 /**
  * `/ws/lsp?root=` は任意ディレクトリーでのプロセス起動になるので、`/api/fs/*` (読み書きのみ) より
  * 重い防壁を置く: 登録済み repo か、その走査で見つかった worktree の配下だけを受ける。
@@ -1750,6 +1764,8 @@ server.on('upgrade', (req, socket, head) => {
     wss.handleUpgrade(req, socket, head, (ws) => {
       instrumentSocket(metrics, ws, '/ws/lsp');
       if (!root || !isKnownRoot(root) || !fs.existsSync(root) || lspConfig().typescript.mode !== 'lsp') {
+        // クライアントが再接続ループに入らないよう、閉じる前に refused を告げる
+        ws.send(JSON.stringify({ jsonrpc: '2.0', method: '$/prontella/status', params: { state: 'disabled', refused: true } }));
         ws.close(4003, 'lsp unavailable for this root');
         return;
       }

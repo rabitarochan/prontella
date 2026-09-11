@@ -96,6 +96,18 @@ export const FILES_STRINGS = {
   'files.reloadWithEncoding': { ja: 'エンコーディング指定で再読み込み', en: 'Reload with encoding' },
   'files.saveWithEncoding': { ja: 'エンコーディング指定で保存', en: 'Save with encoding' },
   'files.changeEolTooltip': { ja: '改行コードを変更', en: 'Change line ending' },
+  // ---- 言語サーバー (client/src/lsp) ----
+  'files.lsp.connecting': { ja: 'LSP: 接続中', en: 'LSP: connecting' },
+  'files.lsp.starting': { ja: 'LSP: 起動中', en: 'LSP: starting' },
+  'files.lsp.ready': { ja: 'LSP', en: 'LSP' },
+  'files.lsp.disabled': { ja: 'LSP: 未検出', en: 'LSP: not found' },
+  'files.lsp.unavailable': { ja: 'LSP: 停止', en: 'LSP: unavailable' },
+  'files.lsp.stopped': { ja: 'LSP: 停止中', en: 'LSP: stopped' },
+  'files.lsp.tooltip': { ja: '言語サーバー ({source})', en: 'Language server ({source})' },
+  'files.lsp.restart': { ja: '言語サーバーを再起動', en: 'Restart language server' },
+  'files.lsp.useBuiltin': { ja: '内蔵の TypeScript に戻す (リロード)', en: 'Use built-in TypeScript (reload)' },
+  'files.lsp.outsideWorkspace': { ja: '定義はワークスペース外にあります', en: 'The definition is outside the workspace' },
+  'files.lsp.cannotOpenTarget': { ja: '定義先を開けません: {path}', en: 'Cannot open the definition: {path}' },
 
   // ---- クイックオープン (QuickOpenModal, Ctrl+P) ----
   'files.quickOpenTitle': { ja: 'ファイルを開く', en: 'Open file' },

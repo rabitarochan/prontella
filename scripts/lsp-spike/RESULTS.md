@@ -113,3 +113,64 @@ root 配下 = `file` 扱いになり、`-ext` になるのは root の外に Typ
 
 **隔離 home の罠**: `USERPROFILE` を差し替えた隔離環境では Roslyn（MSBuild/NuGet）が `~/.nuget/packages` を見失い、
 プロジェクトは読めても参照が解決されず補完/ホバーが null になる（pj-isolated-verify の例外規律に該当）。C# の検証は実 home + 別ポートで行う。
+
+---
+
+# フェーズ 2 測定（2026-09-12、`scripts/lsp-spike/s4-diagnostics.mjs`）
+
+対象: tsgo 7.0.2（本 repo、`server/lsp/uri.ts`）/ Roslyn 2.140.9（MSS3.sln、`src/MSS3.Application/BisuAi/BisuAiApplicationService.cs`）。
+
+| | tsgo | Roslyn |
+|---|---|---|
+| `diagnosticProvider` | `{identifier:'typescript', interFileDependencies:true, workspaceDiagnostics:false}` | `{interFileDependencies:true, workspaceDiagnostics:false}` |
+| D1 didOpen 直後の pull | 153 ms、`{kind:'full', items}`、**`resultId` 無し** | **5.5 s**（意味解析の完了と同期 = R8 の温め）、`resultId` あり |
+| D2 `previousResultId` 付き再 pull | — | 9 ms、`{kind:'unchanged', resultId}` |
+| D3 didChange（構文エラー追記）→ 反映される pull | **5 ms** | **231 ms**（小さいファイルで 86〜136 ms） |
+| D4 増分で戻す → 元の件数に戻る | 5 ms | 163 ms |
+| push (`publishDiagnostics`) | **0 件**（didChange 後も来ない。MVP の記録「pull + push」は initialize 前提の違い） | 0 件 |
+| `code` | number（1134）、`source:'ts'` | string（`CS1001` / `IDE0290` / `CA1822`）+ `codeDescription.href` |
+| `tags` | 無し | LSP の 1/2 に加えて **Roslyn 独自の巨大な値**（2147483640〜2147483645）が混ざる → 1/2 以外は捨てる |
+| severity の内訳 | Error のみ | Info(3) = IDE/CA の提案が大半（5 件中 5 件）、Hint(4) は IDE0005 等 |
+| `relatedInformation` | 無し（今回の範囲） | 無し（今回の範囲）— 変換は実装するが実データ未確認 |
+| `signatureHelpProvider` | `( , <` / retrigger `)` | `( , [ < {` / retrigger `) ] > }` |
+| signatureHelp 応答 | `signatures[0].label` = 全体、`parameters[].label` は **string**、`activeParameter` は**トップレベルに無く signature 側**（`undefined` / 0）、documentation markdown | 同形、`activeParameter:0` がトップレベルにも signature 側にもある、documentation plaintext、81 ms（トリガー時 4 ms） |
+| signatureHelp trigger 検証 | `triggerKind:2, triggerCharacter:'('` で **位置の直前が `(` でないと null**（invoked は返す） | 両方返す |
+| references 応答 | **`Location[]`**（`file:///c%3A/...` 小文字ドライブ）、3 ms、別ファイル含む | **`Location[]`**（`file:///C:/...`）、**1.8 s**、別プロジェクト含む、メタデータ参照は無し |
+| **全文 didChange（range 無し `contentChanges:[{text}]`）** | 生存（pull 16 ms） | **クラッシュ**（`DidChangeHandler` → `ProtocolConversions.RangeToLinePositionSpan` で NullReferenceException、exit 0xE0434352）。同期は `change: 2` (incremental) のみ |
+
+**帰結:**
+- **D5: MVP の所有権移譲（既知 doc への didOpen → 全文 didChange）と isFlush / isEolChange の全文 didChange は Roslyn を殺す**。
+  セッション層で range 無しの didChange を **didClose → didOpen（＋C# は再温め）** に変換する（1 箇所で両経路を直す）
+- 診断は pull のみ。push は捨てたままでよい。`previousResultId` は使わない（常に full。`unchanged` が来たら既存を維持）
+- didChange 後のデバウンスは初期値 300 ms のまま（Roslyn の再 pull は 25 プロジェクトで ≈ 0.2 s、1 秒を超えない）
+- signatureHelp の `activeParameter` は「トップレベル → signature 側 → 0」の順で取る
+- references の事前生成は LocationLink 形が無いので `Location[]` のみ扱えばよい（`toLinkTargets` がそのまま使える）
+- **ソリューションに含まれないファイル**（例: `mss3-backend/src/FTM.DataSource/...` は MSS3.sln が `..\ftm-backend\...` の別コピーを参照）は
+  misc 扱い: 診断に IDE0005「using は不要」が出て hover / signatureHelp が null、references が空。製品の不具合と区別しにくいので
+  5 の `LSP: 解析中` と合わせて覚えておく
+
+## フェーズ 2 実機検証（2026-09-12。TS は `vt/lsp-02`（隔離 home、port 4711、TS 7.0.2 をジャンクションで参照する 2 ファイルの repo）、
+## C# は実 home + port 3799 で MSS3）
+
+| # | 項目 | 結果 |
+|---|---|---|
+| 1-1 | 2 タイルで同じ `a.ts`。左で `zetaFn` を追記 → 右で補完 | ✓ 右の要求の直前にサーバーが `didClose` → `didOpen`（右のモデル全文）を流し、その後 completion が返る（トレースで確認） |
+| 1-2 | アイドル停止 | ✓ TS: ページを閉じて 5.5 分後に `tsc.exe` 消滅（shutdown → exit）。C#: プローブ切断から 5 分で 4 本とも shutdown（**Roslyn は `shutdown` に `result: null` を返した** — MVP の R5「.NET 例外で終了」は `params: null` を送っていたのが原因で、params を省略すると正常応答する） |
+| 1-2 | 上限 | ✓ `/ws/lsp` 直叩きで MSS3 / BSS / FTM / MssNoAlloc の 4 ソリューションを開いた後の 5 つ目（Bop.Validation）は `unavailable`「言語サーバーの上限 (4) に達しています」（1 本 6〜20 秒で起動、初回 pull 2〜4 秒）。**同じセッションが 4 本を持つ限り LRU が効かない**（`evictIdle` はセッション無しのプロセスしか落とさなかった）→ doc を全部閉じたプロセスも LRU で落とすように変更し、文言に開いているソリューション名を足した（単体テストで固定） |
+| 1-3 | スリープ復帰 | 未実施（自動化できない） |
+| 1-4 | 60 秒に 3 回 kill | ✓ 3 回目で「LSP: 停止」+ tooltip「言語サーバーが 60 秒に 3 回終了しました (code=4294967295 signal=null)」、以後 didChange しても再起動しない。メニュー「言語サーバーを再起動」で復帰。**復帰後、死んでいる間に届いた didOpen が新プロセスに流れず診断・補完が空になる**不具合を発見 → spawn 時に docs を捨てて reset を告げるよう修正（単体テストで固定） |
+| 1-5 | 補完中に「右に分割」 | ✓ 未処理拒否・コンソールエラー無し |
+| 1-6 | `PUT {server:'csharp', mode:'off'}` | ✓ GET が `csharp: off`、`/ws/lsp?server=csharp` は `refused` + 4003 で閉じ、`server=typescript` は ready のまま。ステータスバーの C# 項目に「言語サーバーを止める (リロード)」を追加 |
+| 2 | TS 既定 `lsp` | ✓ 設定に `lsp` キーが無い隔離 home で `GET /api/lsp/mode` → `typescript: lsp`、初回起動から「LSP」表示 |
+| 3 | 診断 | ✓ TS: `const = ;` → 赤波線 + hover「Variable declaration expected. ts(1134)」、内蔵との二重表示無し（1 件）、直すと消える。C#: IDE 系が Info（青点線）で出て hover に「フィールドを読み取り専用にします IDE0044」+ learn.microsoft.com へのリンク。Hint は出ない |
+| 4 | SignatureHelp | ✓ TS: `makeConfig(` で `makeConfig(port: number, host: string): Config`、`,` で次の引数へ。C#: `,` で `(待機可能) Task<…> IBisuAiInfoRepository.GetBisuAiInfoByWmNoAndWmPageNoAsync(string wmNo, int wmPageNo, bool isProductionMode)` + 説明文 |
+| 4 | References | ✓ TS: Shift+F12 で References (5)、a.ts / b.ts。C#: References (5)、3 ファイル（Components / Controllers）、peek に中身 |
+| 5 | 解析中表示 | ✓ プローブで `ready` + `warming: 1` → 2〜5 秒後に `warming` 消失（`since` も付く） |
+| 6 | root 外 | ✓ TS: `console` の F12 → 「lib.dom.d.ts (読み取り専用)」モーダルが 42905 行目 `declare var console: Console;` で開く（tsgo はジャンクション先の実パスを返すので `-ext` 経路）。Alt+F12 の peek にも中身。タブ一覧には出ない。C#: `IOptions<T>` の F12 → 「IOptions.cs (読み取り専用)」（metadata-as-source、`public interface IOptions<…>` が 17 行目） |
+| D5 | Roslyn の全文同期 | ✓ 開いている `.cs` を別プロセスで書き換え → 取り込み（isFlush）で `didClose` → `didOpen` が流れ、Roslyn は生存（診断も再取得）。修正前はここで落ちていた |
+| — | 後始末 | ✓ LS の残骸無し、実 `~/.prontella/config.json` のタイムスタンプ不変、MSS3 の `git status` 不変（検証で書き換えたファイルはバイト単位で復元） |
+
+**実機で見つけて直したもの（上記以外）:**
+- **tsgo は申告外の `triggerCharacter` を受けると `-32603 InternalError: panic handling request textDocument/completion: Unknown trigger character: (`** を返す。Monaco には和集合を登録しているので、
+  クライアントは ready 後に `initialize` で LS の `completionProvider.triggerCharacters` / `signatureHelpProvider` を取り、申告外の文字は Invoked に落として送る
+- ExternalFileModal の Monaco が描画されない: Radix の Portal は最初のコミットで中身を描かず（layout effect で mounted を立ててから描く）、`useRef` の effect が要素無しで早期 return したまま二度と走らない → コールバック ref で要素を state に持つ

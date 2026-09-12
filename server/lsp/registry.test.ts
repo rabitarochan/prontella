@@ -30,8 +30,8 @@ describe('languageIdFor', () => {
 });
 
 describe('checkLspConfig', () => {
-  const DEFAULTS = { typescript: { mode: 'builtin' }, csharp: { mode: 'lsp' } };
-  it('未指定は TS builtin / C# lsp', () => {
+  const DEFAULTS = { typescript: { mode: 'lsp' }, csharp: { mode: 'lsp' } };
+  it('未指定は TS も C# も lsp (TS の既定は MVP の慣らし運転後に切り替えた)', () => {
     expect(checkLspConfig(undefined)).toEqual({ ok: true, config: DEFAULTS });
     expect(checkLspConfig(null)).toEqual({ ok: true, config: DEFAULTS });
     expect(checkLspConfig({})).toEqual({ ok: true, config: DEFAULTS });
@@ -60,12 +60,20 @@ describe('checkLspConfig', () => {
   it('command / args は制御文字を拒否', () => {
     expect(checkLspConfig({ typescript: { command: 'C:\\x\\cli.mjs', args: ['--stdio'] } })).toEqual({
       ok: true,
-      config: { ...DEFAULTS, typescript: { mode: 'builtin', command: 'C:\\x\\cli.mjs', args: ['--stdio'] } },
+      config: { ...DEFAULTS, typescript: { mode: 'lsp', command: 'C:\\x\\cli.mjs', args: ['--stdio'] } },
     });
     expect(checkLspConfig({ typescript: { command: '' } }).ok).toBe(false);
     expect(checkLspConfig({ typescript: { command: 'a\nb' } }).ok).toBe(false);
     expect(checkLspConfig({ typescript: { command: 'a', args: ['x\u0000'] } }).ok).toBe(false);
     expect(checkLspConfig({ typescript: { command: 'a', args: 'x' } }).ok).toBe(false);
+  });
+
+  it('solution は C# だけ (root 相対 or 絶対の文字列、制御文字は拒否)', () => {
+    expect(checkLspConfig({ csharp: { solution: 'mss3-backend/MSS3.sln' } })).toEqual({ ok: true, config: { ...DEFAULTS, csharp: { mode: 'lsp', solution: 'mss3-backend/MSS3.sln' } } });
+    expect(checkLspConfig({ typescript: { solution: 'x.sln' } }).ok).toBe(false);
+    expect(checkLspConfig({ csharp: { solution: '' } }).ok).toBe(false);
+    expect(checkLspConfig({ csharp: { solution: 'a\nb' } }).ok).toBe(false);
+    expect(checkLspConfig({ csharp: { solution: 7 } }).ok).toBe(false);
   });
 });
 

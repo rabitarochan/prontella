@@ -55,14 +55,20 @@ export interface LspServerConfig {
   /** 明示指定の起動コマンド。`shell: true` では起動しないので実体のパスであること。 */
   command?: string;
   args?: string[];
+  /** C# のみ: 全 doc をこのソリューション (root 相対 or 絶対) のプロセスへ。最寄り .sln の探索をしない */
+  solution?: string;
 }
 
 export type LspConfig = Record<ServerId, LspServerConfig>;
 
 export type LspConfigCheck = { ok: true; config: LspConfig } | { ok: false; error: string };
 
-/** C# は検出できれば有効 (未検出は `disabled` 表示で済み、ダイアログは出ない)。TS は既存挙動の builtin */
-export const DEFAULT_CONFIG: LspConfig = { typescript: { mode: 'builtin' }, csharp: { mode: 'lsp' } };
+/**
+ * どちらも検出できれば有効 (未検出は `disabled` 表示で済み、ダイアログは出ない)。TS の既定は MVP の
+ * 慣らし運転を経て `lsp` に切り替えた (補完 p95 22ms ≤ 150ms、4 本 ≈ 0.9GB ≤ 2GB — RESULTS.md §6 判定)。
+ * 内蔵に戻す入口はステータスバーにある。
+ */
+export const DEFAULT_CONFIG: LspConfig = { typescript: { mode: 'lsp' }, csharp: { mode: 'lsp' } };
 
 function hasControlChar(value: string): boolean {
   for (let i = 0; i < value.length; i++) {
@@ -112,6 +118,12 @@ function checkServer(id: ServerId, value: unknown, out: LspServerConfig): { ok: 
       return { ok: false, error: `lsp.${id}.args は文字列の配列が必要です` };
     }
     out.args = [...(obj.args as string[])];
+  }
+  if (obj.solution !== undefined) {
+    if (id !== 'csharp' || typeof obj.solution !== 'string' || obj.solution.length === 0 || hasControlChar(obj.solution)) {
+      return { ok: false, error: `lsp.${id}.solution は C# のみ、空でも制御文字を含んでもいけません` };
+    }
+    out.solution = obj.solution;
   }
   return { ok: true, config: out };
 }

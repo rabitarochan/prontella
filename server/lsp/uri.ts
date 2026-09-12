@@ -20,7 +20,8 @@ export interface ExtTable {
   fromOpaque(id: string): string | undefined;
 }
 
-export function createExtTable(): ExtTable {
+/** @param prefix 表ごとの接頭辞。プロセスごとに変えると id がホスト内で一意になる (`$/prontella/readExternal` が表を跨いで引く) */
+export function createExtTable(prefix = ''): ExtTable {
   const byPath = new Map<string, string>();
   const byId = new Map<string, string>();
   return {
@@ -28,7 +29,7 @@ export function createExtTable(): ExtTable {
       const key = normalizeForCompare(abs);
       let id = byPath.get(key);
       if (id === undefined) {
-        id = `e${byPath.size + 1}`;
+        id = `${prefix}e${byPath.size + 1}`;
         byPath.set(key, id);
         byId.set(id, abs);
       }

@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { WebSocket } from 'ws';
@@ -20,6 +21,9 @@ import { createExtTable, rewriteUris, uriToWire, wireToUri } from './uri.js';
  *   doc の最寄り .sln ごとにプロセスを持ち、要求は textDocument.uri で振り分ける
  *   (`completionItem/resolve` は URI を持たないので直前に completion を返したプロセスへ)
  * - `$/prontella/status` / `$/prontella/reset` の通知 (プロトコル外の拡張は `$/` 接頭辞)
+ * - range 無しの全文 didChange は **didClose → didOpen に変換**する。Roslyn は全文 didChange で
+ *   NullReferenceException を起こして落ちる (RESULTS.md フェーズ 2 D5)。所有権の移譲 (既知 doc への didOpen)
+ *   とクライアントの isFlush / isEolChange の両経路がここを通るので、ここ 1 箇所で直す
  */
 
 const ALLOWED_REQUESTS = new Set([
@@ -27,7 +31,12 @@ const ALLOWED_REQUESTS = new Set([
   'textDocument/hover',
   'textDocument/definition',
   'completionItem/resolve',
+  'textDocument/diagnostic',
+  'textDocument/signatureHelp',
+  'textDocument/references',
 ]);
+/** `$/prontella/readExternal` の上限。lib.dom.d.ts (2.3MB) が入る */
+export const MAX_EXTERNAL_SIZE = 4 * 1024 * 1024;
 const DOC_NOTIFICATIONS = new Set(['textDocument/didOpen', 'textDocument/didChange', 'textDocument/didClose', 'textDocument/didSave']);
 
 export const ERR_METHOD_NOT_FOUND = -32601;
@@ -36,7 +45,7 @@ export const ERR_NOT_OWNER = -32803;
 
 interface DocParams {
   textDocument?: { uri?: string; languageId?: string; version?: number; text?: string };
-  contentChanges?: unknown[];
+  contentChanges?: Array<{ range?: unknown; text?: string }>;
   text?: string;
 }
 
@@ -56,6 +65,9 @@ export function attachLsp(ws: WebSocket, root: string, host: LspHost, serverId: 
   const slots = new Map<string, Slot>();
   const solutionByDir = new Map<string, string | null>();
   let lastCompletion: Slot | null = null;
+  // lsp.csharp.solution: 設定があれば全 doc をそのソリューションのプロセスへ (.sln が見つからない doc にも効く)
+  const configuredSolution = serverId === 'csharp' ? host.configFor('csharp').solution : undefined;
+  const fixedSolution = configuredSolution ? path.resolve(rootAbs, configuredSolution) : undefined;
 
   // 解釈できない URI が 1 つでもあれば要求ごと拒否する (黙って落とすと LS に空文字が渡る)。
   // クライアントは -ext URI を送ってこないので ext 表は空でよい
@@ -101,6 +113,7 @@ export function attachLsp(ws: WebSocket, root: string, host: LspHost, serverId: 
   /** doc の宛先プロセス。C# は最寄りの .sln 単位、TS は root に 1 つ */
   function slotFor(diskUri: string): Slot {
     if (serverId !== 'csharp') return acquire('');
+    if (fixedSolution !== undefined) return acquire(process.platform === 'win32' ? fixedSolution.toLowerCase() : fixedSolution, fixedSolution);
     let abs: string;
     try {
       abs = fileURLToPath(diskUri);
@@ -150,6 +163,11 @@ export function attachLsp(ws: WebSocket, root: string, host: LspHost, serverId: 
       if (target !== undefined) for (const s of slots.values()) s.handle.cancel(s.listener, target);
       return;
     }
+    if (method === '$/prontella/readExternal') {
+      if (id === undefined) return;
+      const wire = (msg.params as { uri?: unknown } | undefined)?.uri;
+      return reply({ result: typeof wire === 'string' ? readExternal(wire) : null });
+    }
 
     if (DOC_NOTIFICATIONS.has(method)) {
       const p = fromWire(msg.params);
@@ -189,26 +207,36 @@ export function attachLsp(ws: WebSocket, root: string, host: LspHost, serverId: 
   function onDocNotification(slot: Slot, method: string, uri: string, params: DocParams): void {
     const { handle: h, listener: me } = slot;
     const doc = h.docs.get(uri);
+    const open = (languageId: string, version: number, text: string) => {
+      h.notify({ method: 'textDocument/didOpen', params: { textDocument: { uri, languageId, version, text } } });
+      if (serverId === 'csharp') h.warm(uri);
+    };
     switch (method) {
       case 'textDocument/didOpen': {
+        const languageId = params.textDocument?.languageId ?? doc?.languageId ?? 'plaintext';
         if (!doc) {
-          h.docs.set(uri, { holders: new Set([me]), owner: me });
-          h.notify({ method, params });
-          if (serverId === 'csharp') h.warm(uri);
+          h.docs.set(uri, { holders: new Set([me]), owner: me, languageId });
+          open(languageId, params.textDocument?.version ?? 0, params.textDocument?.text ?? '');
         } else {
-          // 既に LS が知っている → 全文 didChange で本文を差し替え、所有権を取る
+          // 既に LS が知っている → 閉じて開き直し、本文を差し替えて所有権を取る
           doc.holders.add(me);
           doc.owner = me;
-          h.notify({
-            method: 'textDocument/didChange',
-            params: { textDocument: { uri, version: params.textDocument?.version ?? 0 }, contentChanges: [{ text: params.textDocument?.text ?? '' }] },
-          });
+          h.notify({ method: 'textDocument/didClose', params: { textDocument: { uri } } });
+          open(doc.languageId, params.textDocument?.version ?? 0, params.textDocument?.text ?? '');
         }
         return;
       }
-      case 'textDocument/didChange':
-        if (doc && doc.owner === me) h.notify({ method, params });
+      case 'textDocument/didChange': {
+        if (!doc || doc.owner !== me) return;
+        const full = [...(params.contentChanges ?? [])].reverse().find((c) => c && typeof c === 'object' && c.range === undefined);
+        if (full) {
+          h.notify({ method: 'textDocument/didClose', params: { textDocument: { uri } } });
+          open(doc.languageId, params.textDocument?.version ?? 0, full.text ?? '');
+        } else {
+          h.notify({ method, params });
+        }
         return;
+      }
       case 'textDocument/didClose':
         closeDoc(slot, uri);
         return;
@@ -228,6 +256,33 @@ export function attachLsp(ws: WebSocket, root: string, host: LspHost, serverId: 
       h.notify({ method: 'textDocument/didClose', params: { textDocument: { uri } } });
     } else if (doc.owner === me) {
       doc.owner = null; // 残った側は次の要求で not-owner を受け、全文で取り直す
+    }
+  }
+
+  /**
+   * root 外 (`-ext`) または root 内で `/api/fs` の上限を超えるファイルを読み取り専用ビューアー向けに読む。
+   * `-ext` の opaque id は各プロセスの ExtTable からしか引けない (絶対パスは受け取らない)。
+   */
+  function readExternal(wire: string): { name: string; text: string } | null {
+    let abs: string | null = null;
+    for (const s of slots.values()) {
+      const disk = wireToUri(rootAbs, rootToken, s.handle.ext, wire);
+      if (disk !== null) {
+        try {
+          abs = fileURLToPath(disk);
+        } catch {
+          return null;
+        }
+        break;
+      }
+    }
+    if (abs === null) return null;
+    try {
+      const st = fs.statSync(abs);
+      if (!st.isFile() || st.size > MAX_EXTERNAL_SIZE) return null;
+      return { name: path.basename(abs), text: fs.readFileSync(abs, 'utf8') };
+    } catch {
+      return null;
     }
   }
 

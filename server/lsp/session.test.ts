@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { pathToFileURL } from 'node:url';
@@ -6,8 +7,8 @@ import type { WebSocket } from 'ws';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createMessageReader, encodeMessage } from './framing.js';
 import { LspHost, answerServerRequest, type JsonRpcMessage } from './host.js';
-import { ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, ERR_NOT_OWNER, attachLsp } from './session.js';
-import type { ServerId } from './registry.js';
+import { ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, ERR_NOT_OWNER, MAX_EXTERNAL_SIZE, attachLsp } from './session.js';
+import type { LspServerConfig, ServerId } from './registry.js';
 
 // 偽の言語サーバー: stdin のフレームを解釈し、initialize には capabilities を、それ以外の要求には
 // {echo: method, params} を返す。
@@ -86,10 +87,10 @@ async function settle() {
 const root = process.cwd();
 const diskUri = (rel: string) => pathToFileURL(path.join(root, rel)).href;
 
-function setup() {
+function setup(config: LspServerConfig = { mode: 'lsp' }) {
   const children: FakeChild[] = [];
   const host = new LspHost({
-    configFor: () => ({ mode: 'lsp' }),
+    configFor: () => config,
     resolve: () => ({ command: 'fake', args: [], source: 'config' }),
     env: () => ({}),
     spawn: (() => {
@@ -154,7 +155,7 @@ describe('attachLsp', () => {
     expect(ws.last()).toMatchObject({ id: 3, result: null });
   });
 
-  it('別セッションの重複 didOpen は全文 didChange になり、所有権が移る (非 owner の要求は -32803)', async () => {
+  it('別セッションの重複 didOpen は didClose + didOpen になり、所有権が移る (非 owner の要求は -32803)', async () => {
     const { connect, child } = setup();
     const a = connect();
     const b = connect();
@@ -165,18 +166,21 @@ describe('attachLsp', () => {
     a.push({ method: 'textDocument/didOpen', params: { textDocument: { uri, languageId: 'typescript', version: 1, text: 'A' } } });
     b.push({ method: 'textDocument/didOpen', params: { textDocument: { uri, languageId: 'typescript', version: 7, text: 'B' } } });
     await settle();
-    const opens = child().received.filter((m) => m.method === 'textDocument/didOpen');
-    const changes = child().received.filter((m) => m.method === 'textDocument/didChange');
-    expect(opens).toHaveLength(1);
-    expect(changes).toHaveLength(1);
-    expect(changes[0]!.params).toEqual({ textDocument: { uri: diskUri('src/a.ts'), version: 7 }, contentChanges: [{ text: 'B' }] });
+    // Roslyn は全文 didChange で落ちる (RESULTS.md フェーズ 2 D5) ので、閉じて開き直す
+    expect(child().received.filter((m) => m.method !== 'initialize' && m.method !== 'initialized').map((m) => m.method)).toEqual([
+      'textDocument/didOpen',
+      'textDocument/didClose',
+      'textDocument/didOpen',
+    ]);
+    const reopened = child().received.filter((m) => m.method === 'textDocument/didOpen')[1]!;
+    expect(reopened.params).toEqual({ textDocument: { uri: diskUri('src/a.ts'), languageId: 'typescript', version: 7, text: 'B' } });
 
     // a は owner ではない → -32803。a の didChange は流れない
-    a.push({ method: 'textDocument/didChange', params: { textDocument: { uri, version: 2 }, contentChanges: [{ text: 'A2' }] } });
+    a.push({ method: 'textDocument/didChange', params: { textDocument: { uri, version: 2 }, contentChanges: [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, text: 'A2' }] } });
     a.push({ id: 10, method: 'textDocument/completion', params: { textDocument: { uri }, position: { line: 0, character: 0 } } });
     await settle();
     expect(a.last()).toMatchObject({ id: 10, error: { code: ERR_NOT_OWNER, data: { prontella: 'not-owner' } } });
-    expect(child().received.filter((m) => m.method === 'textDocument/didChange')).toHaveLength(1);
+    expect(child().received.filter((m) => m.method === 'textDocument/didChange')).toHaveLength(0);
 
     // a が全文 didOpen で取り直す → 通る
     a.push({ method: 'textDocument/didOpen', params: { textDocument: { uri, languageId: 'typescript', version: 3, text: 'A3' } } });
@@ -184,11 +188,125 @@ describe('attachLsp', () => {
     await settle();
     expect(a.last()).toMatchObject({ id: 11, result: { echo: 'textDocument/completion' } });
 
-    // b が閉じても a が持っているので LS には didClose を送らない。a が閉じたら送る
+    // b が閉じても a が持っているので LS には didClose を送らない。a が閉じたら送る (2 回の開き直しぶんを除く)
+    const closesBefore = child().received.filter((m) => m.method === 'textDocument/didClose').length;
     b.push({ method: 'textDocument/didClose', params: { textDocument: { uri } } });
-    expect(child().received.filter((m) => m.method === 'textDocument/didClose')).toHaveLength(0);
+    expect(child().received.filter((m) => m.method === 'textDocument/didClose')).toHaveLength(closesBefore);
     a.close();
-    expect(child().received.filter((m) => m.method === 'textDocument/didClose')).toHaveLength(1);
+    expect(child().received.filter((m) => m.method === 'textDocument/didClose')).toHaveLength(closesBefore + 1);
+  });
+
+  it('range 無しの全文 didChange は didClose + didOpen に変換する (isFlush / isEolChange 経路。Roslyn が落ちるため)', async () => {
+    const { connect, child } = setup();
+    const ws = connect();
+    sockets.push(ws);
+    await settle();
+    const token = (ws.sent[0]!.params as { rootToken: string }).rootToken;
+    const uri = `file:///${token}/src/a.tsx`;
+    ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri, languageId: 'typescriptreact', version: 1, text: 'A' } } });
+    ws.push({ method: 'textDocument/didChange', params: { textDocument: { uri, version: 2 }, contentChanges: [{ range: { start: { line: 0, character: 1 }, end: { line: 0, character: 1 } }, text: 'B' }] } });
+    ws.push({ method: 'textDocument/didChange', params: { textDocument: { uri, version: 3 }, contentChanges: [{ text: 'C' }] } });
+    await settle();
+    const seq = child().received.filter((m) => m.method?.startsWith('textDocument/'));
+    expect(seq.map((m) => m.method)).toEqual(['textDocument/didOpen', 'textDocument/didChange', 'textDocument/didClose', 'textDocument/didOpen']);
+    // 開き直しの languageId は最初の didOpen のもの (tsgo は最初の languageId で固定する)
+    expect(seq[3]!.params).toEqual({ textDocument: { uri: diskUri('src/a.tsx'), languageId: 'typescriptreact', version: 3, text: 'C' } });
+    expect(child().received.filter((m) => m.method === 'textDocument/didChange')).toHaveLength(1);
+  });
+
+  it('diagnostic / signatureHelp / references は LS へ届き、応答の URI が書き換わる', async () => {
+    const { connect, child } = setup();
+    const ws = connect();
+    sockets.push(ws);
+    await settle();
+    const token = (ws.sent[0]!.params as { rootToken: string }).rootToken;
+    const uri = `file:///${token}/src/a.ts`;
+    ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri, languageId: 'typescript', version: 1, text: '' } } });
+    ws.push({ id: 1, method: 'textDocument/diagnostic', params: { textDocument: { uri } } });
+    ws.push({ id: 2, method: 'textDocument/signatureHelp', params: { textDocument: { uri }, position: { line: 0, character: 0 }, context: { triggerKind: 1, isRetrigger: false } } });
+    // references は Location[] で返る (LS 側の絶対 URI → ワイヤー)
+    const orig = child().reply.bind(child());
+    child().reply = (m) => orig(m.id !== undefined && (m.result as { echo?: string } | undefined)?.echo === 'textDocument/references' ? { id: m.id, result: [{ uri: diskUri('src/b.ts'), range: { start: { line: 1, character: 2 }, end: { line: 1, character: 5 } } }] } : m);
+    ws.push({ id: 3, method: 'textDocument/references', params: { textDocument: { uri }, position: { line: 0, character: 0 }, context: { includeDeclaration: true } } });
+    await settle();
+    expect(child().received.map((m) => m.method)).toEqual(expect.arrayContaining(['textDocument/diagnostic', 'textDocument/signatureHelp', 'textDocument/references']));
+    child().answerDiagnostics(); // 偽サーバーは diagnostic を手動で返す
+    await settle();
+    expect(ws.find((m) => m.id === 1)).toMatchObject({ result: { items: [] } });
+    expect(ws.find((m) => m.id === 2)).toMatchObject({ result: { echo: 'textDocument/signatureHelp' } });
+    expect(ws.find((m) => m.id === 3)).toMatchObject({ result: [{ uri: `file:///${token}/src/b.ts` }] });
+  });
+
+  it('$/prontella/readExternal: -ext と root 内の URI を読む。上限超え・未知の id・絶対パスは null', async () => {
+    const { connect, child } = setup();
+    const ws = connect();
+    sockets.push(ws);
+    await settle();
+    const token = (ws.sent[0]!.params as { rootToken: string }).rootToken;
+    const uri = `file:///${token}/src/a.ts`;
+    ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri, languageId: 'typescript', version: 1, text: '' } } });
+    const dir = fs.mkdtempSync(path.join(root, 'vt', 'lsp-ext-'));
+    try {
+      const outside = path.join(dir, 'lib.dom.d.ts');
+      fs.writeFileSync(outside, 'declare var console: Console;');
+      const big = path.join(dir, 'big.d.ts');
+      fs.writeFileSync(big, Buffer.alloc(MAX_EXTERNAL_SIZE + 1, 0x61));
+      // vt/ は root (cwd) の配下なので、この 2 つは root 内扱いになる。root 外の代表として親ディレクトリーのファイルを使う
+      const orig = child().reply.bind(child());
+      const targets: Record<string, string> = { '0': outside, '1': big };
+      child().reply = (m) => {
+        const echo = (m.result as { echo?: string; params?: { position?: { line?: number } } } | undefined);
+        if (m.id !== undefined && echo?.echo === 'textDocument/definition') {
+          const t = targets[String(echo.params?.position?.line)];
+          return orig({ id: m.id, result: { uri: pathToFileURL(t!).href, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } } });
+        }
+        return orig(m);
+      };
+      ws.push({ id: 1, method: 'textDocument/definition', params: { textDocument: { uri }, position: { line: 0, character: 0 } } });
+      ws.push({ id: 2, method: 'textDocument/definition', params: { textDocument: { uri }, position: { line: 1, character: 0 } } });
+      await settle();
+      const rel = path.relative(root, outside).split(path.sep).join('/');
+      const wireOutside = (ws.find((m) => m.id === 1)!.result as { uri: string }).uri;
+      expect(wireOutside).toBe(`file:///${token}/${rel}`);
+      ws.push({ id: 3, method: '$/prontella/readExternal', params: { uri: wireOutside } });
+      expect(ws.last()).toMatchObject({ id: 3, result: { name: 'lib.dom.d.ts', text: 'declare var console: Console;' } });
+      const wireBig = (ws.find((m) => m.id === 2)!.result as { uri: string }).uri;
+      ws.push({ id: 4, method: '$/prontella/readExternal', params: { uri: wireBig } });
+      expect(ws.last()).toMatchObject({ id: 4, result: null });
+      ws.push({ id: 5, method: '$/prontella/readExternal', params: { uri: `file:///${token}-ext/p1e99/x.ts` } });
+      expect(ws.last()).toMatchObject({ id: 5, result: null });
+      ws.push({ id: 6, method: '$/prontella/readExternal', params: { uri: pathToFileURL(outside).href } });
+      expect(ws.last()).toMatchObject({ id: 6, result: null });
+      ws.push({ id: 7, method: '$/prontella/readExternal', params: { uri: `file:///${token}/../package.json` } });
+      expect(ws.last()).toMatchObject({ id: 7, result: null });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('$/prontella/readExternal: root 外の -ext URI はプロセスの表から引く', async () => {
+    const { connect, child } = setup();
+    const ws = connect();
+    sockets.push(ws);
+    await settle();
+    const token = (ws.sent[0]!.params as { rootToken: string }).rootToken;
+    const uri = `file:///${token}/src/a.ts`;
+    ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri, languageId: 'typescript', version: 1, text: '' } } });
+    const outside = path.join(root, '..', 'lsp-ext-outside.d.ts');
+    fs.writeFileSync(outside, 'export {};');
+    try {
+      const orig = child().reply.bind(child());
+      child().reply = (m) =>
+        orig(m.id !== undefined && (m.result as { echo?: string } | undefined)?.echo === 'textDocument/definition' ? { id: m.id, result: { uri: pathToFileURL(outside).href, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } } } : m);
+      ws.push({ id: 1, method: 'textDocument/definition', params: { textDocument: { uri }, position: { line: 0, character: 0 } } });
+      await settle();
+      const wire = (ws.find((m) => m.id === 1)!.result as { uri: string }).uri;
+      expect(wire).toMatch(new RegExp(`^file:///${token}-ext/p\\d+e1/lsp-ext-outside\\.d\\.ts$`));
+      ws.push({ id: 2, method: '$/prontella/readExternal', params: { uri: wire } });
+      expect(ws.last()).toMatchObject({ id: 2, result: { name: 'lsp-ext-outside.d.ts', text: 'export {};' } });
+    } finally {
+      fs.rmSync(outside, { force: true });
+    }
   });
 
   it('initialize 前の didOpen は ready 後に順序どおり流れる', async () => {
@@ -235,6 +353,35 @@ describe('attachLsp', () => {
     ws.push({ method: '$/prontella/restart' });
     await settle();
     expect(children).toHaveLength(4); // 明示の再起動で解除
+  });
+
+  it('unavailable の間に届いた didOpen は、再起動時の reset で開き直される (LS に届かないまま残らない)', async () => {
+    const { connect, child, children } = setup();
+    const ws = connect();
+    sockets.push(ws);
+    await settle();
+    const token = (ws.sent[0]!.params as { rootToken: string }).rootToken;
+    const uri = `file:///${token}/a.ts`;
+    for (let i = 0; i < 3; i++) {
+      ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri, languageId: 'typescript', version: 1, text: '' } } });
+      await settle();
+      child().crash();
+    }
+    expect(ws.find((m) => (m.params as { state?: string } | undefined)?.state === 'unavailable')).toBeTruthy();
+    // 死んでいる間の didOpen (クライアントは reset を受けて開き直す) は LS に届かない
+    ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri, languageId: 'typescript', version: 2, text: 'x' } } });
+    const resetsBefore = ws.sent.filter((m) => m.method === '$/prontella/reset').length;
+    ws.push({ method: '$/prontella/restart' });
+    await settle();
+    // 再起動で reset が告げられ、クライアントの開き直しが新プロセスに届く
+    expect(ws.sent.filter((m) => m.method === '$/prontella/reset').length).toBe(resetsBefore + 1);
+    ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri, languageId: 'typescript', version: 3, text: 'y' } } });
+    await settle();
+    expect(children).toHaveLength(4);
+    expect(child().received.filter((m) => m.method === 'textDocument/didOpen')).toHaveLength(1);
+    ws.push({ id: 9, method: 'textDocument/hover', params: { textDocument: { uri }, position: { line: 0, character: 0 } } });
+    await settle();
+    expect(ws.find((m) => m.id === 9)).toMatchObject({ result: { echo: 'textDocument/hover' } });
   });
 
   it('positionEncoding が utf-16 以外のサーバーは使わない', async () => {
@@ -300,6 +447,71 @@ describe('csharp: ソリューションごとのプロセス', () => {
     await settle();
     expect(children).toHaveLength(3);
     expect((ts.sent[0]!.params as { rootToken: string }).rootToken).toBe(token);
+  });
+
+  it('lsp.csharp.solution があれば .sln を探さず全 doc をそのプロセスへ', async () => {
+    const { connect, children } = setup({ mode: 'lsp', solution: 'b/B.sln' });
+    const ws = connect('csharp', listDir);
+    sockets.push(ws);
+    const token = (ws.sent[0]!.params as { rootToken: string }).rootToken;
+    ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri: `file:///${token}/a/src/A.cs`, languageId: 'csharp', version: 1, text: 'a' } } });
+    ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri: `file:///${token}/x/Loose.cs`, languageId: 'csharp', version: 1, text: 'x' } } });
+    await settle();
+    expect(children).toHaveLength(1);
+    const open = children[0]!.received.find((m) => m.method === 'solution/open')!;
+    expect((open.params as { solution: string }).solution).toBe(pathToFileURL(path.join(root, 'b', 'B.sln')).href);
+    expect(children[0]!.received.filter((m) => m.method === 'textDocument/didOpen')).toHaveLength(2);
+  });
+
+  it('開き直し (所有権移譲) でも温め直し、status に warming 数が載る', async () => {
+    const { connect, children } = setup();
+    const a = connect('csharp', () => []);
+    const b = connect('csharp', () => []);
+    sockets.push(a, b);
+    const token = (a.sent[0]!.params as { rootToken: string }).rootToken;
+    const uri = `file:///${token}/x/Loose.cs`;
+    a.push({ method: 'textDocument/didOpen', params: { textDocument: { uri, languageId: 'csharp', version: 1, text: 'A' } } });
+    await settle();
+    expect(a.find((m) => (m.params as { warming?: number } | undefined)?.warming === 1)).toBeTruthy();
+    children[0]!.answerDiagnostics();
+    await settle();
+    expect(a.last()).toMatchObject({ method: '$/prontella/status', params: { state: 'ready' } });
+    expect((a.last().params as { warming?: number }).warming).toBeUndefined();
+    b.push({ method: 'textDocument/didOpen', params: { textDocument: { uri, languageId: 'csharp', version: 2, text: 'B' } } });
+    b.push({ id: 1, method: 'textDocument/completion', params: { textDocument: { uri }, position: { line: 0, character: 0 } } });
+    await settle();
+    expect(children[0]!.received.filter((m) => m.method === 'textDocument/diagnostic')).toHaveLength(2);
+    expect(children[0]!.received.some((m) => m.method === 'textDocument/completion')).toBe(false); // 温め中は保留
+    children[0]!.answerDiagnostics();
+    await settle();
+    expect(b.find((m) => m.id === 1)).toMatchObject({ result: { echo: 'textDocument/completion' } });
+  });
+
+  it('上限 (4) に当たったら doc を全部閉じたプロセスを LRU で落として空け、空かなければ開いているソリューション名入りで unavailable', async () => {
+    const dirs5: Record<string, string[]> = {};
+    for (const n of ['a', 'b', 'c', 'd', 'e']) dirs5[path.join(root, n)] = [`${n.toUpperCase()}.sln`];
+    const { connect, children } = setup();
+    const ws = connect('csharp', (p) => dirs5[path.resolve(p)] ?? []);
+    sockets.push(ws);
+    const token = (ws.sent[0]!.params as { rootToken: string }).rootToken;
+    const uriOf = (n: string) => `file:///${token}/${n}/X.cs`;
+    for (const n of ['a', 'b', 'c', 'd']) {
+      ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri: uriOf(n), languageId: 'csharp', version: 1, text: '' } } });
+      await settle();
+    }
+    expect(children).toHaveLength(4);
+    ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri: uriOf('e'), languageId: 'csharp', version: 1, text: '' } } });
+    await settle();
+    expect(children).toHaveLength(4);
+    const limit = ws.find((m) => (m.params as { state?: string } | undefined)?.state === 'unavailable')!;
+    expect((limit.params as { error: string }).error).toContain('A.sln, B.sln, C.sln, D.sln');
+    // a のファイルを閉じる → a のプロセスは doc 無し → 次の起動で落とされ、e が立つ
+    ws.push({ method: 'textDocument/didClose', params: { textDocument: { uri: uriOf('a') } } });
+    ws.push({ method: '$/prontella/restart' });
+    await settle();
+    expect(children[0]!.received.some((m) => m.method === 'shutdown')).toBe(true);
+    expect(children.length).toBeGreaterThanOrEqual(5);
+    expect(ws.find((m) => (m.params as { state?: string; solution?: string } | undefined)?.state === 'ready' && (m.params as { solution?: string }).solution === 'E.sln')).toBeTruthy();
   });
 
   it('.sln が無いファイルは solution/open 無しのプロセスで即 ready', async () => {

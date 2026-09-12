@@ -41,6 +41,8 @@ There are two ways to start Claude Code, and **both keep using your subscription
 - The worktree view is a VS Code-style tile layout (split, drag to resize, persisted per worktree).
   **Each tile has two levels of tabs**: the tile header switches between Files / Git / Terminal, and state survives switching.
   - **Files**: a file tree (react-arborist + VS Code codicons) plus a Monaco editor with a tab per open file (Ctrl+S to save).
+    Optional **language server** support (completion, hover, go to definition across files) for TypeScript/JavaScript and
+    C# — see the Notes below.
   - **Git**: a three-pane layout — the workspace sidebar and the Staged | Changes lists are always visible, and only the
     side-by-side diff of the file you select opens as a tab.
   - **Terminal**: tabs for the terminals the tile owns (each tab shows an agent status dot). You can split into another
@@ -123,6 +125,26 @@ Open a worktree and hit "✦ Start Claude" to launch Claude Code with that direc
   `node scripts/metrics/summarize.mjs --tier dev` renders a Markdown report (slow operations, memory trend, hangs,
   wasted work); "Diagnostics: download anonymous metrics bundle" (or `node scripts/metrics/export.mjs`) produces a
   gzip you can attach to a bug report. In the `dev` tier, `POST /api/metrics/heap-snapshot` writes a V8 heap snapshot.
+- **Language servers (LSP).** The editor can talk to a real language server instead of Monaco's built-in TypeScript
+  worker (which only sees the open tabs, so completion and go-to-definition across files do not work). Language servers
+  are detected, never bundled, and run in the worktree with the same environment as the terminals.
+  - **TypeScript/JavaScript** is off by default (`"lsp": { "typescript": { "mode": "builtin" } }` in `config.json`).
+    Switch from the status bar item **"TS: built-in" → "Use the language server (reload)"**, or set `"mode": "lsp"`.
+    The server is resolved in this order: the worktree's TypeScript 7 (`tsc --lsp`, Go-based; the workspace's own
+    version), the worktree's `typescript-language-server` when a `tsserver.js` exists, `lsp.typescript.command` in
+    `config.json`, then a global `typescript-language-server` on `PATH`. Found nothing → the status bar says "not found".
+  - **C#** is on by default (`"lsp": { "csharp": { "mode": "lsp" | "off" } }`) and uses the official Roslyn language server
+    (`Microsoft.CodeAnalysis.LanguageServer`): `lsp.csharp.command`, the VS Code C# extension's bundled copy
+    (`~/.vscode/extensions/ms-dotnettools.csharp-*/.roslyn/`), `roslyn-language-server` on `PATH`, or `~/.dotnet/tools`
+    (`dotnet tool install -g roslyn-language-server`). It needs a .NET 10 runtime and a restored solution
+    (`dotnet restore`). One server process is started per nearest `.sln` (walking up from the file), so a repository with
+    several solutions gets one process each; the first load of a solution takes seconds to tens of seconds (the status
+    bar shows "starting"), and the first completion in a freshly opened solution waits a few seconds more.
+  - Up to 4 server processes are kept; idle ones are stopped after 5 minutes. The status bar item's menu restarts a
+    server. The bridge exposes only completion, hover, and definition; the client never sees absolute paths (URIs are
+    rewritten to an opaque per-repository token). `PRONTELLA_LSP_TRACE=1` logs the wire traffic (methods and ids) for
+    debugging. Measurements and the design decisions behind all this are in `scripts/lsp-spike/RESULTS.md` and
+    `docs/lsp-mvp-plan.md`.
 - `scripts/ws-debug.mjs` is a helper for debugging terminal output and status detection.
 - `scripts/term-size-probe.js` collects diagnostics when a terminal renders smaller than its frame (paste it into the
   browser console; it only reads).

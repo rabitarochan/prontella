@@ -387,3 +387,20 @@ description: prontella のクライアント(React / Monaco / xterm / react-arbo
 - **検証**: 残留ポーリングの不在は `window.setTimeout` をラップして**delay === 10 の呼び出し数**を
   数える(削除済みファイル / 祖先ごと消えたパスへ切り替えて 0 のままを確認。2026-09-10 実測)。
   祖先の展開は仮想化のせいで `rows` が当てにならないので、**スクロールを 0 へ戻してから**見る
+
+## 21. Monaco が内部で使う汎用クラス名をグローバル CSS に定義しない
+
+- **症状**: 補完ウィジェットに候補が「ある」(aria-label は正しい) のにアイコンしか見えず、
+  ラベルの文字が出ない。ライト/ダーク両方
+- **機構**: Monaco の補完行は内側に `.contents > .main > .left / .right` という**短い汎用クラス名**を
+  使う。アプリの `styles.css` に `<main className="main">` 用の `.main { display:flex;
+  flex-direction:column; … }` があり、Monaco の行内の `.main` にも当たって縦積みになった。
+  アイコンが行幅いっぱいに伸び、ラベルが 2 行目に落ちて行高 18px で切れる
+- **打ち手**: アプリ側のクラスを `.app-main` に改名。**`.main` / `.left` / `.right` / `.contents` /
+  `.label` / `.icon` のような 1 語の汎用名をグローバルに定義しない**(Monaco・xterm・
+  react-arborist は内部でそういう名前を使い、どれも `.monaco-editor` 等の接頭辞で守られていない)。
+  既存の名前を使うなら接頭辞付き (`.app-main`) か、アプリのルート要素以下に閉じるセレクターにする
+- **切り分け**: 「候補はあるが見えない」は LSP/プロバイダーではなく CSS。`.suggest-icon` の幅と
+  `.monaco-icon-label` の `getBoundingClientRect` を測ると、行の外に出ているのが一目で分かる
+  (2026-09-12 実測: アイコン幅 414px、ラベル top が行 top + 17px)
+

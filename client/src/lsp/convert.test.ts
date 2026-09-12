@@ -10,8 +10,10 @@ import {
   toMonacoCompletionList,
   toMonacoHover,
   toMonacoKind,
+  toMonacoMarkers,
   toMonacoPosition,
   toMonacoRange,
+  toMonacoSignatureHelp,
 } from './convert';
 
 const word = { startLineNumber: 3, startColumn: 5, endLineNumber: 3, endColumn: 9 };
@@ -157,3 +159,60 @@ describe('toLinkTargets', () => {
     expect(toLinkTargets(null)).toEqual([]);
   });
 });
+
+describe('toMonacoMarkers', () => {
+  const r = { start: { line: 4, character: 2 }, end: { line: 4, character: 9 } };
+  const res = (uri: string) => (uri.startsWith('file:///r1/') ? uri.replace('file:///r1/', 'file:///leaf/') : null);
+  it('severity 1..4 → 8/4/2/1、Hint は出さない、未指定は Error', () => {
+    const items = [1, 2, 3, 4, undefined].map((severity) => ({ range: r, severity, message: 'm' }));
+    expect(toMonacoMarkers(items, res).map((m) => m.severity)).toEqual([8, 4, 2, 8]);
+  });
+  it('code は文字列化、codeDescription があれば {value, target}、tags は 1/2 だけ (Roslyn の独自値は落とす)', () => {
+    const [a, b] = toMonacoMarkers(
+      [
+        { range: r, severity: 1, code: 1134, source: 'ts', message: 'x' },
+        { range: r, severity: 3, code: 'IDE0005', codeDescription: { href: 'https://x/ide0005' }, tags: [2147483641, 1, 2147483643, 2], message: 'y' },
+      ],
+      res,
+    );
+    expect(a).toEqual({ startLineNumber: 5, startColumn: 3, endLineNumber: 5, endColumn: 10, severity: 8, message: 'x', source: 'ts', code: '1134' });
+    expect(b.code).toEqual({ value: 'IDE0005', target: 'https://x/ide0005' });
+    expect(b.tags).toEqual([1, 2]);
+    expect(toMonacoMarkers([{ range: r, message: 'z', tags: [2147483641] }], res)[0]!.tags).toBeUndefined();
+  });
+  it('relatedInformation は root 内だけモデル URI へ、root 外は落とす', () => {
+    const [m] = toMonacoMarkers(
+      [
+        {
+          range: r,
+          message: 'x',
+          relatedInformation: [
+            { location: { uri: 'file:///r1/src/b.ts', range: r }, message: 'here' },
+            { location: { uri: 'file:///r1-ext/e1/lib.d.ts', range: r }, message: 'lib' },
+          ],
+        },
+      ],
+      res,
+    );
+    expect(m.relatedInformation).toEqual([{ resource: 'file:///leaf/src/b.ts', message: 'here', startLineNumber: 5, startColumn: 3, endLineNumber: 5, endColumn: 10 }]);
+    expect(toMonacoMarkers([{ range: r, message: 'x', relatedInformation: [{ location: { uri: 'file:///r1-ext/e1/lib.d.ts', range: r }, message: 'lib' }] }], res)[0]!.relatedInformation).toBeUndefined();
+  });
+});
+
+describe('toMonacoSignatureHelp', () => {
+  it('activeParameter はトップレベル → signature 側 → 0、null は 0', () => {
+    const sig = { label: 'f(a: string, b?: number): void', parameters: [{ label: 'a: string' }, { label: [12, 22] as [number, number] }] };
+    expect(toMonacoSignatureHelp({ signatures: [sig], activeSignature: 0, activeParameter: 1 })?.activeParameter).toBe(1);
+    expect(toMonacoSignatureHelp({ signatures: [{ ...sig, activeParameter: 1 }], activeSignature: null, activeParameter: null })).toMatchObject({ activeSignature: 0, activeParameter: 1 });
+    expect(toMonacoSignatureHelp({ signatures: [sig] })).toMatchObject({ activeSignature: 0, activeParameter: 0, signatures: [{ label: sig.label, parameters: sig.parameters }] });
+    // activeSignature が範囲外なら最後に丸める
+    expect(toMonacoSignatureHelp({ signatures: [sig, sig], activeSignature: 5 })?.activeSignature).toBe(1);
+  });
+  it('documentation は markdown を IMarkdownString に、空の signatures と null は undefined', () => {
+    const h = toMonacoSignatureHelp({ signatures: [{ label: 'f()', documentation: { kind: 'markdown', value: '**d**' }, parameters: [{ label: 'x', documentation: 'pd' }] }] });
+    expect(h?.signatures[0]).toEqual({ label: 'f()', documentation: { value: '**d**' }, parameters: [{ label: 'x', documentation: 'pd' }] });
+    expect(toMonacoSignatureHelp({ signatures: [] })).toBeUndefined();
+    expect(toMonacoSignatureHelp(null)).toBeUndefined();
+  });
+});
+

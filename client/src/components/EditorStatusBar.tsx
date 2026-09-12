@@ -122,9 +122,12 @@ export default function EditorStatusBar({
     source?: string;
     error?: string;
     solution?: string;
+    warming?: number;
+    since?: number;
+    /** 停止項目の文言: TS は「内蔵に戻す」、C# は「止める」 */
+    server: 'typescript' | 'csharp';
     onRestart: () => void;
-    /** 内蔵の代替がある TypeScript だけ */
-    onUseBuiltin?: () => void;
+    onTurnOff: () => void;
     onUseLsp: () => void;
   };
 }) {
@@ -303,10 +306,17 @@ export default function EditorStatusBar({
             title={
               lsp.state === 'builtin'
                 ? t('files.lsp.builtinTooltip')
-                : (lsp.error ?? (lsp.source ? t('files.lsp.tooltip', { source: lsp.solution ? `${lsp.source} · ${lsp.solution}` : lsp.source }) : undefined))
+                : (lsp.error ??
+                  (lsp.source
+                    ? t('files.lsp.tooltip', {
+                        source: [lsp.source, lsp.solution, lsp.state === 'starting' && lsp.since ? t('files.lsp.elapsed', { s: Math.max(0, Math.round((Date.now() - lsp.since) / 1000)) }) : null]
+                          .filter(Boolean)
+                          .join(' · '),
+                      })
+                    : undefined))
             }
           >
-            {t(`files.lsp.${lsp.state}`)}
+            {lsp.state === 'ready' && lsp.warming ? t('files.lsp.warming') : t(`files.lsp.${lsp.state}`)}
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="end" onCloseAutoFocus={(e) => e.preventDefault()}>
             {lsp.state === 'builtin' ? (
@@ -314,7 +324,7 @@ export default function EditorStatusBar({
             ) : (
               <>
                 <DropdownMenuItem onSelect={lsp.onRestart}>{t('files.lsp.restart')}</DropdownMenuItem>
-                {lsp.onUseBuiltin && <DropdownMenuItem onSelect={lsp.onUseBuiltin}>{t('files.lsp.useBuiltin')}</DropdownMenuItem>}
+                <DropdownMenuItem onSelect={lsp.onTurnOff}>{t(lsp.server === 'typescript' ? 'files.lsp.useBuiltin' : 'files.lsp.turnOff')}</DropdownMenuItem>
               </>
             )}
           </DropdownMenuContent>

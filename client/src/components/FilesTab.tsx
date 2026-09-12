@@ -31,7 +31,9 @@ import { serverIdForPath } from '../lsp/languages';
 import { getLspSession } from '../lsp/session';
 import { useLspStatus } from '../lsp/useLspStatus';
 import { registerLspWorkspace, unregisterLspWorkspace } from '../lsp/workspaces';
+import type * as monaco from 'monaco-editor';
 import BlameModal from './BlameModal';
+import ExternalFileModal from './ExternalFileModal';
 import { useConfirm } from './ConfirmDialog';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import EditorStatusBar from './EditorStatusBar';
@@ -161,6 +163,8 @@ export default function FilesTab({
   const [fileMenu, setFileMenu] = useState<{ x: number; y: number; path: string; kind: 'file' | 'dir' } | null>(null);
   const [historyPath, setHistoryPath] = useState<string | null>(null);
   const [blamePath, setBlamePath] = useState<string | null>(null);
+  // 定義ジャンプ / 参照の着地先が root 外 (lib.dom.d.ts、Roslyn のメタデータ) のときの読み取り専用ビューアー
+  const [externalView, setExternalView] = useState<{ model: monaco.editor.ITextModel; line: number; column: number } | null>(null);
   const treeCtl = useRef<FileTreeHandle | null>(null);
 
   // ---- 永続化 --------------------------------------------------------------
@@ -762,6 +766,7 @@ export default function FilesTab({
     registerLspWorkspace(leafId, {
       root,
       openAtLine: (path, line, column) => openAtLineRef.current(path, line, column),
+      openExternal: (model, line, column) => setExternalView({ model, line, column }),
       notify: (text) => {
         entriesApi.setMessage(text);
         setTimeout(() => entriesApi.setMessage(''), 2500);
@@ -1191,8 +1196,9 @@ export default function FilesTab({
                 lspStatus
                   ? {
                       ...lspStatus,
+                      server: lspServer,
                       onRestart: () => getLspSession(root, lspServer).restart(),
-                      onUseBuiltin: lspServer === 'typescript' ? () => void switchLspMode('builtin') : undefined,
+                      onTurnOff: () => void switchLspMode(lspServer === 'typescript' ? 'builtin' : 'off', lspServer),
                       onUseLsp: () => void switchLspMode('lsp', lspServer),
                     }
                   : undefined
@@ -1224,6 +1230,7 @@ export default function FilesTab({
         <FileHistoryModal dir={root} path={historyPath} onClose={() => setHistoryPath(null)} />
       )}
       {blamePath && <BlameModal dir={root} path={blamePath} onClose={() => setBlamePath(null)} />}
+      {externalView && <ExternalFileModal model={externalView.model} line={externalView.line} column={externalView.column} onClose={() => setExternalView(null)} />}
       {dialog}
     </div>
   );

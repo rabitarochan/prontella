@@ -18,6 +18,10 @@ export interface LspStatus {
   error?: string;
   /** C#: このプロセスが開いているソリューション (basename) */
   solution?: string;
+  /** 温め (didOpen 直後の diagnostic 待ち) 中の doc 数。ready のまま補完が保留される間「解析中」を出す */
+  warming?: number;
+  /** starting になった時刻 (epoch ms) */
+  since?: number;
 }
 
 export interface LspError {
@@ -41,6 +45,14 @@ export class LspSession {
   readonly serverId: ServerId;
   rootToken: string | null = null;
   status: LspStatus = { state: 'connecting' };
+  /**
+   * LS が initialize で申告した triggerCharacters (ready のたびに取り直す)。Monaco には和集合を静的に登録して
+   * いるので、LS が知らない文字は Invoked に落として送る — tsgo は未知の triggerCharacter に
+   * -32603 "panic handling request … Unknown trigger character" を返す (実機で `(` と `{`)
+   */
+  completionTriggers: ReadonlySet<string> | null = null;
+  signatureTriggers: ReadonlySet<string> | null = null;
+  signatureRetriggers: ReadonlySet<string> | null = null;
   private socket: LiveSocket;
   private nextId = 1;
   private pending = new Map<number, Pending>();
@@ -72,8 +84,19 @@ export class LspSession {
   }
 
   private setStatus(s: LspStatus): void {
+    const wasReady = this.ready;
     this.status = s;
     for (const l of this.statusListeners) l(s);
+    if (this.ready && !wasReady) void this.loadCapabilities();
+  }
+
+  private async loadCapabilities(): Promise<void> {
+    const r = await this.request<{ capabilities?: { completionProvider?: { triggerCharacters?: string[] }; signatureHelpProvider?: { triggerCharacters?: string[]; retriggerCharacters?: string[] } } }>('initialize', {}, 5_000);
+    if ('error' in r || !r.result) return;
+    const caps = r.result.capabilities ?? {};
+    this.completionTriggers = new Set(caps.completionProvider?.triggerCharacters ?? []);
+    this.signatureTriggers = new Set(caps.signatureHelpProvider?.triggerCharacters ?? []);
+    this.signatureRetriggers = new Set(caps.signatureHelpProvider?.retriggerCharacters ?? []);
   }
 
   private onPhase(phase: LinkPhase): void {
@@ -104,14 +127,14 @@ export class LspSession {
       return;
     }
     if (msg.method === '$/prontella/status') {
-      const params = (msg.params ?? {}) as { rootToken?: string; state?: LspState; source?: string; error?: string; solution?: string; refused?: boolean };
+      const params = (msg.params ?? {}) as { rootToken?: string; state?: LspState; source?: string; error?: string; solution?: string; warming?: number; since?: number; refused?: boolean };
       if (params.refused) {
         // この root では LSP を提供しない (未登録の root / mode が builtin)。再接続ループにしない
         this.socket.stop('gone');
         return;
       }
       if (params.rootToken) this.rootToken = params.rootToken;
-      this.setStatus({ state: params.state ?? 'stopped', source: params.source, error: params.error, solution: params.solution });
+      this.setStatus({ state: params.state ?? 'stopped', source: params.source, error: params.error, solution: params.solution, warming: params.warming, since: params.since });
       return;
     }
     if (msg.method === '$/prontella/reset') {

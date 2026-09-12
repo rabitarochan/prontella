@@ -112,8 +112,14 @@ export const FILES_STRINGS = {
   'files.lsp.tooltip': { ja: '言語サーバー ({source})', en: 'Language server ({source})' },
   'files.lsp.restart': { ja: '言語サーバーを再起動', en: 'Restart language server' },
   'files.lsp.useBuiltin': { ja: '内蔵の TypeScript に戻す (リロード)', en: 'Use built-in TypeScript (reload)' },
+  'files.lsp.turnOff': { ja: '言語サーバーを止める (リロード)', en: 'Turn off the language server (reload)' },
+  'files.lsp.warming': { ja: 'LSP: 解析中', en: 'LSP: analyzing' },
+  'files.lsp.elapsed': { ja: '{s} 秒経過', en: '{s}s elapsed' },
   'files.lsp.outsideWorkspace': { ja: '定義はワークスペース外にあります', en: 'The definition is outside the workspace' },
   'files.lsp.cannotOpenTarget': { ja: '定義先を開けません: {path}', en: 'Cannot open the definition: {path}' },
+  'files.lsp.cannotOpenExternal': { ja: '開けません: {name} (言語サーバーの再起動で参照が失効した可能性)', en: 'Cannot open {name} (the reference may have expired after a language server restart)' },
+  'files.lsp.referencesTruncated': { ja: '参照は先頭 {n} 件のみ表示しています', en: 'Showing only the first {n} references' },
+  'files.lsp.externalTitle': { ja: '{name} (読み取り専用)', en: '{name} (read-only)' },
 
   // ---- クイックオープン (QuickOpenModal, Ctrl+P) ----
   'files.quickOpenTitle': { ja: 'ファイルを開く', en: 'Open file' },

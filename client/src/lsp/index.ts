@@ -25,8 +25,9 @@ export async function initLsp(): Promise<void> {
   if (modes.typescript === 'lsp') {
     enabledServers.add('typescript');
     for (const d of [monaco.typescript.typescriptDefaults, monaco.typescript.javascriptDefaults]) {
-      // noSyntaxValidation は維持: 診断を出さない MVP では内蔵の構文エラー表示が唯一のエラー表示
-      d.setModeConfiguration({ ...d.modeConfiguration, completionItems: false, hovers: false, definitions: false });
+      // diagnostics も落とす: 内蔵の構文エラーと LSP の診断 (client/src/lsp/diagnostics.ts) が二重に出るため。
+      // LS 未検出 (disabled) の環境では構文エラー表示も消えるが、ステータスバーの「LSP: 未検出」で気づける
+      d.setModeConfiguration({ ...d.modeConfiguration, completionItems: false, hovers: false, definitions: false, diagnostics: false });
     }
   }
   // C# には内蔵プロバイダーが無いので落とすものは無い

@@ -288,3 +288,99 @@ export function toLinkTargets(result: LspLocation | LspLocation[] | LspLocationL
       : { uri: l.uri, range: toMonacoRange(l.range) },
   );
 }
+
+// ---- 診断 --------------------------------------------------------------------
+
+export interface LspDiagnostic {
+  range: LspRange;
+  /** Error=1 / Warning=2 / Information=3 / Hint=4 */
+  severity?: number;
+  code?: string | number;
+  codeDescription?: { href: string };
+  source?: string;
+  message: string;
+  /** Unnecessary=1 / Deprecated=2。Roslyn は独自の巨大な値も混ぜてくる (RESULTS.md フェーズ 2) */
+  tags?: number[];
+  relatedInformation?: { location: LspLocation; message: string }[];
+}
+export interface LspDiagnosticReport {
+  kind: 'full' | 'unchanged';
+  resultId?: string;
+  items?: LspDiagnostic[];
+}
+
+/** Monaco MarkerSeverity (monaco.d.ts) */
+export const MARKER_SEVERITY = { Hint: 1, Info: 2, Warning: 4, Error: 8 } as const;
+const LSP_TO_MARKER_SEVERITY: readonly number[] = [MARKER_SEVERITY.Error, MARKER_SEVERITY.Error, MARKER_SEVERITY.Warning, MARKER_SEVERITY.Info, MARKER_SEVERITY.Hint];
+
+/** monaco.editor.IMarkerData から Uri を文字列にしたもの (monaco.Uri は呼び出し側で作る)。 */
+export interface MarkerData extends IRange {
+  severity: number;
+  message: string;
+  source?: string;
+  code?: string | { value: string; target: string };
+  tags?: number[];
+  relatedInformation?: ({ resource: string; message: string } & IRange)[];
+}
+
+/**
+ * LSP Diagnostic[] → Monaco マーカー。
+ * - **Hint (4) は出さない** (Roslyn の IDE 提案系が多く目障り。設定は作らない)
+ * - tags は LSP と Monaco で同じ番号 (1 / 2) だけ通す
+ * - relatedInformation の URI は `toResource` が null を返したもの (root 外) を落とす
+ */
+export function toMonacoMarkers(items: LspDiagnostic[], toResource: (uri: string) => string | null): MarkerData[] {
+  const out: MarkerData[] = [];
+  for (const d of items) {
+    if (d.severity === 4) continue;
+    const m: MarkerData = { ...toMonacoRange(d.range), severity: LSP_TO_MARKER_SEVERITY[d.severity ?? 0] ?? MARKER_SEVERITY.Error, message: d.message };
+    if (d.source !== undefined) m.source = d.source;
+    if (d.code !== undefined) m.code = d.codeDescription?.href ? { value: String(d.code), target: d.codeDescription.href } : String(d.code);
+    const tags = (d.tags ?? []).filter((t) => t === 1 || t === 2);
+    if (tags.length > 0) m.tags = tags;
+    if (d.relatedInformation) {
+      const rel = [];
+      for (const r of d.relatedInformation) {
+        const resource = toResource(r.location.uri);
+        if (resource !== null) rel.push({ resource, message: r.message, ...toMonacoRange(r.location.range) });
+      }
+      if (rel.length > 0) m.relatedInformation = rel;
+    }
+    out.push(m);
+  }
+  return out;
+}
+
+// ---- SignatureHelp -----------------------------------------------------------
+
+export interface LspSignatureInformation {
+  label: string;
+  documentation?: string | LspMarkupContent;
+  parameters?: { label: string | [number, number]; documentation?: string | LspMarkupContent }[];
+  activeParameter?: number | null;
+}
+export interface LspSignatureHelp {
+  signatures: LspSignatureInformation[];
+  activeSignature?: number | null;
+  activeParameter?: number | null;
+}
+
+/**
+ * activeParameter は「トップレベル → signature 側 → 0」の順 (tsgo はトップレベルに無く signature 側だけ、
+ * Roslyn は両方 — RESULTS.md フェーズ 2)。null は 0。
+ */
+export function toMonacoSignatureHelp(h: LspSignatureHelp | null): languages.SignatureHelp | undefined {
+  if (!h || h.signatures.length === 0) return undefined;
+  const activeSignature = Math.min(h.activeSignature ?? 0, h.signatures.length - 1);
+  const sig = h.signatures[activeSignature]!;
+  return {
+    signatures: h.signatures.map((s) => {
+      const out: languages.SignatureInformation = { label: s.label, parameters: (s.parameters ?? []).map((p) => ({ label: p.label, ...(p.documentation !== undefined ? { documentation: toMonacoDocumentation(p.documentation) } : {}) })) };
+      if (s.documentation !== undefined) out.documentation = toMonacoDocumentation(s.documentation);
+      if (s.activeParameter !== undefined && s.activeParameter !== null) out.activeParameter = s.activeParameter;
+      return out;
+    }),
+    activeSignature,
+    activeParameter: h.activeParameter ?? sig.activeParameter ?? 0,
+  };
+}

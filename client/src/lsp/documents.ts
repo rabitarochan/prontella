@@ -1,5 +1,6 @@
 import * as monaco from 'monaco-editor';
 import { toLspRange } from './convert';
+import { DIAGNOSTIC_DEBOUNCE_MS, clearDiagnostics, scheduleDiagnostics } from './diagnostics';
 import { languageIdFor, serverIdFor, type ServerId } from './languages';
 import { NOT_OWNER, getLspSession, type LspResult, type LspSession } from './session';
 import { modelUriString, parseModelUri, toWireUri } from './uri';
@@ -76,10 +77,22 @@ function wireUri(t: Tracked): string | null {
 function sendOpen(t: Tracked): void {
   const uri = wireUri(t);
   if (!uri) return;
+  const prev = owners.get(t.key);
+  if (prev && prev !== t.model) clearDiagnostics(prev); // 所有権を失った側の本文はサーバーと一致しない
   owners.set(t.key, t.model);
   t.session.notify('textDocument/didOpen', {
     textDocument: { uri, languageId: t.languageId, version: nextVersion(t.key), text: t.model.getValue() },
   });
+  scheduleDiagnostics(t.model, t.session, uri, 0);
+}
+
+/** セッションが ready になった時: それまでの pull は空振りしているので owner モデルの分を取り直す。 */
+function pullAllDiagnostics(session: LspSession): void {
+  for (const t of tracked.values()) {
+    if (t.session !== session || owners.get(t.key) !== t.model) continue;
+    const uri = wireUri(t);
+    if (uri) scheduleDiagnostics(t.model, session, uri, 0);
+  }
 }
 
 function track(model: monaco.editor.ITextModel): void {
@@ -113,6 +126,7 @@ function track(model: monaco.editor.ITextModel): void {
           : // Monaco は後方→前方の順で渡す。並べ替えない
             e.changes.map((c) => ({ range: toLspRange(c.range), rangeLength: c.rangeLength, text: c.text }));
       session.notify('textDocument/didChange', { textDocument: { uri, version }, contentChanges });
+      scheduleDiagnostics(model, session, uri, DIAGNOSTIC_DEBOUNCE_MS);
     }),
   );
   if (!owners.has(key)) sendOpen(t);
@@ -124,6 +138,7 @@ function untrack(model: monaco.editor.ITextModel): void {
   if (!t) return;
   tracked.delete(model);
   for (const d of t.disposables) d.dispose();
+  clearDiagnostics(model);
   if (owners.get(t.key) !== model) return;
   owners.delete(t.key);
   // 同じファイルの別モデルが残っていればそちらへ移す (全文で同期し直す)
@@ -159,10 +174,13 @@ function wireSession(session: LspSession): void {
   session.onOpen.add(() => reopenAll(session));
   session.onReset.add(() => reopenAll(session));
   let hadToken = false;
+  let wasReady = false;
   session.subscribe(() => {
     const has = session.rootToken !== null;
     if (has && !hadToken) reopenAll(session);
     hadToken = has;
+    if (session.ready && !wasReady) pullAllDiagnostics(session);
+    wasReady = session.ready;
   });
 }
 

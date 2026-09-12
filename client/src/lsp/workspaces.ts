@@ -8,6 +8,8 @@
 export interface LspWorkspace {
   root: string;
   openAtLine: (path: string, line: number, column: number) => void;
+  /** root 外 / 上限超えファイルの読み取り専用モデル (client/src/lsp/external.ts) をモーダルで開く */
+  openExternal: (model: import('monaco-editor').editor.ITextModel, line: number, column: number) => void;
   /** ステータス行への短い通知 (ワークスペース外への定義ジャンプなど) */
   notify: (text: string) => void;
 }

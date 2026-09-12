@@ -128,9 +128,9 @@ Open a worktree and hit "✦ Start Claude" to launch Claude Code with that direc
 - **Language servers (LSP).** The editor can talk to a real language server instead of Monaco's built-in TypeScript
   worker (which only sees the open tabs, so completion and go-to-definition across files do not work). Language servers
   are detected, never bundled, and run in the worktree with the same environment as the terminals.
-  - **TypeScript/JavaScript** is off by default (`"lsp": { "typescript": { "mode": "builtin" } }` in `config.json`).
-    Switch from the status bar item **"TS: built-in" → "Use the language server (reload)"**, or set `"mode": "lsp"`.
-    The server is resolved in this order: the worktree's TypeScript 7 (`tsc --lsp`, Go-based; the workspace's own
+  - **TypeScript/JavaScript** is on by default (`"lsp": { "typescript": { "mode": "lsp" | "builtin" } }` in `config.json`).
+    The status bar item **"LSP" → "Use built-in TypeScript (reload)"** switches back to Monaco's worker (and
+    **"TS: built-in" → "Use the language server (reload)"** switches forward again). The server is resolved in this order: the worktree's TypeScript 7 (`tsc --lsp`, Go-based; the workspace's own
     version), the worktree's `typescript-language-server` when a `tsserver.js` exists, `lsp.typescript.command` in
     `config.json`, then a global `typescript-language-server` on `PATH`. Found nothing → the status bar says "not found".
   - **C#** is on by default (`"lsp": { "csharp": { "mode": "lsp" | "off" } }`) and uses the official Roslyn language server

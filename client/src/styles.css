@@ -99,7 +99,9 @@ textarea:focus {
   height: 100vh;
 }
 
-.main {
+/* `.main` にしない: Monaco の補完ウィジェットが行の内側で同名クラスを使っており、
+   グローバルな縦 flex が被さると候補ラベルが行の外へ押し出されて見えなくなる */
+.app-main {
   flex: 1;
   min-width: 0;
   min-height: 0;

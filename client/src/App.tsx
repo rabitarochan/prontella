@@ -121,7 +121,7 @@ export default function App() {
   return (
     <div className="app">
       <Rail onOpenPalette={() => setPaletteOpen(true)} />
-      <main className="main">
+      <main className="app-main">
         {error && (
           <div className="main-error" onClick={() => setError(null)} title={t('common.clickToDismiss')}>
             ⚠ {error}

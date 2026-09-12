@@ -16,6 +16,8 @@ export interface LspStatus {
   state: LspState;
   source?: string;
   error?: string;
+  /** C#: このプロセスが開いているソリューション (basename) */
+  solution?: string;
 }
 
 export interface LspError {
@@ -102,14 +104,14 @@ export class LspSession {
       return;
     }
     if (msg.method === '$/prontella/status') {
-      const params = (msg.params ?? {}) as { rootToken?: string; state?: LspState; source?: string; error?: string; refused?: boolean };
+      const params = (msg.params ?? {}) as { rootToken?: string; state?: LspState; source?: string; error?: string; solution?: string; refused?: boolean };
       if (params.refused) {
         // この root では LSP を提供しない (未登録の root / mode が builtin)。再接続ループにしない
         this.socket.stop('gone');
         return;
       }
       if (params.rootToken) this.rootToken = params.rootToken;
-      this.setStatus({ state: params.state ?? 'stopped', source: params.source, error: params.error });
+      this.setStatus({ state: params.state ?? 'stopped', source: params.source, error: params.error, solution: params.solution });
       return;
     }
     if (msg.method === '$/prontella/reset') {

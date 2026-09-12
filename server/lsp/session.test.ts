@@ -17,6 +17,11 @@ class FakeChild extends EventEmitter {
   stderr = new PassThrough();
   pid = 4242;
   received: JsonRpcMessage[] = [];
+  /** 温めの diagnostic への応答は手動で返す (保留の検証用)。answerDiagnostics() で流す */
+  diagnostics: Array<() => void> = [];
+  answerDiagnostics(): void {
+    for (const f of this.diagnostics.splice(0)) f();
+  }
   initCaps: Record<string, unknown> = { positionEncoding: 'utf-16', completionProvider: { triggerCharacters: ['.'] } };
   constructor() {
     super();
@@ -26,6 +31,7 @@ class FakeChild extends EventEmitter {
         this.received.push(msg);
         if (msg.id !== undefined && msg.method === 'initialize') this.reply({ id: msg.id, result: { capabilities: this.initCaps } });
         else if (msg.id !== undefined && msg.method === 'shutdown') this.reply({ id: msg.id, result: null });
+        else if (msg.id !== undefined && msg.method === 'textDocument/diagnostic') this.diagnostics.push(() => this.reply({ id: msg.id, result: { items: [] } }));
         else if (msg.id !== undefined && msg.method) this.reply({ id: msg.id, result: { echo: msg.method, params: msg.params } });
         // Roslyn: solution/open のあとでプロジェクト読込完了を通知する
         else if (msg.method === 'solution/open') this.reply({ method: 'workspace/projectInitializationComplete', params: {} });
@@ -276,6 +282,8 @@ describe('csharp: ソリューションごとのプロセス', () => {
     ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri: ub, languageId: 'csharp', version: 1, text: 'b' } } });
     await settle();
     expect(children).toHaveLength(2);
+    for (const c of children) c.answerDiagnostics();
+    await settle();
     ws.push({ id: 1, method: 'textDocument/hover', params: { textDocument: { uri: ub }, position: { line: 0, character: 0 } } });
     ws.push({ id: 2, method: 'textDocument/completion', params: { textDocument: { uri: ua }, position: { line: 0, character: 0 } } });
     await settle();
@@ -302,8 +310,27 @@ describe('csharp: ソリューションごとのプロセス', () => {
     ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri: `file:///${token}/x/Loose.cs`, languageId: 'csharp', version: 1, text: '' } } });
     await settle();
     expect(children).toHaveLength(1);
-    expect(children[0]!.received.map((m) => m.method)).toEqual(['initialize', 'initialized', 'textDocument/didOpen']);
+    // Roslyn は意味解析が済む前の補完に null を返すので、didOpen の直後にホストが diagnostic で温める
+    expect(children[0]!.received.map((m) => m.method)).toEqual(['initialize', 'initialized', 'textDocument/didOpen', 'textDocument/diagnostic']);
     expect(ws.find((m) => (m.params as { state?: string } | undefined)?.state === 'ready')).toBeTruthy();
+  });
+
+  it('温めの応答が返るまでその doc への要求を保留し、返ったら順に流す。応答はクライアントへ出さない', async () => {
+    const { connect, children } = setup();
+    const ws = connect('csharp', () => []);
+    sockets.push(ws);
+    const token = (ws.sent[0]!.params as { rootToken: string }).rootToken;
+    const uri = `file:///${token}/x/Loose.cs`;
+    ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri, languageId: 'csharp', version: 1, text: '' } } });
+    await settle();
+    ws.push({ id: 1, method: 'textDocument/completion', params: { textDocument: { uri }, position: { line: 0, character: 0 } } });
+    await settle();
+    expect(children[0]!.received.some((m) => m.method === 'textDocument/completion')).toBe(false);
+    children[0]!.answerDiagnostics();
+    await settle();
+    expect(children[0]!.received.some((m) => m.method === 'textDocument/completion')).toBe(true);
+    expect(ws.find((m) => m.id === 1)).toMatchObject({ result: { echo: 'textDocument/completion' } });
+    expect(ws.sent.some((m) => m.method === undefined && Array.isArray((m.result as { items?: unknown[] } | null)?.items))).toBe(false);
   });
 });
 

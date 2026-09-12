@@ -153,14 +153,16 @@ function reopenAll(session: LspSession): void {
 function wireSession(session: LspSession): void {
   if (sessionsWired.has(session)) return;
   sessionsWired.add(session);
-  // rootToken は status 通知で届く。onOpen 時点ではまだ無いことがあるので、ready になった時にも開き直す
+  // rootToken は status 通知で届く。onOpen 時点ではまだ無いことがあるので、token が届いた時に開き直す。
+  // C# はサーバー側が didOpen を受けて初めてプロセスを起動する (最寄りの .sln 単位) ので、
+  // ready を待ってから送るのでは永久に始まらない — 'stopped' でも token があれば送る
   session.onOpen.add(() => reopenAll(session));
   session.onReset.add(() => reopenAll(session));
-  let wasReady = false;
-  session.subscribe((s) => {
-    const ready = s.state === 'ready' && session.rootToken !== null;
-    if (ready && !wasReady) reopenAll(session);
-    wasReady = ready;
+  let hadToken = false;
+  session.subscribe(() => {
+    const has = session.rootToken !== null;
+    if (has && !hadToken) reopenAll(session);
+    hadToken = has;
   });
 }
 

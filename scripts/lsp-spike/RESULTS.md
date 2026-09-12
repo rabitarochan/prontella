@@ -74,3 +74,42 @@ F12 / Ctrl+クリックは `registerEditorOpener` → `openAtLine` で着地。p
 
 **TS 7 workspace の `-ext`**: tsgo は `lib.*.d.ts` を `node_modules/@typescript/typescript-<platform>/lib/` から引くため
 root 配下 = `file` 扱いになり、`-ext` になるのは root の外に TypeScript がある構成のみ。
+
+---
+
+# Roslyn (C#) — 2026-09-12、`scripts/lsp-spike/s3-roslyn.mjs`
+
+対象: `C:\HCM\Source\MSS3\MSS3`（`.sln` 9 本 / `.csproj` 約 60、restore 済み）。サーバーは VS Code C# 拡張 2.140.9 同梱の
+`Microsoft.CodeAnalysis.LanguageServer.exe`（net10.0 framework-dependent、`--stdio` 対応）。
+
+| | `--autoLoadProjects`（R2） | `solution/open` MSS3.sln のみ（R3） |
+|---|---|---|
+| initialize | 2.0 s | 1.7 s |
+| `projectInitializationComplete` | **118 s**（root 配下の全 .csproj — `.claude/worktrees/` の複製まで読む） | **25 s**（2 回目以降 5〜10 s） |
+| 常駐メモリー | 545 MB → 900 MB + BuildHost 116 MB | 350 MB → 633 MB + BuildHost 85 MB |
+| mss3-backend のファイル | 別プロジェクトの型を解決、IDE 診断のみ | 同左 |
+| bss-backend のファイル | 同上（全部読んでいるので） | **未解決（misc 扱い、補完 0 件）** |
+| ウォーム補完 | p50 11 ms / p95 72 ms | p50 12 ms / p95 58 ms |
+
+- R1: `positionEncoding` は未申告（= utf-16）。sync は incremental。補完は常に `isIncomplete: true`、`textEdit` と `data` あり、resolve 可
+- R5: `shutdown` 要求に応答せず **.NET 例外で終了**（exit code 0xE0434352）。BuildHost の子プロセスは親と一緒に消える。`--extensionLogDirectory` は無くても起動し、自分で作る（中身は空のまま）
+- R6: サーバー→クライアント要求は **無し**。通知は `window/logMessage`（大量）、`window/_roslyn_showToast`、`workspace/projectInitializationComplete`
+- R7: 定義は `Location` 形（`LocationLink` ではない）。`file:///C:/...`（大文字ドライブ）
+
+**採った設計**: 最寄りの `.sln`（ファイルのディレクトリーから root へ遡って最初）ごとに 1 プロセス、`solution/open`、
+`projectInitializationComplete` まで `starting`。`--autoLoadProjects` は不採用（118 s / 900 MB）。
+
+**R8（実装後に判明）: doc の意味解析が済む前に来た `textDocument/completion` に null を返し、しかもその doc の以後の
+補完が didClose/didOpen し直すまで null のまま固定される**（invoked でも trigger でも。hover は正常に返る）。
+試した順に: (a) 固定 1.5 秒の保留だけ → BSS.sln は通るが MSS3.sln（25 プロジェクト）は null、(b) didOpen 直後の hover + 保留
+→ 同上、(c) **didOpen 直後に `textDocument/diagnostic` を pull し、その応答が返るまでその doc への要求を保留** → 両方通る
+（診断 pull は意味解析の完了と同期する。MSS3.sln で ≈ 5 秒）。採ったのは (c)（`ProcHandle.warm`、応答は捨てる）。
+保留中の要求はクライアント側 3 秒でタイムアウトするので、開いた直後の数秒は候補が出ない（ready 直後の 1 回だけ）。
+
+**実機検証（実 home、port 4711、MSS3 repo 登録済み）**: `mss3-backend` の `.cs` で `IOptions<T>.Value.` → `BisuAiOptions` の
+メンバー（`BaseUrl` / `ExeName` / `LocalPath` …、NuGet 由来の拡張メソッドも）、ホバー、F12 で
+`MSS3.Domain/System/UsageModeType.cs:13`（別プロジェクト）へ。`bss-backend` の `.cs` を開くと 2 本目のプロセス（BSS.sln）が立ち、
+`_blobService.` → `IBlobService` のメンバー。2 本 kill → 次の要求で両方復帰。
+
+**隔離 home の罠**: `USERPROFILE` を差し替えた隔離環境では Roslyn（MSBuild/NuGet）が `~/.nuget/packages` を見失い、
+プロジェクトは読めても参照が解決されず補完/ホバーが null になる（pj-isolated-verify の例外規律に該当）。C# の検証は実 home + 別ポートで行う。

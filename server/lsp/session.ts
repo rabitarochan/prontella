@@ -194,6 +194,7 @@ export function attachLsp(ws: WebSocket, root: string, host: LspHost, serverId: 
         if (!doc) {
           h.docs.set(uri, { holders: new Set([me]), owner: me });
           h.notify({ method, params });
+          if (serverId === 'csharp') h.warm(uri);
         } else {
           // 既に LS が知っている → 全文 didChange で本文を差し替え、所有権を取る
           doc.holders.add(me);

@@ -121,6 +121,7 @@ export default function EditorStatusBar({
     state: 'builtin' | 'connecting' | 'starting' | 'ready' | 'disabled' | 'unavailable' | 'stopped';
     source?: string;
     error?: string;
+    solution?: string;
     onRestart: () => void;
     /** 内蔵の代替がある TypeScript だけ */
     onUseBuiltin?: () => void;
@@ -302,7 +303,7 @@ export default function EditorStatusBar({
             title={
               lsp.state === 'builtin'
                 ? t('files.lsp.builtinTooltip')
-                : (lsp.error ?? (lsp.source ? t('files.lsp.tooltip', { source: lsp.source }) : undefined))
+                : (lsp.error ?? (lsp.source ? t('files.lsp.tooltip', { source: lsp.solution ? `${lsp.source} · ${lsp.solution}` : lsp.source }) : undefined))
             }
           >
             {t(`files.lsp.${lsp.state}`)}

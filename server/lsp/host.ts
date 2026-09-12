@@ -1,12 +1,14 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { terminalEnv } from '../childEnv.js';
 import { metrics } from '../metrics/index.js';
 import { createMessageReader, encodeMessage } from './framing.js';
 import { createExtTable, type ExtTable } from './uri.js';
-import { fsExists, resolveLaunch, type Launch, type LspServerConfig, type ServerId } from './registry.js';
+import { fsExists, fsListDir, resolveLaunch, type Launch, type LspServerConfig, type ServerId } from './registry.js';
 
 /**
  * (root, serverId) ごとに言語サーバープロセスを 1 つ持ち、複数の WS セッションで共有する。
@@ -26,6 +28,18 @@ export interface HostStatus {
   state: HostState;
   source?: Launch['source'];
   error?: string;
+  /** このプロセスが開いているソリューション (basename)。C# のみ */
+  solution?: string;
+}
+
+/**
+ * プロセスの単位を root より細かくするための追加キー。Roslyn LS は 1 プロセス 1 ソリューションなので
+ * C# は最寄りの .sln ごとにプロセスを持つ。`solution` があれば initialize 後に `solution/open` を送り、
+ * `workspace/projectInitializationComplete` が来るまで `starting` に留める。
+ */
+export interface Workspace {
+  key: string;
+  solution?: string;
 }
 
 export interface JsonRpcMessage {
@@ -54,6 +68,7 @@ export interface DocEntry {
 
 export interface ProcHandle {
   readonly root: string;
+  readonly solution: string | undefined;
   readonly rootToken: string;
   readonly ext: ExtTable;
   readonly status: HostStatus;
@@ -81,7 +96,10 @@ export interface LspHostOptions {
 
 const IDLE_MS = 5 * 60_000;
 const KILL_GRACE_MS = 3_000;
-const MAX_PROCS = 4; // S5: tsgo ≈ 226 MB/プロセス → 4 本で 1 GB 弱
+// TS + C# 合算。S5: tsgo ≈ 226 MB / R3: Roslyn ≈ 450 MB (ソリューション 1 つ) → 4 本で 2 GB 弱
+const MAX_PROCS = 4;
+// Roslyn のプロジェクト読込は MSS3.sln (25 プロジェクト) で 25 秒 (R3)。通知が来ない構成の保険
+const PROJECT_INIT_TIMEOUT_MS = 180_000;
 const CRASH_WINDOW_MS = 60_000;
 const CRASH_LIMIT = 3;
 const STDERR_TAIL = 4096;
@@ -117,6 +135,9 @@ interface Proc {
   rootToken: string;
   ext: ExtTable;
   status: HostStatus;
+  solution: string | undefined;
+  /** solution/open 後、projectInitializationComplete 待ち */
+  projectInitTimer: NodeJS.Timeout | null;
   child: ChildProcess | null;
   capabilities: unknown;
   docs: Map<string, DocEntry>;
@@ -148,7 +169,9 @@ export class LspHost {
 
   constructor(private readonly opts: LspHostOptions) {}
 
-  private tokenFor(key: string): string {
+  /** root ごとに 1 つ (プロセスごとではない: クライアントの leafId ↔ token 対応は root 単位)。 */
+  tokenFor(root: string): string {
+    const key = normalizeRoot(root);
     let t = this.tokens.get(key);
     if (!t) {
       t = 'r' + randomBytes(4).toString('hex');
@@ -157,14 +180,16 @@ export class LspHost {
     return t;
   }
 
-  acquire(root: string, serverId: ServerId, listener: ProcListener): ProcHandle {
-    const key = `${normalizeRoot(root)}\0${serverId}`;
+  acquire(root: string, serverId: ServerId, listener: ProcListener, workspace?: Workspace): ProcHandle {
+    const key = `${normalizeRoot(root)}\0${serverId}\0${workspace?.key ?? ''}`;
     let proc = this.procs.get(key);
     if (!proc) {
       proc = {
         key,
         root: path.resolve(root),
-        rootToken: this.tokenFor(key),
+        rootToken: this.tokenFor(root),
+        solution: workspace?.solution,
+        projectInitTimer: null,
         ext: createExtTable(),
         status: { state: 'stopped' },
         child: null,
@@ -194,6 +219,7 @@ export class LspHost {
     const host = this;
     return {
       root: p.root,
+      solution: p.solution,
       rootToken: p.rootToken,
       ext: p.ext,
       get status() {
@@ -234,6 +260,7 @@ export class LspHost {
   }
 
   private setStatus(proc: Proc, status: HostStatus): void {
+    if (proc.solution) status = { ...status, solution: path.basename(proc.solution) };
     proc.status = status;
     for (const l of proc.listeners) l.onStatus(status);
   }
@@ -250,16 +277,28 @@ export class LspHost {
       ? this.opts.resolve(proc.root, serverId)
       : resolveLaunch({
           root: proc.root,
+          serverId,
           config: this.opts.configFor(serverId),
           env: env(),
           platform: process.platform,
           arch: process.arch,
           execPath: process.execPath,
+          home: os.homedir(),
+          tmpDir: os.tmpdir(),
+          pid: process.pid,
           exists: fsExists,
+          listDir: fsListDir,
         });
     if (!launch) {
       this.setStatus(proc, { state: 'disabled' });
       return;
+    }
+    if (launch.logDir) {
+      try {
+        fs.mkdirSync(launch.logDir, { recursive: true });
+      } catch {
+        // ログ先が作れなくても起動は試みる (Roslyn は自分でも作る)
+      }
     }
     if (this.liveCount() >= MAX_PROCS && !this.evictIdle()) {
       // ponytail: 全部使用中なら新規を断る。使用中の LRU を落とすと落とされた側が即再取得して往復する
@@ -322,13 +361,38 @@ export class LspHost {
         return;
       }
       proc.capabilities = caps ?? {};
-      // ready にしてから initialized を送る (starting 中の send はキューに入る)。その後にキューを流す
-      this.setStatus(proc, { state: 'ready', source: launch.source });
-      this.send(proc, { jsonrpc: '2.0', method: 'initialized', params: {} });
-      const queued = proc.queue;
-      proc.queue = [];
-      for (const m of queued) this.send(proc, m);
+      // initialized は starting 中でも直接書く (send はキューに入るため)
+      this.writeNow(proc, { jsonrpc: '2.0', method: 'initialized', params: {} });
+      if (proc.solution) {
+        // Roslyn: solution/open を送り、プロジェクト読込完了の通知を待ってから ready にする。
+        // それまでの didOpen はキューで待つ。通知が同期的に返る (テストの偽サーバー) こともあるので
+        // タイマーは書き込みより先に立てる
+        proc.projectInitTimer = setTimeout(() => this.markReady(proc, launch.source), PROJECT_INIT_TIMEOUT_MS);
+        proc.projectInitTimer.unref();
+        this.writeNow(proc, { jsonrpc: '2.0', method: 'solution/open', params: { solution: pathToFileURL(proc.solution).href } });
+        return;
+      }
+      this.markReady(proc, launch.source);
     });
+  }
+
+  /** ready にしてキューを流す。 */
+  private markReady(proc: Proc, source: Launch['source']): void {
+    if (proc.projectInitTimer) {
+      clearTimeout(proc.projectInitTimer);
+      proc.projectInitTimer = null;
+    }
+    if (proc.exited || proc.status.state !== 'starting') return;
+    this.setStatus(proc, { state: 'ready', source });
+    const queued = proc.queue;
+    proc.queue = [];
+    for (const m of queued) this.send(proc, m);
+  }
+
+  private writeNow(proc: Proc, msg: JsonRpcMessage): void {
+    const child = proc.child;
+    if (!child || proc.exited || !child.stdin || child.stdin.destroyed) return;
+    child.stdin.write(encodeMessage(msg));
   }
 
   private liveCount(): number {
@@ -402,6 +466,10 @@ export class LspHost {
       this.send(proc, { jsonrpc: '2.0', id: msg.id, ...answerServerRequest(msg) });
       return;
     }
+    if (msg.method === 'workspace/projectInitializationComplete' && proc.projectInitTimer) {
+      this.markReady(proc, proc.status.source ?? 'config');
+      return;
+    }
     // 通知 (publishDiagnostics / logMessage / $/progress …) は MVP では捨てる
   }
 
@@ -466,6 +534,10 @@ export class LspHost {
     proc.capabilities = null;
     proc.docs.clear();
     proc.queue = [];
+    if (proc.projectInitTimer) {
+      clearTimeout(proc.projectInitTimer);
+      proc.projectInitTimer = null;
+    }
     if (!intended) {
       metrics.count('lsp.crash');
       const now = Date.now();

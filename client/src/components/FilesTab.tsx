@@ -27,6 +27,7 @@ import { useT, type StringKey } from '../i18n';
 import { isMarkdownPath } from '../markdown/paths';
 import { registerFilesTab, touchFilesTab, unregisterFilesTab } from '../search/registry';
 import { switchLspMode } from '../lsp';
+import { serverIdForPath } from '../lsp/languages';
 import { getLspSession } from '../lsp/session';
 import { useLspStatus } from '../lsp/useLspStatus';
 import { registerLspWorkspace, unregisterLspWorkspace } from '../lsp/workspaces';
@@ -932,7 +933,9 @@ export default function FilesTab({
     !activeEntry.file.binary &&
     !activeEntry.file.tooLarge;
 
-  const lspStatus = useLspStatus(root);
+  // ステータスバーはアクティブファイルの言語サーバーを出す (対象外の拡張子は TS 扱いで「内蔵」表示)
+  const lspServer = serverIdForPath(activeEntry?.path ?? '') ?? 'typescript';
+  const lspStatus = useLspStatus(root, lspServer);
 
   /** setMessage を一定時間で消す (save の成功メッセージと同じ寿命)。 */
   const flashMessage = (text: string) => {
@@ -1188,9 +1191,9 @@ export default function FilesTab({
                 lspStatus
                   ? {
                       ...lspStatus,
-                      onRestart: () => getLspSession(root).restart(),
-                      onUseBuiltin: () => void switchLspMode('builtin'),
-                      onUseLsp: () => void switchLspMode('lsp'),
+                      onRestart: () => getLspSession(root, lspServer).restart(),
+                      onUseBuiltin: lspServer === 'typescript' ? () => void switchLspMode('builtin') : undefined,
+                      onUseLsp: () => void switchLspMode('lsp', lspServer),
                     }
                   : undefined
               }

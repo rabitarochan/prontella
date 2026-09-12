@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createMessageReader, encodeMessage } from './framing.js';
 import { LspHost, answerServerRequest, type JsonRpcMessage } from './host.js';
 import { ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, ERR_NOT_OWNER, attachLsp } from './session.js';
+import type { ServerId } from './registry.js';
 
 // 偽の言語サーバー: stdin のフレームを解釈し、initialize には capabilities を、それ以外の要求には
 // {echo: method, params} を返す。
@@ -26,6 +27,8 @@ class FakeChild extends EventEmitter {
         if (msg.id !== undefined && msg.method === 'initialize') this.reply({ id: msg.id, result: { capabilities: this.initCaps } });
         else if (msg.id !== undefined && msg.method === 'shutdown') this.reply({ id: msg.id, result: null });
         else if (msg.id !== undefined && msg.method) this.reply({ id: msg.id, result: { echo: msg.method, params: msg.params } });
+        // Roslyn: solution/open のあとでプロジェクト読込完了を通知する
+        else if (msg.method === 'solution/open') this.reply({ method: 'workspace/projectInitializationComplete', params: {} });
       },
       (e) => {
         throw e;
@@ -89,9 +92,9 @@ function setup() {
       return c;
     }) as never,
   });
-  const connect = () => {
+  const connect = (serverId: ServerId = 'typescript', listDir?: (abs: string) => string[]) => {
     const ws = new FakeWs();
-    attachLsp(ws as unknown as WebSocket, root, host);
+    attachLsp(ws as unknown as WebSocket, root, host, serverId, listDir);
     return ws;
   };
   return { host, children, connect, child: () => children[children.length - 1]! };
@@ -245,6 +248,62 @@ describe('attachLsp', () => {
     await settle();
     expect(ws2.find((m) => (m.params as { state?: string } | undefined)?.state === 'unavailable')).toBeTruthy();
     expect(ws2.find((m) => (m.params as { state?: string } | undefined)?.state === 'ready')).toBeUndefined();
+  });
+});
+
+describe('csharp: ソリューションごとのプロセス', () => {
+  const dirs: Record<string, string[]> = {
+    [path.join(root, 'a')]: ['A.sln'],
+    [path.join(root, 'b')]: ['B.sln'],
+  };
+  const listDir = (p: string) => dirs[path.resolve(p)] ?? [];
+
+  it('最寄りの .sln ごとに spawn し solution/open を送り、要求は doc の .sln のプロセスへ届く', async () => {
+    const { connect, children } = setup();
+    const ws = connect('csharp', listDir);
+    sockets.push(ws);
+    expect(children).toHaveLength(0); // 接続だけでは起動しない (doc が来てから)
+    const token = (ws.sent[0]!.params as { rootToken: string }).rootToken;
+    const ua = `file:///${token}/a/src/A.cs`;
+    const ub = `file:///${token}/b/src/B.cs`;
+    ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri: ua, languageId: 'csharp', version: 1, text: 'a' } } });
+    await settle();
+    expect(children).toHaveLength(1);
+    const openA = children[0]!.received.find((m) => m.method === 'solution/open')!;
+    expect((openA.params as { solution: string }).solution).toBe(pathToFileURL(path.join(root, 'a', 'A.sln')).href);
+    expect(ws.find((m) => (m.params as { state?: string; solution?: string } | undefined)?.state === 'ready')).toMatchObject({ params: { solution: 'A.sln' } });
+
+    ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri: ub, languageId: 'csharp', version: 1, text: 'b' } } });
+    await settle();
+    expect(children).toHaveLength(2);
+    ws.push({ id: 1, method: 'textDocument/hover', params: { textDocument: { uri: ub }, position: { line: 0, character: 0 } } });
+    ws.push({ id: 2, method: 'textDocument/completion', params: { textDocument: { uri: ua }, position: { line: 0, character: 0 } } });
+    await settle();
+    expect(children[1]!.received.some((m) => m.method === 'textDocument/hover')).toBe(true);
+    expect(children[0]!.received.some((m) => m.method === 'textDocument/hover')).toBe(false);
+    // resolve は直前に completion を返したプロセス (A) へ
+    ws.push({ id: 3, method: 'completionItem/resolve', params: { label: 'x' } });
+    await settle();
+    expect(children[0]!.received.some((m) => m.method === 'completionItem/resolve')).toBe(true);
+    expect(children[1]!.received.some((m) => m.method === 'completionItem/resolve')).toBe(false);
+    // 同じ root の TS セッションは別プロセスで、rootToken は共有
+    const ts = connect('typescript');
+    sockets.push(ts);
+    await settle();
+    expect(children).toHaveLength(3);
+    expect((ts.sent[0]!.params as { rootToken: string }).rootToken).toBe(token);
+  });
+
+  it('.sln が無いファイルは solution/open 無しのプロセスで即 ready', async () => {
+    const { connect, children } = setup();
+    const ws = connect('csharp', () => []);
+    sockets.push(ws);
+    const token = (ws.sent[0]!.params as { rootToken: string }).rootToken;
+    ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri: `file:///${token}/x/Loose.cs`, languageId: 'csharp', version: 1, text: '' } } });
+    await settle();
+    expect(children).toHaveLength(1);
+    expect(children[0]!.received.map((m) => m.method)).toEqual(['initialize', 'initialized', 'textDocument/didOpen']);
+    expect(ws.find((m) => (m.params as { state?: string } | undefined)?.state === 'ready')).toBeTruthy();
   });
 });
 

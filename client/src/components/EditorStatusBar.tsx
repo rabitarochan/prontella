@@ -122,7 +122,8 @@ export default function EditorStatusBar({
     source?: string;
     error?: string;
     onRestart: () => void;
-    onUseBuiltin: () => void;
+    /** 内蔵の代替がある TypeScript だけ */
+    onUseBuiltin?: () => void;
     onUseLsp: () => void;
   };
 }) {
@@ -312,7 +313,7 @@ export default function EditorStatusBar({
             ) : (
               <>
                 <DropdownMenuItem onSelect={lsp.onRestart}>{t('files.lsp.restart')}</DropdownMenuItem>
-                <DropdownMenuItem onSelect={lsp.onUseBuiltin}>{t('files.lsp.useBuiltin')}</DropdownMenuItem>
+                {lsp.onUseBuiltin && <DropdownMenuItem onSelect={lsp.onUseBuiltin}>{t('files.lsp.useBuiltin')}</DropdownMenuItem>}
               </>
             )}
           </DropdownMenuContent>

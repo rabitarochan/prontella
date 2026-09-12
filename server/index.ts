@@ -30,7 +30,7 @@ import { launchEditor, resolveEditor } from './editorLaunch.js';
 import { keepAlive } from './wsKeepAlive.js';
 import { LspHost } from './lsp/host.js';
 import { attachLsp } from './lsp/session.js';
-import { checkLspConfig, type LspConfig } from './lsp/registry.js';
+import { DEFAULT_CONFIG as LSP_DEFAULT_CONFIG, MODES_BY_SERVER, checkLspConfig, isServerId, type LspConfig } from './lsp/registry.js';
 
 const PORT = Number(process.env.PORT) || 3711;
 // 既定はループバックのみ。deck は認証を持たないため、LAN へ公開するときは
@@ -132,7 +132,7 @@ function lspConfig(): LspConfig {
     warnedLspConfig = true;
     console.warn(`[prontella] config.json の lsp を無視します: ${check.error}`);
   }
-  return { typescript: { mode: 'builtin' } };
+  return structuredClone(LSP_DEFAULT_CONFIG);
 }
 const lspHost = new LspHost({ configFor: (id) => lspConfig()[id] });
 
@@ -1596,22 +1596,31 @@ app.get('/api/vnc/status', asyncHandler(async (_req, res) => {
 // ---- lsp ---------------------------------------------------------------------
 
 // 内蔵 TS を落とすかどうかはクライアントの起動時に 1 回だけ決まる (Monaco の制約)。設定の読み出しのみ。
+// サーバーごとの mode を返す: { typescript: 'builtin'|'lsp', csharp: 'lsp'|'off' }
 app.get('/api/lsp/mode', (_req, res) => {
-  res.json({ mode: lspConfig().typescript.mode });
+  const cfg = lspConfig();
+  res.json({ typescript: cfg.typescript.mode, csharp: cfg.csharp.mode });
 });
 
-// ステータスバーの「内蔵に戻す」/ 切替。値は 'builtin' | 'lsp' のみ。
+// ステータスバーの切替。{ server?: 'typescript'|'csharp', mode } — 値域はサーバーごと (MODES_BY_SERVER)。
 app.put('/api/lsp/mode', (req, res) => {
   const body: unknown = req.body;
-  const mode = body !== null && typeof body === 'object' ? (body as { mode?: unknown }).mode : undefined;
-  if (mode !== 'builtin' && mode !== 'lsp') {
-    res.status(400).json({ error: "mode は 'builtin' か 'lsp' を指定してください" });
+  const obj = body !== null && typeof body === 'object' ? (body as { server?: unknown; mode?: unknown }) : {};
+  const server = obj.server ?? 'typescript';
+  if (!isServerId(server)) {
+    res.status(400).json({ error: "server は 'typescript' か 'csharp' を指定してください" });
+    return;
+  }
+  const modes = MODES_BY_SERVER[server];
+  const mode = obj.mode;
+  if (typeof mode !== 'string' || !(modes as readonly string[]).includes(mode)) {
+    res.status(400).json({ error: `mode は ${modes.map((m) => `'${m}'`).join(' か ')} を指定してください` });
     return;
   }
   const cfg = config.loadConfig();
   const prev = typeof cfg.lsp === 'object' && cfg.lsp !== null && !Array.isArray(cfg.lsp) ? (cfg.lsp as Record<string, unknown>) : {};
-  config.saveConfig({ ...cfg, lsp: { ...prev, typescript: { ...lspConfig().typescript, mode } } });
-  res.json({ mode });
+  config.saveConfig({ ...cfg, lsp: { ...prev, [server]: { ...lspConfig()[server], mode } } });
+  res.json({ server, mode });
 });
 
 /**
@@ -1761,15 +1770,16 @@ server.on('upgrade', (req, socket, head) => {
   } else if (url.pathname === '/ws/lsp') {
     // 素の JSON-RPC (LSP)。keepAlive の {type:'ping'} は JSON-RPC に type が無いので衝突しない
     const root = url.searchParams.get('root') ?? '';
+    const server = url.searchParams.get('server') ?? 'typescript';
     wss.handleUpgrade(req, socket, head, (ws) => {
       instrumentSocket(metrics, ws, '/ws/lsp');
-      if (!root || !isKnownRoot(root) || !fs.existsSync(root) || lspConfig().typescript.mode !== 'lsp') {
+      if (!root || !isKnownRoot(root) || !fs.existsSync(root) || !isServerId(server) || lspConfig()[server].mode !== 'lsp') {
         // クライアントが再接続ループに入らないよう、閉じる前に refused を告げる
         ws.send(JSON.stringify({ jsonrpc: '2.0', method: '$/prontella/status', params: { state: 'disabled', refused: true } }));
         ws.close(4003, 'lsp unavailable for this root');
         return;
       }
-      attachLsp(ws, root, lspHost);
+      attachLsp(ws, root, lspHost, server);
       keepAlive(ws);
     });
   } else if (url.pathname === '/ws/vnc') {

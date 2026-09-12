@@ -1,7 +1,8 @@
 import { openLiveSocket, type LinkPhase, type LiveSocket } from '../lib/liveSocket';
+import type { ServerId } from './languages';
 
 /**
- * root ごとに 1 本の `/ws/lsp` 接続。ワイヤーは素の JSON-RPC。
+ * (root, serverId) ごとに 1 本の `/ws/lsp` 接続。ワイヤーは素の JSON-RPC。
  *
  * - pending は「宙吊りにしない」: 再接続・タイムアウト・送信失敗はすべて null で **resolve** する。
  *   宙吊りにすると補完ウィジェットがスピナーのまま張り付き、reject すると unhandledrejection に出る
@@ -35,6 +36,7 @@ interface Pending {
 
 export class LspSession {
   readonly root: string;
+  readonly serverId: ServerId;
   rootToken: string | null = null;
   status: LspStatus = { state: 'connecting' };
   private socket: LiveSocket;
@@ -44,10 +46,11 @@ export class LspSession {
   readonly onOpen = new Set<() => void>();
   readonly onReset = new Set<() => void>();
 
-  constructor(root: string) {
+  constructor(root: string, serverId: ServerId) {
     this.root = root;
+    this.serverId = serverId;
     this.socket = openLiveSocket({
-      path: `/ws/lsp?root=${encodeURIComponent(root)}`,
+      path: `/ws/lsp?root=${encodeURIComponent(root)}&server=${serverId}`,
       onMessage: (msg) => this.onMessage(msg),
       onOpen: () => {
         for (const l of this.onOpen) l();
@@ -160,16 +163,13 @@ export class LspSession {
 
 const sessions = new Map<string, LspSession>();
 
-/** root の接続を得る (無ければ張る)。切らない — LS 側の寿命はサーバーのアイドル停止が持つ。 */
-export function getLspSession(root: string): LspSession {
-  let s = sessions.get(root);
+/** (root, serverId) の接続を得る (無ければ張る)。切らない — LS 側の寿命はサーバーのアイドル停止が持つ。 */
+export function getLspSession(root: string, serverId: ServerId): LspSession {
+  const key = `${root}\0${serverId}`;
+  let s = sessions.get(key);
   if (!s) {
-    s = new LspSession(root);
-    sessions.set(root, s);
+    s = new LspSession(root, serverId);
+    sessions.set(key, s);
   }
   return s;
-}
-
-export function peekLspSession(root: string): LspSession | undefined {
-  return sessions.get(root);
 }

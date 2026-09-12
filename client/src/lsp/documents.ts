@@ -1,5 +1,6 @@
 import * as monaco from 'monaco-editor';
 import { toLspRange } from './convert';
+import { languageIdFor, serverIdFor, type ServerId } from './languages';
 import { NOT_OWNER, getLspSession, type LspResult, type LspSession } from './session';
 import { modelUriString, parseModelUri, toWireUri } from './uri';
 import { getLspWorkspace, onLspWorkspaceRegistered } from './workspaces';
@@ -19,24 +20,6 @@ import { getLspWorkspace, onLspWorkspaceRegistered } from './workspaces';
  *   (サーバーは既知の doc への didOpen を全文 didChange として扱う)。別ブラウザータブとの競合も
  *   同じ形で解ける: サーバーが -32803 (not-owner) を返したら全文 didOpen して 1 回だけ再要求する
  */
-
-// server/lsp/registry.ts と同じ表。.tsx は必ず typescriptreact (tsgo は最初の languageId で固定する)
-const LANGUAGE_IDS: Readonly<Record<string, string>> = {
-  '.ts': 'typescript',
-  '.mts': 'typescript',
-  '.cts': 'typescript',
-  '.tsx': 'typescriptreact',
-  '.js': 'javascript',
-  '.mjs': 'javascript',
-  '.cjs': 'javascript',
-  '.jsx': 'javascriptreact',
-};
-
-function languageIdFor(path: string): string | null {
-  const name = path.split('/').pop() ?? path;
-  const dot = name.lastIndexOf('.');
-  return dot < 0 ? null : (LANGUAGE_IDS[name.slice(dot).toLowerCase()] ?? null);
-}
 
 interface Tracked {
   model: monaco.editor.ITextModel;
@@ -66,10 +49,12 @@ const versions = new Map<string, number>();
 const pendingModels = new Set<monaco.editor.ITextModel>();
 const sessionsWired = new WeakSet<LspSession>();
 let started = false;
+let enabledServers: ReadonlySet<ServerId> = new Set();
 
-export function startLspDocuments(): void {
+export function startLspDocuments(enabled: ReadonlySet<ServerId>): void {
   if (started) return;
   started = true;
+  enabledServers = enabled;
   for (const model of monaco.editor.getModels()) track(model);
   monaco.editor.onDidCreateModel(track);
   monaco.editor.onWillDisposeModel(untrack);
@@ -103,13 +88,15 @@ function track(model: monaco.editor.ITextModel): void {
   if (!ref) return;
   const languageId = languageIdFor(ref.path);
   if (!languageId) return;
+  const serverId = serverIdFor(languageId);
+  if (!enabledServers.has(serverId)) return;
   const ws = getLspWorkspace(ref.leafId);
   if (!ws) {
     pendingModels.add(model);
     return;
   }
   pendingModels.delete(model);
-  const session = getLspSession(ws.root);
+  const session = getLspSession(ws.root, serverId);
   wireSession(session);
   const key = `${ws.root}\0${ref.path}`;
   const t: Tracked = { model, leafId: ref.leafId, path: ref.path, session, languageId, key, disposables: [] };

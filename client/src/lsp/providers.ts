@@ -29,12 +29,12 @@ import { getLspWorkspace } from './workspaces';
  * (未対応 root で待たない)。
  */
 
-const LANGUAGES = ['typescript', 'javascript']; // Monaco の言語 id (.tsx / .jsx も同じ id)
+const LANGUAGES = ['typescript', 'javascript', 'csharp']; // Monaco の言語 id (.tsx / .jsx も同じ id)
 const COMPLETION_TIMEOUT_MS = 3_000;
 const LOOKUP_TIMEOUT_MS = 5_000;
-// ponytail: tsgo と typescript-language-server の triggerCharacters の和集合を静的に渡す。
+// ponytail: tsgo / typescript-language-server / Roslyn の triggerCharacters の和集合を静的に渡す。
 // initialize の capabilities で再登録する経路は、候補の取りこぼしが観測されてから足す
-const TRIGGER_CHARACTERS = ['.', '"', "'", '`', '/', '@', '<', '#', ' ', '*'];
+const TRIGGER_CHARACTERS = ['.', '"', "'", '`', '/', '@', '<', '#', ' ', '*', '(', ':', '[', '{', '>', '~', '\\'];
 
 const itemSession = new WeakMap<monaco.languages.CompletionItem, LspSession>();
 let registered = false;

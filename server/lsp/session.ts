@@ -1,10 +1,13 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { WebSocket } from 'ws';
 import { metrics } from '../metrics/index.js';
 import type { JsonRpcMessage, LspHost, ProcHandle, ProcListener } from './host.js';
-import { rewriteUris, uriToWire, wireToUri } from './uri.js';
+import { findSolution, fsListDir, type ServerId } from './registry.js';
+import { createExtTable, rewriteUris, uriToWire, wireToUri } from './uri.js';
 
 /**
- * 1 WebSocket = 1 セッション。ワイヤーは素の JSON-RPC (LSP) — 独自エンベロープにしない
+ * 1 WebSocket = 1 セッション = (root, serverId)。ワイヤーは素の JSON-RPC (LSP) — 独自エンベロープにしない
  * (monaco-languageclient へ切り替えるとき server/lsp/* をそのまま使うため)。
  *
  * セッション層の仕事:
@@ -13,6 +16,9 @@ import { rewriteUris, uriToWire, wireToUri } from './uri.js';
  * - doc の所有権: 同じファイルを別セッション (別ブラウザータブ) が開いていても LS には 1 ドキュメント。
  *   本文を最後に送った owner だけが didChange を流せる。非 owner の要求は -32803 {prontella:'not-owner'}
  *   で返し、クライアントは全文 didOpen で所有権を取り直してから再要求する
+ * - プロセスへの振り分け: TS は root に 1 つ。C# は Roslyn LS が 1 プロセス 1 ソリューションなので、
+ *   doc の最寄り .sln ごとにプロセスを持ち、要求は textDocument.uri で振り分ける
+ *   (`completionItem/resolve` は URI を持たないので直前に completion を返したプロセスへ)
  * - `$/prontella/status` / `$/prontella/reset` の通知 (プロトコル外の拡張は `$/` 接頭辞)
  */
 
@@ -28,39 +34,92 @@ export const ERR_METHOD_NOT_FOUND = -32601;
 export const ERR_INVALID_PARAMS = -32602;
 export const ERR_NOT_OWNER = -32803;
 
-export function attachLsp(ws: WebSocket, root: string, host: LspHost): void {
+interface DocParams {
+  textDocument?: { uri?: string; languageId?: string; version?: number; text?: string };
+  contentChanges?: unknown[];
+  text?: string;
+}
+
+interface Slot {
+  handle: ProcHandle;
+  listener: ProcListener;
+}
+
+export function attachLsp(ws: WebSocket, root: string, host: LspHost, serverId: ServerId = 'typescript', listDir = fsListDir): void {
   metrics.count('lsp.session');
+  const rootAbs = path.resolve(root);
+  const rootToken = host.tokenFor(root);
   const send = (msg: JsonRpcMessage) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ jsonrpc: '2.0', ...msg }));
   };
-  let handle: ProcHandle | undefined;
-  const me: ProcListener = {
-    onResponse(msg) {
-      send({ ...msg, result: msg.result === undefined ? msg.result : toWire(msg.result) });
-    },
-    onReset() {
-      send({ method: '$/prontella/reset' });
-    },
-    onStatus(status) {
-      // acquire の最中 (handle 未代入) に届く分は、直後に送る hello が最新の status を運ぶ
-      if (!handle) return;
-      send({ method: '$/prontella/status', params: { rootToken: handle.rootToken, ...status } });
-    },
-  };
-  handle = host.acquire(root, 'typescript', me);
-  const h: ProcHandle = handle;
-  const toWire = (value: unknown) => rewriteUris(value, (u) => uriToWire(h.root, h.rootToken, h.ext, u));
-  // 解釈できない URI が 1 つでもあれば要求ごと拒否する (黙って落とすと LS に空文字が渡る)
+  // ワークスペースキー ('' = ソリューション無し / TS) → プロセス
+  const slots = new Map<string, Slot>();
+  const solutionByDir = new Map<string, string | null>();
+  let lastCompletion: Slot | null = null;
+
+  // 解釈できない URI が 1 つでもあれば要求ごと拒否する (黙って落とすと LS に空文字が渡る)。
+  // クライアントは -ext URI を送ってこないので ext 表は空でよい
+  const incomingExt = createExtTable();
   const fromWire = (value: unknown): { ok: true; value: unknown } | { ok: false } => {
     let bad = false;
     const out = rewriteUris(value, (u) => {
-      const disk = wireToUri(h.root, h.rootToken, h.ext, u);
+      const disk = wireToUri(rootAbs, rootToken, incomingExt, u);
       if (disk === null) bad = true;
       return disk;
     });
     return bad ? { ok: false } : { ok: true, value: out };
   };
-  send({ method: '$/prontella/status', params: { rootToken: h.rootToken, ...h.status } });
+
+  /** 何かのプロセスが ready なら ready (別ソリューションの起動中に既存の補完を止めない) */
+  const anyReady = () => [...slots.values()].some((s) => s.handle.status.state === 'ready');
+
+  function acquire(key: string, solution?: string): Slot {
+    const existing = slots.get(key);
+    if (existing) return existing;
+    const slot: Partial<Slot> = {};
+    const listener: ProcListener = {
+      onResponse(msg) {
+        const h = slot.handle!;
+        send({ ...msg, result: msg.result === undefined ? msg.result : rewriteUris(msg.result, (u) => uriToWire(h.root, rootToken, h.ext, u)) });
+      },
+      onReset() {
+        send({ method: '$/prontella/reset' });
+      },
+      onStatus(status) {
+        if (!slot.handle) return; // acquire の最中 (handle 未代入) の分は直後の hello が運ぶ
+        send({ method: '$/prontella/status', params: { rootToken, ...status, state: status.state !== 'ready' && anyReady() ? 'ready' : status.state } });
+      },
+    };
+    slot.listener = listener;
+    slot.handle = host.acquire(root, serverId, listener, solution !== undefined || key !== '' ? { key, solution } : undefined);
+    const done = slot as Slot;
+    slots.set(key, done);
+    send({ method: '$/prontella/status', params: { rootToken, ...done.handle.status } });
+    return done;
+  }
+
+  /** doc の宛先プロセス。C# は最寄りの .sln 単位、TS は root に 1 つ */
+  function slotFor(diskUri: string): Slot {
+    if (serverId !== 'csharp') return acquire('');
+    let abs: string;
+    try {
+      abs = fileURLToPath(diskUri);
+    } catch {
+      return acquire('');
+    }
+    const dir = path.dirname(abs);
+    let sln = solutionByDir.get(dir);
+    if (sln === undefined) {
+      sln = findSolution(rootAbs, abs, listDir);
+      solutionByDir.set(dir, sln);
+    }
+    if (sln === null) return acquire('');
+    const key = process.platform === 'win32' ? sln.toLowerCase() : sln;
+    return acquire(key, sln);
+  }
+
+  if (serverId !== 'csharp') acquire('');
+  else send({ method: '$/prontella/status', params: { rootToken, state: 'stopped' } });
 
   ws.on('message', (raw) => {
     let msg: JsonRpcMessage;
@@ -76,21 +135,31 @@ export function attachLsp(ws: WebSocket, root: string, host: LspHost): void {
       if (id !== undefined) send({ id, ...body });
     };
 
-    if (method === 'initialize') return reply({ result: { capabilities: h.capabilities ?? {} } });
+    if (method === 'initialize') {
+      const first = slots.values().next().value as Slot | undefined;
+      return reply({ result: { capabilities: first?.handle.capabilities ?? {} } });
+    }
     if (method === 'initialized' || method === 'exit') return;
     if (method === 'shutdown') return reply({ result: null });
-    if (method === '$/prontella/restart') return h.restart();
+    if (method === '$/prontella/restart') {
+      for (const s of slots.values()) s.handle.restart();
+      return;
+    }
     if (method === '$/cancelRequest') {
       const target = (msg.params as { id?: number | string } | undefined)?.id;
-      if (target !== undefined) h.cancel(me, target);
+      if (target !== undefined) for (const s of slots.values()) s.handle.cancel(s.listener, target);
       return;
     }
 
     if (DOC_NOTIFICATIONS.has(method)) {
       const p = fromWire(msg.params);
       if (!p.ok) return;
-      h.wake();
-      onDocNotification(method, p.value as DocParams);
+      const params = p.value as DocParams;
+      const uri = params.textDocument?.uri;
+      if (typeof uri !== 'string') return;
+      const slot = slotFor(uri);
+      slot.handle.wake();
+      onDocNotification(slot, method, uri, params);
       return;
     }
     if (!ALLOWED_REQUESTS.has(method)) {
@@ -100,26 +169,25 @@ export function attachLsp(ws: WebSocket, root: string, host: LspHost): void {
     const p = fromWire(msg.params);
     if (!p.ok) return reply({ error: { code: ERR_INVALID_PARAMS, message: '解釈できない URI が含まれています' } });
     const uri = (p.value as DocParams | undefined)?.textDocument?.uri;
+    let slot: Slot | undefined;
     if (uri !== undefined) {
-      const doc = h.docs.get(uri);
-      if (!doc || !doc.holders.has(me)) return reply({ result: null }); // LS が知らない doc (再起動直後など)
-      if (doc.owner !== me) {
+      slot = slotFor(uri);
+      const doc = slot.handle.docs.get(uri);
+      if (!doc || !doc.holders.has(slot.listener)) return reply({ result: null }); // LS が知らない doc (再起動直後など)
+      if (doc.owner !== slot.listener) {
         return reply({ error: { code: ERR_NOT_OWNER, message: '別のセッションが本文を更新しています', data: { prontella: 'not-owner' } } });
       }
+      if (method === 'textDocument/completion') lastCompletion = slot;
+    } else {
+      slot = lastCompletion ?? slots.values().next().value;
+      if (!slot) return reply({ result: null });
     }
-    h.wake();
-    h.request(me, { id, method, params: p.value });
+    slot.handle.wake();
+    slot.handle.request(slot.listener, { id, method, params: p.value });
   });
 
-  interface DocParams {
-    textDocument?: { uri?: string; languageId?: string; version?: number; text?: string };
-    contentChanges?: unknown[];
-    text?: string;
-  }
-
-  function onDocNotification(method: string, params: DocParams): void {
-    const uri = params.textDocument?.uri;
-    if (typeof uri !== 'string') return;
+  function onDocNotification(slot: Slot, method: string, uri: string, params: DocParams): void {
+    const { handle: h, listener: me } = slot;
     const doc = h.docs.get(uri);
     switch (method) {
       case 'textDocument/didOpen': {
@@ -141,7 +209,7 @@ export function attachLsp(ws: WebSocket, root: string, host: LspHost): void {
         if (doc && doc.owner === me) h.notify({ method, params });
         return;
       case 'textDocument/didClose':
-        closeDoc(uri);
+        closeDoc(slot, uri);
         return;
       case 'textDocument/didSave':
         if (doc && doc.holders.has(me)) h.notify({ method, params });
@@ -149,7 +217,8 @@ export function attachLsp(ws: WebSocket, root: string, host: LspHost): void {
     }
   }
 
-  function closeDoc(uri: string): void {
+  function closeDoc(slot: Slot, uri: string): void {
+    const { handle: h, listener: me } = slot;
     const doc = h.docs.get(uri);
     if (!doc || !doc.holders.has(me)) return;
     doc.holders.delete(me);
@@ -162,8 +231,11 @@ export function attachLsp(ws: WebSocket, root: string, host: LspHost): void {
   }
 
   const cleanup = () => {
-    for (const uri of [...h.docs.keys()]) closeDoc(uri);
-    h.release(me);
+    for (const slot of slots.values()) {
+      for (const uri of [...slot.handle.docs.keys()]) closeDoc(slot, uri);
+      slot.handle.release(slot.listener);
+    }
+    slots.clear();
   };
   ws.on('close', cleanup);
   ws.on('error', cleanup);

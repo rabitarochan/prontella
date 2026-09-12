@@ -58,6 +58,11 @@ export const METRIC_NAMES = [
   'ws.bytes.in',
   'ws.bytes.out',
   'ws.send.skipped',
+  // ---- server: LSP
+  'lsp.spawn',
+  'lsp.crash',
+  'lsp.request',
+  'lsp.session',
   // ---- server: polling waste
   'repos.poll.changed',
   'repos.poll.unchanged',
@@ -115,7 +120,10 @@ export const GIT_SUBCOMMANDS = [
   'rm', 'restore', 'cat-file', 'ls-tree', 'symbolic-ref', 'config', 'describe', 'update-ref',
   'other',
 ] as const;
-export const WS_PATHS = ['/ws/term', '/ws/agent', '/ws/events', '/ws/vnc'] as const;
+export const WS_PATHS = ['/ws/term', '/ws/agent', '/ws/events', '/ws/vnc', '/ws/lsp'] as const;
+export const LSP_METHODS = [
+  'textDocument/completion', 'textDocument/hover', 'textDocument/definition', 'completionItem/resolve', 'other',
+] as const;
 export const LINK_PHASES = ['connecting', 'open', 'reconnecting', 'gone'] as const;
 export const VIEWS = ['files', 'git', 'term', 'chat'] as const;
 export const AGENT_STATUSES = ['busy', 'waiting', 'idle', 'shell'] as const;
@@ -214,6 +222,7 @@ export const ROUTES = [
   '/api/git/undo-commit',
   '/api/git/unstage',
   '/api/git/unstage-all',
+  '/api/lsp/mode',
   '/api/metrics/config',
   '/api/metrics/export',
   '/api/metrics/heap-snapshot',
@@ -255,6 +264,7 @@ export const STRING_RULES: Readonly<Record<string, StringRule>> = {
   git: vocab(GIT_SUBCOMMANDS),
   path: vocab(WS_PATHS),
   phase: vocab(LINK_PHASES),
+  lsp: vocab(LSP_METHODS),
   view: vocab(VIEWS),
   status: vocab(AGENT_STATUSES),
   kind: vocab(SESSION_KINDS),

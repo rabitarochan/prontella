@@ -92,6 +92,7 @@ export default function EditorStatusBar({
   onReloadWithEncoding,
   onSaveWithEncoding,
   onEolOverride,
+  lsp,
 }: {
   /** インデント / EOL の表示元であり、変更の適用先でもあるエディター。 */
   editor: EditorInstance | null;
@@ -114,6 +115,18 @@ export default function EditorStatusBar({
   onSaveWithEncoding?: (encoding: string, bom: boolean) => void;
   /** EOL をユーザーが明示選択したことの記録 (FilesTab の保存時整形が使う)。省略可。 */
   onEolOverride?: () => void;
+  /** 言語サーバーの状態 (LSP モードのときだけ)。省略すると項目を出さない。 */
+  lsp?: {
+    /** 'builtin' は LSP モードが無効 (内蔵 TypeScript)。切替の入口としてだけ出す */
+    state: 'builtin' | 'connecting' | 'starting' | 'ready' | 'disabled' | 'unavailable' | 'stopped';
+    source?: string;
+    error?: string;
+    solution?: string;
+    onRestart: () => void;
+    /** 内蔵の代替がある TypeScript だけ */
+    onUseBuiltin?: () => void;
+    onUseLsp: () => void;
+  };
 }) {
   const t = useT();
   const [position, setPosition] = useState<{ line: number; column: number } | null>(null);
@@ -283,6 +296,30 @@ export default function EditorStatusBar({
             </DropdownMenuContent>
           </DropdownMenu>
         ))}
+      {lsp && (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            className={TRIGGER_CLS}
+            title={
+              lsp.state === 'builtin'
+                ? t('files.lsp.builtinTooltip')
+                : (lsp.error ?? (lsp.source ? t('files.lsp.tooltip', { source: lsp.solution ? `${lsp.source} · ${lsp.solution}` : lsp.source }) : undefined))
+            }
+          >
+            {t(`files.lsp.${lsp.state}`)}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="end" onCloseAutoFocus={(e) => e.preventDefault()}>
+            {lsp.state === 'builtin' ? (
+              <DropdownMenuItem onSelect={lsp.onUseLsp}>{t('files.lsp.useLsp')}</DropdownMenuItem>
+            ) : (
+              <>
+                <DropdownMenuItem onSelect={lsp.onRestart}>{t('files.lsp.restart')}</DropdownMenuItem>
+                {lsp.onUseBuiltin && <DropdownMenuItem onSelect={lsp.onUseBuiltin}>{t('files.lsp.useBuiltin')}</DropdownMenuItem>}
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   );
 }

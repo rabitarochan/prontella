@@ -26,6 +26,11 @@ import {
 import { useT, type StringKey } from '../i18n';
 import { isMarkdownPath } from '../markdown/paths';
 import { registerFilesTab, touchFilesTab, unregisterFilesTab } from '../search/registry';
+import { switchLspMode } from '../lsp';
+import { serverIdForPath } from '../lsp/languages';
+import { getLspSession } from '../lsp/session';
+import { useLspStatus } from '../lsp/useLspStatus';
+import { registerLspWorkspace, unregisterLspWorkspace } from '../lsp/workspaces';
 import BlameModal from './BlameModal';
 import { useConfirm } from './ConfirmDialog';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
@@ -753,9 +758,21 @@ export default function FilesTab({
       },
       showSearchPanel: () => showSearchPanelRef.current(),
     });
-    return () => unregisterFilesTab(id);
+    // 定義ジャンプの着地と通知 (client/src/lsp)。leafId 単位 — モデル URI の第 1 セグメントで引かれる
+    registerLspWorkspace(leafId, {
+      root,
+      openAtLine: (path, line, column) => openAtLineRef.current(path, line, column),
+      notify: (text) => {
+        entriesApi.setMessage(text);
+        setTimeout(() => entriesApi.setMessage(''), 2500);
+      },
+    });
+    return () => {
+      unregisterFilesTab(id);
+      unregisterLspWorkspace(leafId);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [root]);
+  }, [root, leafId]);
 
   // ---- ロード / root 切替 / 永続化 effect 群 --------------------------------
 
@@ -915,6 +932,10 @@ export default function FilesTab({
     activeEntry.file !== null &&
     !activeEntry.file.binary &&
     !activeEntry.file.tooLarge;
+
+  // ステータスバーはアクティブファイルの言語サーバーを出す (対象外の拡張子は TS 扱いで「内蔵」表示)
+  const lspServer = serverIdForPath(activeEntry?.path ?? '') ?? 'typescript';
+  const lspStatus = useLspStatus(root, lspServer);
 
   /** setMessage を一定時間で消す (save の成功メッセージと同じ寿命)。 */
   const flashMessage = (text: string) => {
@@ -1166,6 +1187,16 @@ export default function FilesTab({
               editor={activeEditor}
               activePath={activeEntry.path}
               file={activeEntry.file}
+              lsp={
+                lspStatus
+                  ? {
+                      ...lspStatus,
+                      onRestart: () => getLspSession(root, lspServer).restart(),
+                      onUseBuiltin: lspServer === 'typescript' ? () => void switchLspMode('builtin') : undefined,
+                      onUseLsp: () => void switchLspMode('lsp', lspServer),
+                    }
+                  : undefined
+              }
               onReloadWithEncoding={(encoding) => void reloadWithEncoding(encoding)}
               onSaveWithEncoding={(encoding, bom) => {
                 const target = activeGroupEditorKey();

@@ -28,6 +28,9 @@ import { HOOK_EVENTS } from './hooks.js';
 import { attachVncBridge, getVncTarget, probeVncTarget } from './vnc.js';
 import { launchEditor, resolveEditor } from './editorLaunch.js';
 import { keepAlive } from './wsKeepAlive.js';
+import { LspHost } from './lsp/host.js';
+import { attachLsp } from './lsp/session.js';
+import { DEFAULT_CONFIG as LSP_DEFAULT_CONFIG, MODES_BY_SERVER, checkLspConfig, isServerId, type LspConfig } from './lsp/registry.js';
 
 const PORT = Number(process.env.PORT) || 3711;
 // 既定はループバックのみ。deck は認証を持たないため、LAN へ公開するときは
@@ -113,6 +116,25 @@ warmTerminalEnv();
 
 const ptyManager = new PtyManager(PORT);
 const agentManager = new AgentSessionManager();
+
+// 言語サーバー設定は接続/起動のたびに config.json を読む (vnc と同じ: 破損時は既定値で続行)。
+let warnedLspConfig = false;
+function lspConfig(): LspConfig {
+  let value: unknown;
+  try {
+    value = config.loadConfig().lsp;
+  } catch {
+    value = undefined;
+  }
+  const check = checkLspConfig(value);
+  if (check.ok) return check.config;
+  if (!warnedLspConfig) {
+    warnedLspConfig = true;
+    console.warn(`[prontella] config.json の lsp を無視します: ${check.error}`);
+  }
+  return structuredClone(LSP_DEFAULT_CONFIG);
+}
+const lspHost = new LspHost({ configFor: (id) => lspConfig()[id] });
 
 // メトリクス収集 (既定 off)。PRONTELLA_METRICS=dev|anon か config.json の metrics.tier で有効化。
 // off のときはタイマーもファイルも作らない。
@@ -1571,6 +1593,53 @@ app.get('/api/vnc/status', asyncHandler(async (_req, res) => {
   res.json({ host: target.host, port: target.port, reachable });
 }));
 
+// ---- lsp ---------------------------------------------------------------------
+
+// 内蔵 TS を落とすかどうかはクライアントの起動時に 1 回だけ決まる (Monaco の制約)。設定の読み出しのみ。
+// サーバーごとの mode を返す: { typescript: 'builtin'|'lsp', csharp: 'lsp'|'off' }
+app.get('/api/lsp/mode', (_req, res) => {
+  const cfg = lspConfig();
+  res.json({ typescript: cfg.typescript.mode, csharp: cfg.csharp.mode });
+});
+
+// ステータスバーの切替。{ server?: 'typescript'|'csharp', mode } — 値域はサーバーごと (MODES_BY_SERVER)。
+app.put('/api/lsp/mode', (req, res) => {
+  const body: unknown = req.body;
+  const obj = body !== null && typeof body === 'object' ? (body as { server?: unknown; mode?: unknown }) : {};
+  const server = obj.server ?? 'typescript';
+  if (!isServerId(server)) {
+    res.status(400).json({ error: "server は 'typescript' か 'csharp' を指定してください" });
+    return;
+  }
+  const modes = MODES_BY_SERVER[server];
+  const mode = obj.mode;
+  if (typeof mode !== 'string' || !(modes as readonly string[]).includes(mode)) {
+    res.status(400).json({ error: `mode は ${modes.map((m) => `'${m}'`).join(' か ')} を指定してください` });
+    return;
+  }
+  const cfg = config.loadConfig();
+  const prev = typeof cfg.lsp === 'object' && cfg.lsp !== null && !Array.isArray(cfg.lsp) ? (cfg.lsp as Record<string, unknown>) : {};
+  config.saveConfig({ ...cfg, lsp: { ...prev, [server]: { ...lspConfig()[server], mode } } });
+  res.json({ server, mode });
+});
+
+/**
+ * `/ws/lsp?root=` は任意ディレクトリーでのプロセス起動になるので、`/api/fs/*` (読み書きのみ) より
+ * 重い防壁を置く: 登録済み repo か、その走査で見つかった worktree の配下だけを受ける。
+ */
+function isKnownRoot(root: string): boolean {
+  let repos: config.RepoConfig[];
+  try {
+    repos = config.loadConfig().repos;
+  } catch {
+    return false;
+  }
+  const abs = path.resolve(root);
+  if (repos.some((r) => contains(r.path, abs))) return true;
+  for (const paths of worktreeCache.values()) if (paths.some((wt) => contains(wt, abs))) return true;
+  return false;
+}
+
 // ---- metrics -----------------------------------------------------------------
 
 app.get('/api/metrics/config', (_req, res) => {
@@ -1696,6 +1765,21 @@ server.on('upgrade', (req, socket, head) => {
     wss.handleUpgrade(req, socket, head, (ws) => {
       instrumentSocket(metrics, ws, '/ws/events');
       attachEvents(ws);
+      keepAlive(ws);
+    });
+  } else if (url.pathname === '/ws/lsp') {
+    // 素の JSON-RPC (LSP)。keepAlive の {type:'ping'} は JSON-RPC に type が無いので衝突しない
+    const root = url.searchParams.get('root') ?? '';
+    const server = url.searchParams.get('server') ?? 'typescript';
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      instrumentSocket(metrics, ws, '/ws/lsp');
+      if (!root || !isKnownRoot(root) || !fs.existsSync(root) || !isServerId(server) || lspConfig()[server].mode !== 'lsp') {
+        // クライアントが再接続ループに入らないよう、閉じる前に refused を告げる
+        ws.send(JSON.stringify({ jsonrpc: '2.0', method: '$/prontella/status', params: { state: 'disabled', refused: true } }));
+        ws.close(4003, 'lsp unavailable for this root');
+        return;
+      }
+      attachLsp(ws, root, lspHost, server);
       keepAlive(ws);
     });
   } else if (url.pathname === '/ws/vnc') {

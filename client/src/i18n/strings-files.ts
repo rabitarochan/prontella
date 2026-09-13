@@ -123,7 +123,9 @@ export const FILES_STRINGS = {
 
   // ---- クイックオープン (QuickOpenModal, Ctrl+P) ----
   'files.quickOpenTitle': { ja: 'ファイルを開く', en: 'Open file' },
-  'files.quickOpenPlaceholder': { ja: 'ファイル名で検索', en: 'Search by file name' },
+  'files.quickOpenPlaceholder': { ja: 'ファイル名で検索 (# でシンボル)', en: 'Search by file name (# for symbols)' },
+  'files.symbolSearchHint': { ja: '# に続けてシンボル名を入力 (言語サーバーが有効なワークスペースのみ)', en: 'Type a symbol name after # (workspaces with a language server only)' },
+  'files.noSymbolsFound': { ja: 'シンボルが見つかりません', en: 'No symbols found' },
   'files.noFilesFound': { ja: 'ファイルが見つかりません', en: 'No files found' },
   'files.openFilesSection': { ja: '開いているファイル', en: 'Open files' },
   'files.filesSection': { ja: 'ファイル', en: 'Files' },

@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import type { WebSocket } from 'ws';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createMessageReader, encodeMessage } from './framing.js';
-import { LspHost, answerServerRequest, type JsonRpcMessage } from './host.js';
+import { LspHost, answerServerRequest, globToAbsolute, matchesGlobs, type JsonRpcMessage } from './host.js';
 import { ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, ERR_NOT_OWNER, MAX_EXTERNAL_SIZE, attachLsp } from './session.js';
 import type { LspServerConfig, ServerId } from './registry.js';
 
@@ -89,6 +89,8 @@ const diskUri = (rel: string) => pathToFileURL(path.join(root, rel)).href;
 
 function setup(config: LspServerConfig = { mode: 'lsp' }) {
   const children: FakeChild[] = [];
+  /** 偽の fs.watch: テストがイベントを注入する */
+  const watchers: Array<{ root: string; onEvent: (e: string, f: string | null) => void; closed: boolean }> = [];
   const host = new LspHost({
     configFor: () => config,
     resolve: () => ({ command: 'fake', args: [], source: 'config' }),
@@ -98,13 +100,18 @@ function setup(config: LspServerConfig = { mode: 'lsp' }) {
       children.push(c);
       return c;
     }) as never,
+    watch: (root, onEvent) => {
+      const w = { root, onEvent, closed: false };
+      watchers.push(w);
+      return { close: () => (w.closed = true) };
+    },
   });
   const connect = (serverId: ServerId = 'typescript', listDir?: (abs: string) => string[]) => {
     const ws = new FakeWs();
     attachLsp(ws as unknown as WebSocket, root, host, serverId, listDir);
     return ws;
   };
-  return { host, children, connect, child: () => children[children.length - 1]! };
+  return { host, children, watchers, connect, child: () => children[children.length - 1]! };
 }
 
 const sockets: FakeWs[] = [];
@@ -401,6 +408,115 @@ describe('attachLsp', () => {
     await settle();
     expect(ws2.find((m) => (m.params as { state?: string } | undefined)?.state === 'unavailable')).toBeTruthy();
     expect(ws2.find((m) => (m.params as { state?: string } | undefined)?.state === 'ready')).toBeUndefined();
+  });
+});
+
+describe('workspace/didChangeWatchedFiles', () => {
+  const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+  it('LS が登録した glob に合うファイルの生成/変更/削除を、デバウンスして 1 通知にまとめて流す。.git と glob 外は捨てる', async () => {
+    const { connect, child, watchers } = setup();
+    const ws = connect();
+    sockets.push(ws);
+    await settle();
+    expect(watchers).toHaveLength(0); // 登録が来るまで監視しない
+    // tsgo と同じ形: 絶対パスの glob (小文字ドライブ) と Roslyn と同じ形: {baseUri, pattern}
+    child().reply({ id: 'ts1', method: 'client/registerCapability', params: { registrations: [
+      { id: 'w1', method: 'workspace/didChangeWatchedFiles', registerOptions: { watchers: [{ globPattern: path.join(root, 'vt', '**', '*').split(path.sep).join('/').toLowerCase(), kind: 7 }] } },
+      { id: 'w2', method: 'workspace/didChangeWatchedFiles', registerOptions: { watchers: [{ globPattern: { baseUri: pathToFileURL(path.join(root, 'server')).href, pattern: '**/*.cs' } }] } },
+    ] } });
+    await settle();
+    expect(child().received.find((m) => m.id === 'ts1')).toMatchObject({ result: null }); // 応答は従来どおり
+    expect(watchers).toHaveLength(1);
+    const dir = fs.mkdtempSync(path.join(root, 'vt', 'lsp-watch-'));
+    const rel = path.relative(root, dir);
+    try {
+      fs.writeFileSync(path.join(dir, 'new.ts'), 'export {}');
+      const w = watchers[0]!;
+      w.onEvent('rename', path.join(rel, 'new.ts'));
+      w.onEvent('change', path.join(rel, 'new.ts')); // rename の後の change は rename が勝つ
+      w.onEvent('rename', path.join(rel, 'gone.ts')); // 存在しない → Deleted
+      w.onEvent('change', path.join('.git', 'index')); // 捨てる
+      w.onEvent('change', path.join('server', 'lsp', 'host.ts')); // w2 は .cs だけ → 捨てる
+      w.onEvent('rename', rel); // ディレクトリー → 捨てる
+      expect(child().received.some((m) => m.method === 'workspace/didChangeWatchedFiles')).toBe(false); // デバウンス中
+      await wait(400);
+      const notes = child().received.filter((m) => m.method === 'workspace/didChangeWatchedFiles');
+      expect(notes).toHaveLength(1);
+      expect(notes[0]!.params).toEqual({
+        changes: [
+          { uri: pathToFileURL(path.join(dir, 'new.ts')).href, type: 1 },
+          { uri: pathToFileURL(path.join(dir, 'gone.ts')).href, type: 3 },
+        ],
+      });
+      // 変更は Changed、登録解除で監視が止まる
+      w.onEvent('change', path.join(rel, 'new.ts'));
+      await wait(400);
+      expect(child().received.filter((m) => m.method === 'workspace/didChangeWatchedFiles')[1]!.params).toEqual({ changes: [{ uri: pathToFileURL(path.join(dir, 'new.ts')).href, type: 2 }] });
+      child().reply({ id: 'ts2', method: 'client/unregisterCapability', params: { unregisterations: [{ id: 'w1' }, { id: 'w2' }] } });
+      await settle();
+      expect(w.closed).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('プロセスが終わると監視も終わる', async () => {
+    const { connect, child, watchers } = setup();
+    const ws = connect();
+    sockets.push(ws);
+    await settle();
+    child().reply({ id: 'ts1', method: 'client/registerCapability', params: { registrations: [{ id: 'w', method: 'workspace/didChangeWatchedFiles', registerOptions: { watchers: [{ globPattern: path.join(root, '**', '*') }] } }] } });
+    await settle();
+    expect(watchers).toHaveLength(1);
+    child().crash();
+    expect(watchers[0]!.closed).toBe(true);
+  });
+
+  it('globToAbsolute / matchesGlobs: 文字列・RelativePattern・大文字小文字 (win32)', () => {
+    expect(globToAbsolute('C:/r/**/*')).toBe('C:/r/**/*');
+    expect(globToAbsolute('**/*.cs')).toBeNull();
+    expect(globToAbsolute({ baseUri: pathToFileURL(path.join(root, 'a')).href, pattern: '**/*{.cs,.razor}' })).toBe(path.join(root, 'a', '**/*{.cs,.razor}'));
+    expect(globToAbsolute({ baseUri: { uri: pathToFileURL(path.join(root, 'a')).href }, pattern: 'X.csproj' })).toBe(path.join(root, 'a', 'X.csproj'));
+    expect(globToAbsolute(7)).toBeNull();
+    const g = path.join(root, 'a', '**/*{.cs,.razor}');
+    expect(matchesGlobs([g], path.join(root, 'a', 'b', 'C.cs'))).toBe(true);
+    expect(matchesGlobs([g], path.join(root, 'a', 'b', 'C.razor'))).toBe(true);
+    expect(matchesGlobs([g], path.join(root, 'a', 'b', 'C.ts'))).toBe(false);
+    expect(matchesGlobs([g], path.join(root, 'z', 'C.cs'))).toBe(false);
+    if (process.platform === 'win32') expect(matchesGlobs([g.toLowerCase()], path.join(root, 'A', 'C.CS'))).toBe(true);
+  });
+});
+
+describe('workspace/symbol', () => {
+  it('doc を持たない要求は全プロセスへ流し、配列を連結して 1 応答にする (URI はワイヤー形式)', async () => {
+    const dirs: Record<string, string[]> = { [path.join(root, 'a')]: ['A.sln'], [path.join(root, 'b')]: ['B.sln'] };
+    const { connect, children } = setup();
+    const ws = connect('csharp', (p) => dirs[path.resolve(p)] ?? []);
+    sockets.push(ws);
+    const token = (ws.sent[0]!.params as { rootToken: string }).rootToken;
+    for (const n of ['a', 'b']) ws.push({ method: 'textDocument/didOpen', params: { textDocument: { uri: `file:///${token}/${n}/X.cs`, languageId: 'csharp', version: 1, text: '' } } });
+    await settle();
+    for (const [i, c] of children.entries()) {
+      const orig = c.reply.bind(c);
+      c.reply = (m) => orig(m.id !== undefined && (m.result as { echo?: string } | undefined)?.echo === 'workspace/symbol' ? { id: m.id, result: [{ name: `Sym${i}`, kind: 5, location: { uri: diskUri(`${'ab'[i]}/X.cs`), range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } } } }] } : m);
+    }
+    ws.push({ id: 9, method: 'workspace/symbol', params: { query: 'Sym' } });
+    await settle();
+    const res = ws.find((m) => m.id === 9)!;
+    expect((res.result as { name: string; location: { uri: string } }[]).map((s) => [s.name, s.location.uri])).toEqual([
+      ['Sym0', `file:///${token}/a/X.cs`],
+      ['Sym1', `file:///${token}/b/X.cs`],
+    ]);
+    expect(ws.sent.filter((m) => m.id === 9)).toHaveLength(1);
+  });
+
+  it('プロセスが 1 つも無ければ空配列', async () => {
+    const { connect } = setup();
+    const ws = connect('csharp', () => []);
+    sockets.push(ws);
+    ws.push({ id: 1, method: 'workspace/symbol', params: { query: 'x' } });
+    expect(ws.last()).toMatchObject({ id: 1, result: [] });
   });
 });
 

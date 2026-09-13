@@ -34,7 +34,10 @@ const ALLOWED_REQUESTS = new Set([
   'textDocument/diagnostic',
   'textDocument/signatureHelp',
   'textDocument/references',
+  'workspace/symbol',
 ]);
+/** C# は 1 ソリューション 1 プロセスなので、workspace/symbol は全プロセスに投げて結果を連結する */
+const FAN_OUT_TIMEOUT_MS = 15_000;
 /** `$/prontella/readExternal` の上限。lib.dom.d.ts (2.3MB) が入る */
 export const MAX_EXTERNAL_SIZE = 4 * 1024 * 1024;
 const DOC_NOTIFICATIONS = new Set(['textDocument/didOpen', 'textDocument/didChange', 'textDocument/didClose', 'textDocument/didSave']);
@@ -186,6 +189,7 @@ export function attachLsp(ws: WebSocket, root: string, host: LspHost, serverId: 
     if (id === undefined) return;
     const p = fromWire(msg.params);
     if (!p.ok) return reply({ error: { code: ERR_INVALID_PARAMS, message: '解釈できない URI が含まれています' } });
+    if (method === 'workspace/symbol') return fanOut(id, method, p.value);
     const uri = (p.value as DocParams | undefined)?.textDocument?.uri;
     let slot: Slot | undefined;
     if (uri !== undefined) {
@@ -256,6 +260,37 @@ export function attachLsp(ws: WebSocket, root: string, host: LspHost, serverId: 
       h.notify({ method: 'textDocument/didClose', params: { textDocument: { uri } } });
     } else if (doc.owner === me) {
       doc.owner = null; // 残った側は次の要求で not-owner を受け、全文で取り直す
+    }
+  }
+
+  /**
+   * doc を持たない要求 (workspace/symbol) を全プロセスへ送り、配列の結果を連結して 1 つの応答にする。
+   * 応答が揃うまで待つが、1 つでも失敗/タイムアウトしたら揃った分だけ返す (空ではなく部分結果)。
+   */
+  function fanOut(id: number | string, method: string, params: unknown): void {
+    const targets = [...slots.values()].filter((s) => s.handle.status.state === 'ready' || s.handle.status.state === 'starting');
+    if (targets.length === 0) return send({ id, result: [] });
+    const results: unknown[][] = [];
+    let remaining = targets.length;
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      send({ id, result: results.flat() });
+    };
+    const timer = setTimeout(finish, FAN_OUT_TIMEOUT_MS);
+    for (const slot of targets) {
+      const collector: ProcListener = {
+        onResponse(msg) {
+          if (Array.isArray(msg.result)) results.push(rewriteUris(msg.result, (u) => uriToWire(slot.handle.root, rootToken, slot.handle.ext, u)) as unknown[]);
+          if (--remaining === 0) finish();
+        },
+        onReset() {},
+        onStatus() {},
+      };
+      slot.handle.wake();
+      slot.handle.request(collector, { id, method, params });
     }
   }
 

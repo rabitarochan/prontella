@@ -66,6 +66,13 @@ LSP ブリッジ固有で、**コードを読んでも分からない**こと (�
   クライアントは ready 後に `initialize` で `completionProvider.triggerCharacters` /
   `signatureHelpProvider` を取り、**申告外の文字は Invoked (triggerKind 1) に落として送る**
   (`LspSession.completionTriggers`)。signatureHelp も同じ (申告外だと null が返る)
+- **通知が無いと端末や Claude Code が作った/書き換えた/消したファイルを永久に知らない** (auto-import 候補にも
+  workspace/symbol にも出ない。Roslyn も同じ)。host が `client/registerCapability` の
+  `workspace/didChangeWatchedFiles` 登録 (tsgo は絶対パスの glob、Roslyn は `{baseUri, pattern}` を
+  プロジェクトごと) を覚え、`fs.watch(root, {recursive})` → glob 照合 → 300ms でまとめて通知する。
+  **initialize で `workspace.didChangeWatchedFiles.dynamicRegistration: true` を申告しないと登録自体が来ない** —
+  FakeChild の単体テストは申告を経由しないので通ってしまう。実機では `PRONTELLA_LSP_TRACE=1` の
+  `[lsp watch] <root> globs=N` が出るかで確認する
 - 診断は pull のみ (`publishDiagnostics` は didChange 後も来ない)。`resultId` 無し、再 pull は 5ms。
   signatureHelp の `activeParameter` はトップレベルに無く signature 側だけ (Roslyn は両方)。
   references は `Location[]`
@@ -97,6 +104,9 @@ LSP ブリッジ固有で、**コードを読んでも分からない**こと (�
   上限の文言には開いているソリューション名を入れる (どれを閉じれば空くかが分かる)
 - 初回 pull (温め) は 25 プロジェクトで 2〜5 秒、didChange 後の再 pull は 0.1〜0.2 秒
   (診断のデバウンス 300ms で足りる)。references は ≈ 2 秒
+- `workspace/symbol` は空クエリーに 0 件 (tsgo は全件)、初回 4 秒・以後 30〜150ms。doc を持たない要求なので
+  session が**全ソリューションのプロセスへ fan-out して連結**する。補完は常に 1000 件で打ち切られるので
+  「新しいファイルが見えているか」の検証は補完の prefix ではなく workspace/symbol で測る
 - `dotnet restore` 済みが前提。**隔離 home (`USERPROFILE` 差替) では `~/.nuget/packages` を
   見失い、プロジェクトは読めても参照が解決されず補完/ホバーが null** → C# の実機検証は実 home +
   別ポート (`pj-isolated-verify` の例外規律)
@@ -164,6 +174,8 @@ LSP ブリッジ固有で、**コードを読んでも分からない**こと (�
   タブ一覧には出ない
 - 2 タイルで同じファイル: 片方で編集 → もう片方で補完 → トレースに didClose → didOpen (もう片方の
   全文) が出てから completion が返る
+- **端末で新しいファイルを作る → 何もせずに補完** → その export が auto-import 候補に出る (トレースに
+  `[lsp watch]` と `workspace/didChangeWatchedFiles`)。Ctrl+P `#名前` でシンボルが出て Enter で着地する
 - **エディターを 1 度も開いていない画面**で例外が出ない
 - 検証後: サーバー kill、LS の残骸 (`Microsoft.CodeAnalysis.LanguageServer` / `tsc.exe`) 無し、
   実 `~/.prontella/config.json` のタイムスタンプ不変、対象 repo の `git status` が変わっていない

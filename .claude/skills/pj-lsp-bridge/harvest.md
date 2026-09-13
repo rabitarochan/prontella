@@ -47,3 +47,24 @@
 - supersedes: — (001 の順序とゲートは維持。R5「shutdown で .NET 例外」の原因を訂正)
 - result: 実機 (TS 隔離 4711 / C# 実 home 3799) で全項目を確認。修正後、外部変更の取り込み・
   2 タイル移譲の両方で Roslyn が生存し、3 回 kill → 再起動後に診断が戻ることをトレースで確認。
+
+## 003: エディター外の変更は監視して LS に告げる / 申告しない capability は登録されない (§2 / §6)
+
+- date: 2026-09-13
+- context: フェーズ 2 のトレースで tsgo が `client/registerCapability` を送ってきており null で答えていた。
+  この製品の中心シナリオ (端末や Claude Code がファイルを作る・git checkout する) で LS が新規ファイルを
+  知らないままなら致命的なので、スパイクで測った: tsgo も Roslyn も通知無しでは新規/変更/削除を永久に
+  見ず、`workspace/didChangeWatchedFiles` を送れば全部反映した。実装後の実機で通知が出ず、原因は
+  initialize に `didChangeWatchedFiles.dynamicRegistration` を申告していなかったこと (スパイクは申告して
+  いた)。FakeChild の単体テストは登録メッセージを直接流すので申告の有無をすり抜けた。Roslyn の完了判定に
+  補完 (1000 件で打ち切り) を使って 3 回空振りし、workspace/symbol に切り替えて確定した。
+- change: §2 tsgo に「通知しないと端末で作ったファイルを知らない → host が登録 glob を覚えて fs.watch
+  から流す」「申告しないと登録が来ない、単体テストはすり抜ける、実機は `[lsp watch]` で確認」を追加。
+  §2 Roslyn に workspace/symbol の挙動 (空クエリー 0 件、fan-out) と「新規ファイルの可視性は
+  workspace/symbol で測る」を追加。§6 に「端末でファイルを作る → 補完」「Ctrl+P `#`」を追加。
+  Why = LS の watcher 登録はクライアント能力の申告に対する応答で、ブリッジは「LS が欲しがるもの」を
+  申告して初めて受け取れる。単体テストは LS の分岐を再現しないので、能力申告の欠落は実機トレース
+  でしか見つからない。
+- supersedes: —
+- result: TS 隔離 / C# 実 home の両方で、端末で作ったファイルの export が auto-import 候補に出て、
+  Ctrl+P `#` で新規ファイルのクラスが見つかり着地した (2026-09-13)。

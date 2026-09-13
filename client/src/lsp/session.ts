@@ -188,6 +188,11 @@ export class LspSession {
 
 const sessions = new Map<string, LspSession>();
 
+/** 既に張られている接続だけを返す (張らない)。シンボル検索など、そのために LS を起動したくない用途 */
+export function peekLspSession(root: string, serverId: ServerId): LspSession | null {
+  return sessions.get(`${root}\0${serverId}`) ?? null;
+}
+
 /** (root, serverId) の接続を得る (無ければ張る)。切らない — LS 側の寿命はサーバーのアイドル停止が持つ。 */
 export function getLspSession(root: string, serverId: ServerId): LspSession {
   const key = `${root}\0${serverId}`;

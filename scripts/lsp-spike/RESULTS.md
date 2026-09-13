@@ -174,3 +174,33 @@ root 配下 = `file` 扱いになり、`-ext` になるのは root の外に Typ
 - **tsgo は申告外の `triggerCharacter` を受けると `-32603 InternalError: panic handling request textDocument/completion: Unknown trigger character: (`** を返す。Monaco には和集合を登録しているので、
   クライアントは ready 後に `initialize` で LS の `completionProvider.triggerCharacters` / `signatureHelpProvider` を取り、申告外の文字は Invoked に落として送る
 - ExternalFileModal の Monaco が描画されない: Radix の Portal は最初のコミットで中身を描かず（layout effect で mounted を立ててから描く）、`useRef` の effect が要素無しで早期 return したまま二度と走らない → コールバック ref で要素を state に持つ
+
+---
+
+# フェーズ 3 測定（2026-09-13、`scripts/lsp-spike/s5-watch-symbol.mjs`）: ファイル監視と workspace/symbol
+
+| | tsgo | Roslyn |
+|---|---|---|
+| `client/registerCapability` で登録する watcher | `<root>/**/*` (kind 7)、`<root>/node_modules/**/*`、TS 本体の lib ディレクトリー、tsconfig の root files。**絶対パスの文字列** (小文字ドライブのことがある) | **プロジェクトごと**に `{baseUri: file:///<projectDir>, pattern: "**/*{.cs,.razor,.cshtml}"}` と `<X>.csproj` (RelativePattern)。25 プロジェクトで数十件 |
+| 登録の条件 | initialize の `workspace.didChangeWatchedFiles.dynamicRegistration: true` を**申告したときだけ**登録してくる (申告しないと config watch の 1 件のみ) | 同じ |
+| W1 端末でファイル生成 → 通知無し | **見えない** (4.5 秒待っても auto-import 候補に出ない) | **見えない** (workspace/symbol に出ない) |
+| W2 `didChangeWatchedFiles` Created | 見える (11ms) | 見える (反映 ≈ 4 秒以内) |
+| W3/W4 ディスク上で書き換え → 通知無し / Changed | 古い内容のまま / 新しい内容 | 古い内容のまま / 新しい内容 |
+| W5/W6 削除 → 通知無し / Deleted | 残る / 消える | 残る / 消える |
+| `workspace/symbol` の応答 | `SymbolInformation[]` (`location.range` あり、`containerName` は親スコープ)。空クエリーで**全件** | `SymbolInformation[]` (`location.range` あり、`containerName` は「プロジェクト X (net8.0)」or 型名)。空クエリーは **0 件**。初回 4 秒、以後 30〜150ms |
+| 補完の総数 | — | **常に 1000 件で打ち切り** (isIncomplete)。prefix で絞る検証には使えない (workspace/symbol で見る) |
+
+**帰結:**
+- 通知が無いと **端末や Claude Code が作ったファイルを LS は永久に知らない**。`fs.watch(root, {recursive})` を LS が watcher を登録したプロセスに 1 つ張り、
+  登録 glob に合うパスだけを 300ms でまとめて `workspace/didChangeWatchedFiles` で流す (`.git/` は捨てる)。glob の照合は `path.posix.matchesGlob` (Windows は小文字化)
+- **initialize の申告が無いと watcher は登録されない** — FakeChild の単体テストは申告を経由しないので通ってしまった。実機で `[lsp watch]` が出ないことで発覚
+- `workspace/symbol` は doc を持たないので C# は全ソリューションのプロセスへ fan-out して連結。空クエリーは投げない (tsgo が全件返す)。UI は Ctrl+P の `#` 接頭辞
+
+## フェーズ 3 実機検証
+
+| 項目 | 結果 |
+|---|---|
+| TS: `#makeCon` → `makeConfig src/a.ts:5` → Enter で着地 (行 5 列 17) | ✓ |
+| TS: 端末で `src/c.ts` (`export function zzNewThing`) を作る → 何もせず `zzNew` と打つ → 候補 `zzNewThing ./c` (auto-import) | ✓ 通知 1 件、削除で 2 件目 |
+| C#: `#BisuAiInfo` → 9 件 (class / method / interface、コンテナーと path:line) | ✓ |
+| C#: 端末で `__SpikeNew.cs` を作る → `#SpikeNewWatched` に出る → Enter で `__SpikeNew.cs:2` 列 14 に着地 | ✓ (ファイルは削除、`git status` 不変) |

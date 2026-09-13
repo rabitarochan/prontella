@@ -140,6 +140,10 @@ Open a worktree and hit "✦ Start Claude" to launch Claude Code with that direc
     (`dotnet restore`). One server process is started per nearest `.sln` (walking up from the file), so a repository with
     several solutions gets one process each; the first load of a solution takes seconds to tens of seconds (the status
     bar shows "starting"), and the first completion in a freshly opened solution waits a few seconds more.
+  - Files created, changed or deleted outside the editor (a terminal, an agent, `git checkout`) are reported to the
+    server (`workspace/didChangeWatchedFiles`, driven by the globs the server registers), so new modules show up in
+    completion without a restart. Ctrl+P with a `#` prefix searches workspace symbols (`workspace/symbol`) across the
+    servers of that worktree.
   - Up to 4 server processes are kept; idle ones are stopped after 5 minutes. The status bar item's menu restarts a
     server. The bridge exposes only completion, hover, and definition; the client never sees absolute paths (URIs are
     rewritten to an opaque per-repository token). `PRONTELLA_LSP_TRACE=1` logs the wire traffic (methods and ids) for

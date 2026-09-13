@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { terminalEnv } from '../childEnv.js';
 import { metrics } from '../metrics/index.js';
 import { createMessageReader, encodeMessage } from './framing.js';
@@ -105,7 +105,17 @@ export interface LspHostOptions {
   spawn?: typeof nodeSpawn;
   resolve?: (root: string, serverId: ServerId) => Launch | null;
   env?: () => Record<string, string>;
+  /** テスト用: root の再帰監視。既定は fs.watch({recursive: true}) */
+  watch?: (root: string, onEvent: (eventType: string, filename: string | null) => void) => { close(): void };
 }
+
+/** LSP の FileChangeType */
+const FILE_CREATED = 1;
+const FILE_CHANGED = 2;
+const FILE_DELETED = 3;
+// エディター外の変更 (端末での生成・git checkout・ビルド出力) はまとめて流す。ビルド中は数百件/秒来る
+const WATCH_DEBOUNCE_MS = 300;
+const WATCH_MAX_BATCH = 500;
 
 // 温めの応答が来ないときの保険 (これを超えたら保留を流す)
 const WARM_TIMEOUT_MS = 60_000;
@@ -151,7 +161,13 @@ const CLIENT_CAPABILITIES = {
     },
     references: {},
   },
-  workspace: { configuration: false, workspaceFolders: true },
+  workspace: {
+    configuration: false,
+    workspaceFolders: true,
+    // 申告しないと tsgo も Roslyn もファイル監視を登録してこない (= 端末で作ったファイルを永久に知らない)
+    didChangeWatchedFiles: { dynamicRegistration: true, relativePatternSupport: true },
+    symbol: { symbolKind: { valueSet: Array.from({ length: 26 }, (_, i) => i + 1) } },
+  },
 };
 
 interface Pending {
@@ -171,6 +187,16 @@ interface Proc {
   projectInitTimer: NodeJS.Timeout | null;
   /** 温め中の doc → その応答を待っている要求 */
   warming: Map<string, JsonRpcMessage[]>;
+  /**
+   * `client/registerCapability` で LS が登録した didChangeWatchedFiles の glob (登録 id → 絶対パスの glob)。
+   * tsgo は `<root>/**\/*` と node_modules、Roslyn はプロジェクトごとの `**\/*{.cs,.razor,.cshtml}` と
+   * .csproj を登録する (RESULTS.md フェーズ 3)。**通知しないと LS は端末で作られたファイルを知らない**
+   */
+  watchGlobs: Map<string, string[]>;
+  watcher: { close(): void } | null;
+  /** 監視イベントの保留 (絶対パス → fs.watch の eventType)。デバウンスして 1 通知にまとめる */
+  watchPending: Map<string, string>;
+  watchTimer: NodeJS.Timeout | null;
   child: ChildProcess | null;
   capabilities: unknown;
   docs: Map<string, DocEntry>;
@@ -229,6 +255,10 @@ export class LspHost {
         solution: workspace?.solution,
         projectInitTimer: null,
         warming: new Map(),
+        watchGlobs: new Map(),
+        watcher: null,
+        watchPending: new Map(),
+        watchTimer: null,
         ext: createExtTable(`p${++this.procSeq}`),
         status: { state: 'stopped' },
         child: null,
@@ -548,6 +578,8 @@ export class LspHost {
     }
     if (msg.id !== undefined && msg.method !== undefined) {
       // サーバー→クライアント要求。ここで答えないとサーバーがハングする
+      if (msg.method === 'client/registerCapability') this.registerWatchers(proc, msg.params);
+      if (msg.method === 'client/unregisterCapability') this.unregisterWatchers(proc, msg.params);
       this.send(proc, { jsonrpc: '2.0', id: msg.id, ...answerServerRequest(msg) });
       return;
     }
@@ -556,6 +588,91 @@ export class LspHost {
       return;
     }
     // 通知 (publishDiagnostics / logMessage / $/progress …) は MVP では捨てる
+  }
+
+  // ---- ファイル監視 (workspace/didChangeWatchedFiles) ------------------------
+
+  private registerWatchers(proc: Proc, params: unknown): void {
+    const regs = (params as { registrations?: Array<{ id?: string; method?: string; registerOptions?: { watchers?: unknown[] } }> } | undefined)?.registrations ?? [];
+    for (const r of regs) {
+      if (r.method !== 'workspace/didChangeWatchedFiles' || typeof r.id !== 'string') continue;
+      const globs = (r.registerOptions?.watchers ?? []).map((w) => globToAbsolute((w as { globPattern?: unknown }).globPattern)).filter((g): g is string => g !== null);
+      proc.watchGlobs.set(r.id, globs);
+    }
+    if (proc.watchGlobs.size > 0 && !proc.watcher && proc.child && !proc.exited) this.startWatching(proc);
+  }
+
+  private unregisterWatchers(proc: Proc, params: unknown): void {
+    const list = (params as { unregisterations?: Array<{ id?: string }> } | undefined)?.unregisterations ?? [];
+    for (const u of list) if (typeof u.id === 'string') proc.watchGlobs.delete(u.id);
+    if (proc.watchGlobs.size === 0) this.stopWatching(proc);
+  }
+
+  private startWatching(proc: Proc): void {
+    const watch = this.opts.watch ?? ((root, onEvent) => fs.watch(root, { recursive: true }, (e, f) => onEvent(e, f === null ? null : String(f))));
+    try {
+      proc.watcher = watch(proc.root, (eventType, filename) => this.onWatchEvent(proc, eventType, filename));
+      if (TRACE) console.log(`[lsp watch] ${proc.root} globs=${[...proc.watchGlobs.values()].flat().length}`);
+    } catch (e) {
+      proc.watcher = null; // 監視できない環境 (古い Linux 等) では通知無しで動かす
+      if (TRACE) console.log(`[lsp watch] failed: ${(e as Error).message}`);
+    }
+  }
+
+  private stopWatching(proc: Proc): void {
+    proc.watcher?.close();
+    proc.watcher = null;
+    proc.watchGlobs.clear();
+    proc.watchPending.clear();
+    if (proc.watchTimer) {
+      clearTimeout(proc.watchTimer);
+      proc.watchTimer = null;
+    }
+  }
+
+  private onWatchEvent(proc: Proc, eventType: string, filename: string | null): void {
+    if (filename === null) return;
+    const rel = filename.split(path.sep).join('/');
+    if (rel === '.git' || rel.startsWith('.git/')) return; // git の内部ファイルは LS に無関係で量が多い
+    const abs = path.join(proc.root, filename);
+    if (!matchesWatch(proc, abs)) return;
+    if (proc.watchPending.size >= WATCH_MAX_BATCH && !proc.watchPending.has(abs)) return; // ponytail: 溢れた分は捨てる
+    // rename の後に change が来ても rename (存在で Created/Deleted を決める) を優先する
+    if (proc.watchPending.get(abs) !== 'rename') proc.watchPending.set(abs, eventType);
+    if (!proc.watchTimer) {
+      proc.watchTimer = setTimeout(() => this.flushWatch(proc), WATCH_DEBOUNCE_MS);
+      proc.watchTimer.unref();
+    }
+  }
+
+  private flushWatch(proc: Proc): void {
+    proc.watchTimer = null;
+    const pending = [...proc.watchPending];
+    proc.watchPending.clear();
+    if (!proc.child || proc.exited) return;
+    const changes: Array<{ uri: string; type: number }> = [];
+    for (const [abs, eventType] of pending) {
+      let exists: boolean;
+      try {
+        exists = fs.statSync(abs).isFile();
+      } catch {
+        exists = false;
+      }
+      if (!exists) {
+        // ディレクトリーの生成/削除は Created/Deleted の対象にしない (中のファイルが個別に来る)
+        let isDir = false;
+        try {
+          isDir = fs.statSync(abs).isDirectory();
+        } catch {
+          isDir = false;
+        }
+        if (isDir) continue;
+        changes.push({ uri: pathToFileURL(abs).href, type: FILE_DELETED });
+      } else {
+        changes.push({ uri: pathToFileURL(abs).href, type: eventType === 'rename' ? FILE_CREATED : FILE_CHANGED });
+      }
+    }
+    if (changes.length > 0) this.send(proc, { jsonrpc: '2.0', method: 'workspace/didChangeWatchedFiles', params: { changes } });
   }
 
   private release(proc: Proc, listener: ProcListener): void {
@@ -621,6 +738,7 @@ export class LspHost {
     proc.docs.clear();
     proc.warming.clear();
     proc.queue = [];
+    this.stopWatching(proc);
     if (proc.projectInitTimer) {
       clearTimeout(proc.projectInitTimer);
       proc.projectInitTimer = null;
@@ -652,9 +770,47 @@ const SPAN_METHODS = new Set([
   'textDocument/diagnostic',
   'textDocument/signatureHelp',
   'textDocument/references',
+  'workspace/symbol',
 ]);
 function spanMethod(method: string | undefined): string {
   return method !== undefined && SPAN_METHODS.has(method) ? method : 'other';
+}
+
+/**
+ * LSP の GlobPattern (文字列 or `{baseUri, pattern}`) を絶対パスの glob に正規化する。tsgo は絶対パスの
+ * 文字列 (小文字ドライブのことがある)、Roslyn は `{baseUri: file:///…, pattern: '**\/*.cs'}` で来る。
+ * 相対パターン (`**\/*.cs` だけ) は root 相対とみなす呼び出し側は無い (来たら null)。
+ */
+export function globToAbsolute(pattern: unknown): string | null {
+  if (typeof pattern === 'string') return path.isAbsolute(pattern) ? pattern : null;
+  if (pattern && typeof pattern === 'object') {
+    const p = pattern as { baseUri?: unknown; pattern?: unknown };
+    const base = typeof p.baseUri === 'string' ? p.baseUri : typeof (p.baseUri as { uri?: unknown } | undefined)?.uri === 'string' ? (p.baseUri as { uri: string }).uri : null;
+    if (base === null || typeof p.pattern !== 'string') return null;
+    let dir: string;
+    try {
+      dir = base.startsWith('file:') ? fileURLToPath(base) : base;
+    } catch {
+      return null;
+    }
+    return path.join(dir, p.pattern);
+  }
+  return null;
+}
+
+/** 絶対パスが LS の登録した glob のどれかに合うか (Windows は大文字小文字を無視)。 */
+export function matchesGlobs(globs: Iterable<string>, abs: string): boolean {
+  const norm = (s: string) => (process.platform === 'win32' ? s.toLowerCase() : s).split(path.sep).join('/');
+  const target = norm(path.resolve(abs));
+  for (const g of globs) {
+    if (path.posix.matchesGlob(target, norm(g))) return true;
+  }
+  return false;
+}
+
+function matchesWatch(proc: Proc, abs: string): boolean {
+  for (const globs of proc.watchGlobs.values()) if (matchesGlobs(globs, abs)) return true;
+  return false;
 }
 
 /** サーバー→クライアント要求への既定応答。 */

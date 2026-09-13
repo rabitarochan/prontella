@@ -4,9 +4,10 @@ description: >
   prontella で子プロセス (PTY ターミナル・Agent SDK・git・ripgrep・ファイルマネージャー) に
   渡す環境変数を組み立てる・変更する・spawn を新しく足すときの定石。2 系統の使い分け、
   deny-list が誤りである理由、Windows のレジストリーからの再構成規則、同期ウォームアップと
-  フォールバック、汚染検証まで。env / process.env / spawn / PATH / NODE_ENV / node-pty /
-  Agent SDK の env に触る実装・調査タスクを委任するとき、brief の References に
-  このファイルのパスを入れる。
+  フォールバック、汚染検証まで。PATH からの実行ファイル解決 (既定シェルの選択・`.cmd` の
+  EINVAL・Store 版アプリの存在判定) も扱う。env / process.env / spawn / PATH / NODE_ENV /
+  node-pty / pwsh / Agent SDK の env に触る実装・調査タスクを委任するとき、
+  brief の References にこのファイルのパスを入れる。
 ---
 
 # pj-child-env — 子プロセスへ渡す環境変数 (prontella)
@@ -108,7 +109,9 @@ PATH が正しく入る。渡す側の env は POSIX 用 allowlist + ブート�
    (例: `pty.ts` の `defaultShell()` は `terminalEnv().SHELL`)
 4. **PATH から解決した実行ファイルの拡張子を見る**。`.cmd` / `.bat` ならそのまま
    spawn できない(下記の決定則)
-5. 汚染検証(下記)を回す
+5. **存在判定を `existsSync` / `statSync` だけで書かない**。Store 版アプリは
+   `false` を返すのに起動はできる(下記の決定則)
+6. 汚染検証(下記)を回す
 
 ## 決定則: Windows で `.cmd` / `.bat` は spawn できない — ラッパーの実体まで降りる
 
@@ -137,6 +140,36 @@ Node は CVE-2024-27980 (Windows のコマンドインジェクション) 対策
 **検証**: 「押してもエラーが出ない」を合格にしない。GUI アプリの fire-and-forget 起動は
 `detached` + `child.on('error', () => {})` で例外を握り潰すのが定石なので、**EINVAL は
 画面にもログにも出ない**。実際にアプリが目的のフォルダーで開くところまで見る。
+
+## 決定則: 「存在しない」を `existsSync` / `statSync` で決めない (Store 版アプリ)
+
+Microsoft Store / winget の MSIX 版アプリは、PATH には
+**App Execution Alias** (`%LOCALAPPDATA%\Microsoft\WindowsApps\<name>.exe`) しか置かない。
+これは `IO_REPARSE_TAG_APPEXECLINK` の reparse point で、**Node からは存在しないように見える**。
+実測 (2026-09-14 / Node 24 / Windows 11、`WindowsApps\pwsh.exe`):
+
+| 判定 | 結果 |
+|---|---|
+| `fs.statSync(p)` | **throw `EACCES`**(`ENOENT` ではない) |
+| `fs.existsSync(p)` | **`false`** |
+| `fs.lstatSync(p)` | 成功。`isSymbolicLink() === true` / `size = 85` |
+| `CreateProcess` (node-pty spawn) | **成功**。`$PSVersionTable.PSVersion` = 7.6.6 |
+
+つまり**起動できるのに存在判定だけが落ちる**。打ち手は、stat が通らなかった候補を
+lstat で見て、エントリーがあれば採用する (`pty.ts` の `isWindowsExecutable()`)。
+判定関数は 1 つに寄せる — PATH 走査と絶対パス指定 (`PRONTELLA_SHELL`) で別の判定を書くと、
+片方だけ直して「明示指定しても効かない」が残る。
+
+**症状は「機能が黙って劣化する」形で出る**。ここで拾えないと
+`findWindowsExecutable('pwsh.exe')` が null を返し、`windowsShell()` は仕様どおり
+`powershell.exe` (5.1) へフォールバックする — エラーも警告も出ない。
+下の「再構成で失われた能力」の決定則で pwsh 優先にした対処が、**PC を移行して pwsh の
+入れ方が MSI → Store に変わった瞬間に無効化された**(2026-09-14 のユーザー報告)。
+
+**切り分け**: 「同じ OS・同じ PATH なのに旧 PC では効いていた」ときは、
+`where.exe pwsh` と `(Get-Command pwsh -All).Source` で**インストール形態**を先に見る。
+`C:\Program Files\PowerShell\7\pwsh.exe` (MSI) なら実ファイル、
+`...\WindowsApps\...` だけなら alias。この 2 形態は PATH 上は同じ見た目をしている。
 
 ## 決定則: 再構成で失われた「能力」を env で取り返さない
 
@@ -194,7 +227,9 @@ DECK_LEAK_PROBE=leaked NO_COLOR=1 GIT_EDITOR=true CLAUDECODE=1 \
 4. **エンコーディング**: 日本語を含むユーザー環境変数を設定し、ターミナル内で
    `Buffer.from(v,'utf8').toString('hex')` が期待バイト列と一致すること
 5. **コマンド解決**: fresh env で `git` `node` `npm` `npx` `claude` が `where.exe` で解決できること
-   (`claude` が落ちると「✦ Claude 起動」が壊れる)
+   (`claude` が落ちると「✦ Claude 起動」が壊れる)。ただし **`where.exe` が見つけることは
+   deck が見つけることの証明にならない** — Store 版は `where.exe` に出るのに Node の
+   `existsSync` は false(上の決定則)。deck 側の解決を測るなら deck のコードで測る
 6. **フォールバック**: 一次取得を失敗させて(PATH から `powershell.exe` を消す等)、
    警告が出たうえでターミナルが開けること
 7. **Agent SDK**: チャットセッションを 1 本立てて応答が返ること(env 完全置換の影響確認)

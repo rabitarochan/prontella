@@ -87,3 +87,38 @@
   (`feat/vscode-tile`)。**検証を「エラーが出ない」にしない**ことも同時に記録した —
   GUI の fire-and-forget 起動は `child.on('error', () => {})` で握り潰すのが定石なので、
   EINVAL は画面にもログにも出ないまま「押しても何も起きない」になる。
+
+## 004: 「存在しない」を `existsSync` / `statSync` で決めない (決定則 + 手順 5 + 検証 5)
+
+- date: 2026-09-14
+- context: ユーザーが PC を移行したところ、ターミナルが PowerShell 7 ではなく 5.1 で
+  起動するようになった、という報告から。002 で `defaultShell()` を pwsh 優先にした対処が、
+  **新 PC で pwsh の入れ方が MSI から Store (MSIX) に変わったことで無効化されていた**。
+  新 PC の pwsh は `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe` という
+  App Execution Alias でしか PATH に載らず、`findWindowsExecutable()` の
+  `fs.statSync(...).isFile()` が EACCES で落ちて null → 仕様どおり `powershell.exe` へ
+  フォールバックしていた。エラーも警告も出ないので、症状は「機能が黙って劣化する」形。
+  `where.exe pwsh` も `Get-Command pwsh` も見つけるため、shell 側で切り分けると
+  **偽 PASS になる**(deck のコードで測って初めて分岐が見える)。
+- change: 決定則「『存在しない』を `existsSync` / `statSync` で決めない (Store 版アプリ)」を
+  追加し、「新しい spawn を足すときの手順」に存在判定の確認 (手順 5) を挿入、検証 5 に
+  「`where.exe` が見つけることは deck が見つけることの証明にならない」を追記。
+  Why = MSIX の alias は `IO_REPARSE_TAG_APPEXECLINK` の reparse point で、Node の stat は
+  これを追えず **EACCES**(`ENOENT` ではない)、`existsSync` は false を返す。一方
+  `CreateProcess` は解決できるので、**起動できるのに存在判定だけが落ちる**という
+  非対称が生まれる。003 (`.cmd` の EINVAL) と同族で、どちらも「PATH 解決の失敗」に見えて違う。
+  How = stat が通らない候補を `lstatSync().isSymbolicLink()` で拾って採用する
+  (`pty.ts` の `isWindowsExecutable()`)。判定関数は 1 つに寄せる — PATH 走査と
+  絶対パス指定 (`PRONTELLA_SHELL`) に別々の判定を書いていたため、後者も同じ理由で
+  Store 版を弾いており、片方だけ直すと「明示指定しても効かない」が残るところだった。
+  **代替案「ユーザーに MSI 版 pwsh を入れてもらう / PRONTELLA_SHELL で回避してもらう」は
+  退けた** — 002 で「ユーザー側の環境構築に依存する対処は他の環境で再発する」として
+  同じ形の案を退けており、しかも今回は PRONTELLA_SHELL 経路自体が壊れていた。
+- supersedes: —
+- result: 実測の真理値表で確認 (Node 24 / Windows 11): `statSync` → EACCES /
+  `existsSync` → false / `lstatSync` → symlink 85 bytes / node-pty で alias を spawn →
+  `$PSVersionTable.PSVersion` = 7.6.6。実 env で修正前後を比較し
+  `NOT FOUND -> powershell.exe` → `...\WindowsApps\pwsh.exe` になることを確認。
+  typecheck と `childEnv.test.ts` (19 件) green。修正は f29c619。
+  **alias を再現するユニットテストは入れていない** — 実体が環境依存で、
+  Windows でのシンボリックリンク作成にも権限が要るため。

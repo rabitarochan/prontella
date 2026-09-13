@@ -404,3 +404,18 @@ description: prontella のクライアント(React / Monaco / xterm / react-arbo
   `.monaco-icon-label` の `getBoundingClientRect` を測ると、行の外に出ているのが一目で分かる
   (2026-09-12 実測: アイコン幅 414px、ラベル top が行 top + 17px)
 
+## 22. Portal の中に命令的 UI (Monaco) を作るなら useRef ではなくコールバック ref
+
+- **症状**: Radix `Dialog` の中で `useEffect` + `useRef` で `monaco.editor.create(hostRef.current)` を
+  呼ぶモーダル (ExternalFileModal) が、タイトルだけ出て中身が空。コンソールにエラーは無い
+- **機構**: Radix の `Portal` は**最初のコミットでは子を描画しない** (`useLayoutEffect` で
+  `mounted` を立ててから `createPortal` する)。そのため親コンポーネントの effect が走った時点で
+  `hostRef.current` は null → 早期 return → deps (`[model, line]`) は変わらないので**二度と走らない**。
+  2 回目のコミットで要素は生まれるが、effect を起こす人がいない
+- **打ち手**: 要素を **コールバック ref で state に持ち** (`const [host, setHost] = useState<HTMLDivElement|null>(null)`、
+  `<div ref={setHost} />`)、effect の deps に `host` を入れる。Portal 配下・条件付き描画・
+  `Presence` 配下の要素に命令的 API を当てるときは常にこの形にする
+- **切り分け**: React fiber の hooks を辿り、effect フックの `destroy` が undefined なら「早期 return
+  したまま」= 要素が無かった時に走った証拠 (2026-09-12 実測)。`document.querySelector` で要素が
+  今あることは、effect 実行時にあったことを意味しない
+

@@ -261,6 +261,20 @@ description: prontella の動作検証を、原則としてユーザーの実設
     `WindowsPowerShell\Modules\PSReadLine\2.0.0` が解決され、「変更前も予測は出なかった」
     という**誤った結論**が出かけた(実際の pwsh は PS7 のパスが先頭に来る)。
     再現が「効かなかった」ときは、まず自分の再現手順の順序を疑う
+28. **claude-in-chrome で Monaco を判定するときの 4 つの偽陰性**(2026-09-12 実測、LSP フェーズ 2):
+    (a) `.monaco-editor .view-line` の **DOM 順は行順ではない**(仮想化で使い回す)。行の内容を読む
+    ときは `style.top` でソートし、末尾行は `slice(-n)` で取らない。(b) `computer.type` に **改行は
+    入れられない**(`"\nconst"` は丸ごと落ちる)。改行は `key: "Enter"` で送る。(c) MCP のタブは
+    `document.visibilityState` が `hidden` のことがあり、**window `focus` を dispatch しても
+    外部変更の取り込み(ディスク突き合わせ)が走らない**(`visibilityState !== 'visible'` で早期
+    return)。`Object.defineProperty(document, 'visibilityState', { value: 'visible' })` で強制してから
+    `focus` を送ると製品と同じ経路が走る。(d) 波線 (`.squiggly-*`) やウィジェットの有無を
+    **変更直後の 1 回**で読むと、まだ描かれていない/消えていない瞬間を拾う。判定は「2〜3 秒
+    待って再読」+ hover の文言(マーカーの本文)で裏を取る。**加えて、数万行のファイルを
+    モデルに載せた直後は `Page.captureScreenshot` が 30 秒でタイムアウトする**(レンダラーが
+    トークナイズ中)。スクリーンショットが要るなら数秒待ってからもう一度撮る。
+    ドロップダウン項目を `find` の ref で押すと `onSelect` が**2 回**走ることがある
+    (`$/prontella/restart` が 2 回飛んだ)— 「1 回で正しく動くか」の判定には座標クリックを使う
 
 ## フィクスチャの作り方
 

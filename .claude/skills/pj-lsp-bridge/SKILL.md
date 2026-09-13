@@ -5,7 +5,8 @@ description: >
   直す・検証するときの定石。測定スパイク→registry→session→実機の順序とゲート、
   サーバー固有の罠 (tsgo の languageId 固定、Roslyn の意味解析前 completion null と
   1 プロセス 1 ソリューション)、Monaco 側の制約 (内蔵プロバイダー停止は起動時固定、
-  registerEditorOpener と peek、定義が自分自身なら参照に落ちる)、切り分け手順
+  registerEditorOpener と peek、定義が自分自身なら参照に落ちる)、フェーズ 2 の罠 (Roslyn は
+  全文 didChange で落ちる、tsgo は申告外 triggerCharacter で panic、ソリューション外は misc)、切り分け手順
   (PRONTELLA_LSP_TRACE、/ws/lsp 直叩きプローブ、所有権の奪い合い) まで。
   LSP / 言語サーバー / language server / 補完 / completion / hover / 定義ジャンプ /
   Roslyn / tsgo / typescript-language-server / Monaco プロバイダー / /ws/lsp に触る
@@ -60,8 +61,25 @@ LSP ブリッジ固有で、**コードを読んでも分からない**こと (�
   → `.tsx → typescriptreact` / `.jsx → javascriptreact` は必須 (テストで固定済み)
 - `exit` 通知後も生き続ける → 3 秒で `kill()`。definition の URI は `file:///c%3A/...`
   (小文字ドライブ + `%3A`) で来る
+- **申告外の `triggerCharacter` を受けると `-32603 InternalError: panic handling request … Unknown
+  trigger character`** (`(` `{` で実測)。Monaco には各 LS の和集合を静的に登録しているので、
+  クライアントは ready 後に `initialize` で `completionProvider.triggerCharacters` /
+  `signatureHelpProvider` を取り、**申告外の文字は Invoked (triggerKind 1) に落として送る**
+  (`LspSession.completionTriggers`)。signatureHelp も同じ (申告外だと null が返る)
+- 診断は pull のみ (`publishDiagnostics` は didChange 後も来ない)。`resultId` 無し、再 pull は 5ms。
+  signatureHelp の `activeParameter` はトップレベルに無く signature 側だけ (Roslyn は両方)。
+  references は `Location[]`
 
 ### Roslyn (`Microsoft.CodeAnalysis.LanguageServer --stdio`)
+- **range 無しの全文 didChange (`contentChanges: [{text}]`) で `DidChangeHandler` が
+  NullReferenceException を起こしてプロセスごと落ちる** (sync は incremental のみ)。所有権移譲
+  (既知 doc への didOpen) と isFlush / isEolChange の両経路がこの形を送っていたので、**session 層で
+  didClose → didOpen (+ C# は再温め) に変換する**。修正前は「別プロセスで .cs を書き換えて取り込む」
+  だけで落ちていた
+- **ソリューションに含まれないファイルは misc 扱い**: 診断に IDE0005「using は不要」が出て hover /
+  signatureHelp が null、references が空。製品の不具合と区別がつかない (MSS3.sln は
+  `../ftm-backend/...` の別コピーを参照するので `mss3-backend/src/FTM.DataSource/` は misc)。
+  「C# で hover が null」はまず**そのファイルが開いた .sln に含まれるか**を疑う
 - **1 プロセス 1 ソリューション** (`SolutionPath` が 1 つ)。`--autoLoadProjects` は root 配下の
   全 .csproj (`.claude/worktrees/` の複製まで) を読んで 118 秒 / 900MB → 不採用。
   最寄りの `.sln` を `solution/open` し (25 秒 / ~450MB)、`workspace/projectInitializationComplete`
@@ -71,8 +89,14 @@ LSP ブリッジ固有で、**コードを読んでも分からない**こと (�
   大きいソリューションで効かない。**didOpen 直後に `textDocument/diagnostic` を pull し、その
   応答が返るまでその doc への要求を保留する** (`ProcHandle.warm`)。診断 pull は意味解析の完了と
   同期する。要求は捨てず遅らせる — 捨てると Monaco がその位置を「候補なし」と覚える
-- `shutdown` に .NET 例外で落ちる (意図した停止なのでクラッシュに数えない)。
+- `shutdown` は **`params` を省略すれば `result: null` で正常応答する** (MVP の「.NET 例外で
+  終了」は `params: null` を送っていたのが原因。tsgo も null を InvalidParams と言う)。
   サーバー→クライアント要求は来ない。`window/logMessage` は大量に来るので捨てる
+- 1 ソリューション 1 プロセスなので**上限 4 に当たりやすい**。同じセッション (ブラウザー) が 4 本を
+  持つ限り「セッション無し」条件の LRU は効かないので、**doc を全部閉じたプロセスも LRU で落とす**。
+  上限の文言には開いているソリューション名を入れる (どれを閉じれば空くかが分かる)
+- 初回 pull (温め) は 25 プロジェクトで 2〜5 秒、didChange 後の再 pull は 0.1〜0.2 秒
+  (診断のデバウンス 300ms で足りる)。references は ≈ 2 秒
 - `dotnet restore` 済みが前提。**隔離 home (`USERPROFILE` 差替) では `~/.nuget/packages` を
   見失い、プロジェクトは読めても参照が解決されず補完/ホバーが null** → C# の実機検証は実 home +
   別ポート (`pj-isolated-verify` の例外規律)
@@ -97,8 +121,15 @@ LSP ブリッジ固有で、**コードを読んでも分からない**こと (�
   別ブラウザータブ (= 別セッション) は**サーバーが -32803 not-owner を返し、クライアントが全文
   didOpen して 1 回だけ再要求**する
 - `isFlush` (`setValue`: 外部変更の取り込み・再読込) と `isEolChange` は**全文で送る**。落とすと
-  LSP 側だけ古い本文で固定され、補完が「少しずれる」形で出るので発見が遅れる
-- didChange はデバウンスしない。バージョンは URI 単位の単調カウンター (モデルごとではない)
+  LSP 側だけ古い本文で固定され、補完が「少しずれる」形で出るので発見が遅れる。全文は LS へは
+  そのまま流さず、**session が didClose → didOpen に変換する** (Roslyn が range 無しで落ちるため。
+  languageId は最初の didOpen のものを使う — tsgo は最初の languageId で固定する)
+- didChange はデバウンスしない。バージョンは URI 単位の単調カウンター (モデルごとではない)。
+  診断の pull だけ 300ms デバウンス (同期はしない)。マーカーは owner モデルだけに付け、
+  非 owner・dispose・reset は空で上書き (本文がサーバーと一致しないモデルにマーカーを写さない)
+- **死んでいる間 (unavailable / stopped) に届いた didOpen は docs に記録されるだけで LS には流れない**。
+  spawn 時に docs を捨てて `$/prontella/reset` を告げ、クライアントに開き直させる (これが無いと
+  3 回 kill → 手動再起動の後、補完も診断も空のままになる)
 - rootToken は **root 単位** (プロセス単位にするとクライアントの leafId↔token 対応が壊れる)。
   C# はサーバー側が didOpen を受けて初めてプロセスを起動するので、クライアントは
   **token が届いた時点で didOpen を送る** (ready を待つと永久に始まらない)
@@ -123,7 +154,16 @@ LSP ブリッジ固有で、**コードを読んでも分からない**こと (�
 - **別プロセスでファイルを書き換え → タブへ戻る → 取り込み後の内容で候補が出る** (isFlush 経路。
   試さないと必ずすり抜ける)。TS は auto-import の `additionalTextEdits` まで確認
 - 候補が重複しない (内蔵停止が効いている)
-- LS を kill → 次の要求で復帰。C# は 2 ソリューション開いて 2 プロセスになること
+- LS を kill → 次の要求で復帰。C# は 2 ソリューション開いて 2 プロセスになること。
+  **60 秒に 3 回 kill → 「LSP: 停止」で固定 → メニュー再起動 → その後に補完と診断が戻る**
+  (再起動直後だけ見て終わらない)
+- 構文エラーを打つ → 赤波線 (1 件だけ = 内蔵と二重になっていない) → 直すと消える。C# は Info の
+  青点線に IDE コードと learn.microsoft.com へのリンクが出る
+- `(` で引数表示、`,` で次の引数へ / Shift+F12 で別ファイルの参照が出て peek に中身 /
+  root 外 (`lib.dom.d.ts`、Roslyn の metadata-as-source) の F12 が読み取り専用モーダルで該当行に着地し、
+  タブ一覧には出ない
+- 2 タイルで同じファイル: 片方で編集 → もう片方で補完 → トレースに didClose → didOpen (もう片方の
+  全文) が出てから completion が返る
 - **エディターを 1 度も開いていない画面**で例外が出ない
 - 検証後: サーバー kill、LS の残骸 (`Microsoft.CodeAnalysis.LanguageServer` / `tsc.exe`) 無し、
   実 `~/.prontella/config.json` のタイムスタンプ不変、対象 repo の `git status` が変わっていない

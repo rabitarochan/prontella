@@ -159,16 +159,33 @@ interface Session {
   activityTimer: NodeJS.Timeout | null;
 }
 
+/**
+ * 実行ファイルとして採用できるか (Windows)。
+ *
+ * Store アプリ (MSIX) の App Execution Alias — 例 `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe` —
+ * は APPEXECLINK の reparse point で、Node からは `statSync` が EACCES、`existsSync` が
+ * false になる (実測: Node 24 / Windows 11)。一方 CreateProcess はこれを解決できる
+ * (実測: node-pty から起動して PSVersion 7.6.6)。stat が通らないときは lstat で
+ * エントリーの有無だけを見て採用する。
+ */
+function isWindowsExecutable(p: string): boolean {
+  try {
+    return fs.statSync(p).isFile();
+  } catch {
+    try {
+      return fs.lstatSync(p).isSymbolicLink();
+    } catch {
+      return false;
+    }
+  }
+}
+
 /** PATH / PATHEXT を辿って実行ファイルの実体を探す (Windows)。無ければ null。 */
 function findWindowsExecutable(exe: string, env: Record<string, string>): string | null {
   const pathValue = envGet(env, 'PATH') ?? '';
   const pathExt = envGet(env, 'PATHEXT') ?? '.COM;.EXE;.BAT;.CMD';
   for (const candidate of windowsExecutableCandidates(exe, pathValue, pathExt)) {
-    try {
-      if (fs.statSync(candidate).isFile()) return candidate;
-    } catch {
-      // 次の候補へ
-    }
+    if (isWindowsExecutable(candidate)) return candidate;
   }
   return null;
 }
@@ -200,7 +217,7 @@ function windowsShell(): { file: string; args: string[] } {
   if (override) {
     // 絶対パス指定と PATH 上の名前指定の両方を受ける
     const resolved = path.isAbsolute(override)
-      ? (fs.existsSync(override) ? override : null)
+      ? (isWindowsExecutable(override) ? override : null)
       : findWindowsExecutable(override, env);
     if (resolved) {
       windowsShellCache = { file: resolved, args };

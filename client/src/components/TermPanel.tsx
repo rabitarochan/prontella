@@ -352,7 +352,20 @@ export default function TermPanel({
   // ポータルの描画順は木の走査順に依存させず id で安定ソートする
   // (TileGrid.tsx と同じ理由 — タブの並べ替えやグループ間移動で配列の並びが
   // 変わると、React の再調停で XTermView が remount されうる)。
-  const portalIds = [...ownedIds].sort((a, b) => a.localeCompare(b));
+  //
+  // **グループツリーがまだ知らないセッションはポータルしない**。ownedIds は
+  // タイル側で先に増えるので、そのまま描くと「host を作る (detached) → その中で
+  // XTermView が mount して term.open() が走る → 次のコミットで TermGroupPane の
+  // effect が本文へ appendChild する」という順序になり、**xterm が DOM から切り離された
+  // 0x0 の div に open される** (実測 2026-09-15: open 時点で isConnected=false /
+  // 実寸 0x0、`.xterm-screen` は既定の 80x24 = 572x360 のまま)。以後は表示後の
+  // ResizeObserver 由来の fit 頼みで、格子が既定と同じに落ち着くと resize が起きず
+  // 描画面が初期化されないまま残る。groupRoot が持つ id だけに絞れば、host を
+  // 本文へ入れる TermGroupPane の effect (ツリー上こちらより先) が必ず先に走るので、
+  // open は「接続済み・実寸あり」の div に対して行われる。
+  const portalIds = ownedIds
+    .filter((id) => groupOfSession(groupRoot, id) !== null)
+    .sort((a, b) => a.localeCompare(b));
 
   return (
     <div className="term-panel">

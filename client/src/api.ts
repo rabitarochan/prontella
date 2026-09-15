@@ -25,6 +25,7 @@ import type {
   TreeEntry,
   TreeStatusEntry,
   UsageSnapshot,
+  WorktreeLayout,
 } from './types';
 import { metrics } from './metrics/core';
 import { routeTemplate } from './metrics/routeTemplate';
@@ -82,6 +83,10 @@ export const api = {
   reorderRepos: (order: string[]) => put<{ repos: RepoMeta[] }>('/api/repos/order', { order }),
   setRepoFlags: (id: string, flags: { pinned?: boolean } | { archived?: boolean }) =>
     patch<{ repos: RepoMeta[] }>(`/api/repos/${id}`, flags),
+
+  settings: () => request<{ worktreeLayout: WorktreeLayout }>('/api/settings'),
+  saveSettings: (worktreeLayout: WorktreeLayout) =>
+    put<{ worktreeLayout: WorktreeLayout }>('/api/settings', { worktreeLayout }),
 
   addWorktree: (repoId: string, body: { branch?: string; newBranch?: string; base?: string; path?: string }) =>
     post<{ ok: boolean; path: string }>(`/api/repos/${repoId}/worktrees`, body),

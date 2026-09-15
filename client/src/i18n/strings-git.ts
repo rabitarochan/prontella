@@ -492,11 +492,18 @@ export const GIT_STRINGS = {
   'addWorktree.baseLabel': { ja: '作成元 (base)', en: 'Base' },
   'addWorktree.branchLabel': { ja: 'ブランチ', en: 'Branch' },
   'addWorktree.inUseSuffix': { ja: ' (使用中)', en: ' (in use)' },
-  'addWorktree.pathLabel': { ja: 'パス (省略可)', en: 'Path (optional)' },
-  'addWorktree.pathPlaceholder': {
-    ja: '既定: ../{name}.worktrees/<ブランチ名>',
-    en: 'Default: ../{name}.worktrees/<branch name>',
+  'addWorktree.layoutLabel': { ja: '配置', en: 'Layout' },
+  // 選択肢のラベルがそのまま既定パスのパターン。パス欄の placeholder でも使い回す。
+  'addWorktree.layoutNested': {
+    ja: '../{name}.worktrees/<ブランチ名>',
+    en: '../{name}.worktrees/<branch name>',
   },
+  'addWorktree.layoutGhq': {
+    ja: '../{name}=<ブランチ名> (ghq)',
+    en: '../{name}=<branch name> (ghq)',
+  },
+  'addWorktree.pathLabel': { ja: 'パス (省略可)', en: 'Path (optional)' },
+  'addWorktree.pathPlaceholder': { ja: '既定: {pattern}', en: 'Default: {pattern}' },
   'addWorktree.creating': { ja: '作成中...', en: 'Creating…' },
 
   // ---- BlameModal ----

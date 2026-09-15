@@ -366,6 +366,22 @@ app.get('/api/repos/:id/branches', asyncHandler(async (req, res) => {
   res.json(await git.listBranches(repo.path));
 }));
 
+// ---- settings --------------------------------------------------------------
+
+app.get('/api/settings', (_req, res) => {
+  res.json({ worktreeLayout: config.getWorktreeLayout() });
+});
+
+// 400 を返す必要があるため asyncHandler(常に 500) ではなく自前ラップにする(pj-git-route 定石)。
+app.put('/api/settings', (req, res) => {
+  const result = config.setWorktreeLayout((req.body ?? {}).worktreeLayout);
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json({ worktreeLayout: result.layout });
+});
+
 // ---- worktrees -------------------------------------------------------------
 
 app.post('/api/repos/:id/worktrees', asyncHandler(async (req, res) => {
@@ -377,8 +393,12 @@ app.post('/api/repos/:id/worktrees', asyncHandler(async (req, res) => {
   };
   let worktreePath = String(req.body.path ?? '');
   if (!worktreePath) {
-    const branchName = (newBranch || branch || 'detached').replace(/[\\/:*?"<>|]/g, '-');
-    worktreePath = path.join(path.dirname(repo.path), `${repo.name}.worktrees`, branchName);
+    worktreePath = config.worktreeDefaultPath(
+      repo.path,
+      repo.name,
+      newBranch || branch || 'detached',
+      config.getWorktreeLayout(),
+    );
   }
   await git.addWorktree(repo.path, worktreePath, { branch, newBranch, base });
   res.json({ ok: true, path: worktreePath });

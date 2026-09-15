@@ -12,7 +12,7 @@ import { Label } from '@/components/ui/label';
 import { api } from '../api';
 import { useT } from '../i18n';
 import { useDeck } from '../store';
-import type { ActiveRepo, BranchInfo } from '../types';
+import type { ActiveRepo, BranchInfo, WorktreeLayout } from '../types';
 
 export default function AddWorktreeModal({ repo, onClose }: { repo: ActiveRepo; onClose: () => void }) {
   const t = useT();
@@ -23,6 +23,7 @@ export default function AddWorktreeModal({ repo, onClose }: { repo: ActiveRepo; 
   const [newBranch, setNewBranch] = useState('');
   const [base, setBase] = useState('');
   const [path, setPath] = useState('');
+  const [layout, setLayout] = useState<WorktreeLayout>('nested');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const branchInputRef = useRef<HTMLInputElement>(null);
@@ -39,6 +40,19 @@ export default function AddWorktreeModal({ repo, onClose }: { repo: ActiveRepo; 
       })
       .catch((e: Error) => setError(e.message));
   }, [repo.id]);
+
+  useEffect(() => {
+    api
+      .settings()
+      .then((s) => setLayout(s.worktreeLayout))
+      .catch((e: Error) => setError(e.message));
+  }, []);
+
+  // 配置はグローバルな既定なので、選んだ時点で永続化する (このモーダルの作成成否とは切り離す)。
+  const changeLayout = (next: WorktreeLayout) => {
+    setLayout(next);
+    api.saveSettings(next).catch((e: Error) => setError(e.message));
+  };
 
   const submit = async () => {
     setBusy(true);
@@ -60,6 +74,9 @@ export default function AddWorktreeModal({ repo, onClose }: { repo: ActiveRepo; 
   };
 
   const locals = branches.filter((b) => !b.remote);
+  const layoutPattern = t(layout === 'ghq' ? 'addWorktree.layoutGhq' : 'addWorktree.layoutNested', {
+    name: repo.name,
+  });
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -120,12 +137,23 @@ export default function AddWorktreeModal({ repo, onClose }: { repo: ActiveRepo; 
             </div>
           )}
           <div className="grid grid-cols-[110px_1fr] items-center gap-3">
+            <Label htmlFor="wt-layout">{t('addWorktree.layoutLabel')}</Label>
+            <select
+              id="wt-layout"
+              value={layout}
+              onChange={(e) => changeLayout(e.target.value as WorktreeLayout)}
+            >
+              <option value="nested">{t('addWorktree.layoutNested', { name: repo.name })}</option>
+              <option value="ghq">{t('addWorktree.layoutGhq', { name: repo.name })}</option>
+            </select>
+          </div>
+          <div className="grid grid-cols-[110px_1fr] items-center gap-3">
             <Label htmlFor="wt-path">{t('addWorktree.pathLabel')}</Label>
             <Input
               id="wt-path"
               value={path}
               onChange={(e) => setPath(e.target.value)}
-              placeholder={t('addWorktree.pathPlaceholder', { name: repo.name })}
+              placeholder={t('addWorktree.pathPlaceholder', { pattern: layoutPattern })}
             />
           </div>
           {error && <div className="text-sm text-[var(--status-red)]">⚠ {error}</div>}

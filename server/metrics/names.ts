@@ -225,6 +225,7 @@ export const ROUTES = [
   '/api/repos/order',
   '/api/search/files',
   '/api/search/text',
+  '/api/settings',
   '/api/terminals',
   '/api/terminals/:id/kill',
   '/api/usage',

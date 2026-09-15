@@ -38,6 +38,9 @@ There are two ways to start Claude Code, and **both keep using your subscription
 
 - Register repositories and view them as a deck (branch, change count, and agent status for every worktree).
 - Add Git worktrees (new or existing branch) and remove them — the default path is `../<repo>.worktrees/<branch>`.
+  The "Layout" dropdown in the Add worktree dialog switches that default to `../<repo>=<branch>` (the **ghq** layout,
+  where worktrees sit next to the repository inside `<ghq root>/<host>/<user>/`). The choice is remembered in
+  `~/.prontella/config.json`; the default is unchanged, so nothing moves unless you pick it.
 - The worktree view is a VS Code-style tile layout (split, drag to resize, persisted per worktree).
   **Each tile has two levels of tabs**: the tile header switches between Files / Git / Terminal, and state survives switching.
   - **Files**: a file tree (react-arborist + VS Code codicons) plus a Monaco editor with a tab per open file (Ctrl+S to save).
@@ -123,6 +126,12 @@ Open a worktree and hit "✦ Start Claude" to launch Claude Code with that direc
   `node scripts/metrics/summarize.mjs --tier dev` renders a Markdown report (slow operations, memory trend, hangs,
   wasted work); "Diagnostics: download anonymous metrics bundle" (or `node scripts/metrics/export.mjs`) produces a
   gzip you can attach to a bug report. In the `dev` tier, `POST /api/metrics/heap-snapshot` writes a V8 heap snapshot.
+- **The ghq worktree layout is Prontella's own convention, not ghq's.** ghq has no worktree command (`get / list /
+  rm / root / create / migrate` only), so the deck just places the worktree next to the repository — no ghq process is
+  run and ghq does not have to be installed. Two consequences: remove such a worktree from the deck (which runs
+  `git worktree remove`) rather than with `ghq rm`, because deleting the directory alone leaves a stale
+  `.git/worktrees/<name>` entry behind that needs `git worktree prune`; `ghq migrate` is safe, it repairs worktree
+  back-pointers itself.
 - `scripts/ws-debug.mjs` is a helper for debugging terminal output and status detection.
 - `scripts/term-size-probe.js` collects diagnostics when a terminal renders smaller than its frame (paste it into the
   browser console; it only reads).

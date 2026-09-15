@@ -224,3 +224,59 @@ export function reorderRepos(
   saveConfig({ ...config, repos: result.repos });
   return result;
 }
+
+// ---- worktree の既定配置 ---------------------------------------------------
+
+/**
+ * 既定 worktree パスの組み立て規則。
+ * - `nested`: `<repo の親>/<repo 名>.worktrees/<ブランチ名>` (既定。1 リポジトリー 1 コンテナー)
+ * - `ghq`: `<repo の親>/<repo 名>=<ブランチ名>` (ghq の `<root>/<host>/<user>/<repo>` 配下で
+ *   worktree が本体の兄弟に並ぶ配置。ghq 自体に worktree 機能は無いため、ghq は呼ばず
+ *   「本体の兄弟ディレクトリー」という規則だけで再現する)
+ */
+export type WorktreeLayout = 'nested' | 'ghq';
+
+const WORKTREE_LAYOUTS: readonly WorktreeLayout[] = ['nested', 'ghq'];
+
+function isWorktreeLayout(v: unknown): v is WorktreeLayout {
+  return typeof v === 'string' && (WORKTREE_LAYOUTS as readonly string[]).includes(v);
+}
+
+/** 未設定・不正値はすべて既定の `nested` に倒す(設定ファイルを手で編集して壊しても
+ *  worktree 作成が止まらないように)。 */
+export function getWorktreeLayout(): WorktreeLayout {
+  const v = loadConfig().worktreeLayout;
+  return isWorktreeLayout(v) ? v : 'nested';
+}
+
+/** PUT /api/settings 用。setRepoFlags と同じく load→変更→save の間に await を置かない。 */
+export function setWorktreeLayout(
+  layout: unknown,
+): { ok: true; layout: WorktreeLayout } | { ok: false; error: string } {
+  if (!isWorktreeLayout(layout)) {
+    return { ok: false, error: `worktreeLayout は ${WORKTREE_LAYOUTS.join(' / ')} のいずれかです` };
+  }
+  const config = loadConfig();
+  saveConfig({ ...config, worktreeLayout: layout });
+  return { ok: true, layout };
+}
+
+/**
+ * 既定 worktree パスを組み立てる純関数 (I/O なし)。
+ *
+ * ブランチ名はディレクトリー名に使えない文字を `-` に潰す (`feature/abc` → `feature-abc`)。
+ * この置換は `nested` / `ghq` の両方に等しく効かせる — `ghq` 配置でブランチ名の `/` を
+ * 残すとディレクトリーが階層化して「本体の兄弟」ではなくなるため。
+ */
+export function worktreeDefaultPath(
+  repoPath: string,
+  repoName: string,
+  rawBranch: string,
+  layout: WorktreeLayout,
+): string {
+  const branch = rawBranch.replace(/[\\/:*?"<>|]/g, '-');
+  const parent = path.dirname(repoPath);
+  return layout === 'ghq'
+    ? path.join(parent, `${repoName}=${branch}`)
+    : path.join(parent, `${repoName}.worktrees`, branch);
+}

@@ -24,6 +24,9 @@ export type ConflictSide = 'ours' | 'theirs';
 // server/git.ts の ResetMode と手動同期(共有型機構がないため)
 export type ResetMode = 'soft' | 'mixed' | 'hard';
 
+// server/config.ts の WorktreeLayout と手動同期(共有型機構がないため)
+export type WorktreeLayout = 'nested' | 'ghq';
+
 export interface Worktree {
   path: string;
   head: string;

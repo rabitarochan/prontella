@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { writeJsonAtomic } from './config.js';
+import { worktreeDefaultPath, writeJsonAtomic } from './config.js';
 
 // writeJsonAtomic は os.tmpdir() 配下の使い捨てディレクトリーに対してのみテストする。
 // 実 `~/.prontella/config.json` には絶対に触れない(loadConfig/saveConfig 自体はここでは
@@ -155,5 +155,105 @@ describe('loadConfig / saveConfig (隔離 home, 実 config 非接触)', () => {
 
     fs.writeFileSync(configFile, '[1,2,3]', 'utf8');
     expect(configModule.loadConfig()).toEqual({ repos: [] });
+  });
+});
+
+describe('worktreeDefaultPath', () => {
+  const repoPath = path.join('C:', 'Users', 'me', 'ghq', 'github.com', 'me', 'prontella');
+  const parent = path.dirname(repoPath);
+
+  it('nested は現行の ../<repo>.worktrees/<branch> を 1 文字も変えない', () => {
+    expect(worktreeDefaultPath(repoPath, 'prontella', 'feature/abc-def', 'nested')).toBe(
+      path.join(parent, 'prontella.worktrees', 'feature-abc-def'),
+    );
+    expect(worktreeDefaultPath(repoPath, 'prontella', 'main', 'nested')).toBe(
+      path.join(parent, 'prontella.worktrees', 'main'),
+    );
+  });
+
+  it('ghq は本体の兄弟 ../<repo>=<branch> に置く', () => {
+    expect(worktreeDefaultPath(repoPath, 'prontella', 'feature/abc-def', 'ghq')).toBe(
+      path.join(parent, 'prontella=feature-abc-def'),
+    );
+    expect(worktreeDefaultPath(repoPath, 'prontella', 'main', 'ghq')).toBe(
+      path.join(parent, 'prontella=main'),
+    );
+  });
+
+  // ghq 配置でブランチ名の区切り文字が残ると、ディレクトリーが階層化して「本体の兄弟」で
+  // なくなる。両レイアウトで等しく潰れることを固定する。
+  it('ディレクトリー名に使えない文字はどちらのレイアウトでも - に潰れる', () => {
+    const branch = 'a\\b/c:d*e?f"g<h>i|j';
+    const flat = 'a-b-c-d-e-f-g-h-i-j';
+    expect(worktreeDefaultPath(repoPath, 'prontella', branch, 'ghq')).toBe(
+      path.join(parent, `prontella=${flat}`),
+    );
+    expect(worktreeDefaultPath(repoPath, 'prontella', branch, 'nested')).toBe(
+      path.join(parent, 'prontella.worktrees', flat),
+    );
+  });
+});
+
+describe('getWorktreeLayout / setWorktreeLayout (隔離 home, 実 config 非接触)', () => {
+  let isolatedHome: string;
+  let configDir: string;
+  let configFile: string;
+  let originalUserProfile: string | undefined;
+  let originalHome: string | undefined;
+
+  beforeEach(() => {
+    isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'prontella-wt-layout-home-'));
+    configDir = path.join(isolatedHome, '.prontella');
+    configFile = path.join(configDir, 'config.json');
+    originalUserProfile = process.env.USERPROFILE;
+    originalHome = process.env.HOME;
+    process.env.USERPROFILE = isolatedHome;
+    process.env.HOME = isolatedHome;
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = originalUserProfile;
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    fs.rmSync(isolatedHome, { recursive: true, force: true });
+    vi.resetModules();
+  });
+
+  it('未設定なら nested (既定は現状維持)', async () => {
+    const configModule = await import('./config.js');
+    expect(configModule.getWorktreeLayout()).toBe('nested');
+  });
+
+  it('ghq を保存すると config.json に載り、読み戻せる', async () => {
+    const configModule = await import('./config.js');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(configFile, JSON.stringify({ repos: [], futureTopLevelFlag: 'kept' }), 'utf8');
+
+    expect(configModule.setWorktreeLayout('ghq')).toEqual({ ok: true, layout: 'ghq' });
+    const written = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+    expect(written.worktreeLayout).toBe('ghq');
+    expect(written.futureTopLevelFlag).toBe('kept'); // 他のトップレベルキーを落とさない
+    expect(configModule.getWorktreeLayout()).toBe('ghq');
+  });
+
+  it('不正な値は 400 側に落ち、既存の設定を書き換えない', async () => {
+    const configModule = await import('./config.js');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(configFile, JSON.stringify({ repos: [], worktreeLayout: 'ghq' }), 'utf8');
+
+    for (const bad of ['', 'GHQ', 'Nested', null, undefined, 0, {}, ['ghq']]) {
+      const result = configModule.setWorktreeLayout(bad);
+      expect(result.ok, JSON.stringify(bad)).toBe(false);
+    }
+    expect(JSON.parse(fs.readFileSync(configFile, 'utf8')).worktreeLayout).toBe('ghq');
+  });
+
+  it('手で壊された値 (config.json 直編集) は nested に倒れる', async () => {
+    const configModule = await import('./config.js');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(configFile, JSON.stringify({ repos: [], worktreeLayout: 'GHQ' }), 'utf8');
+    expect(configModule.getWorktreeLayout()).toBe('nested');
   });
 });

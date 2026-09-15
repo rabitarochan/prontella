@@ -165,6 +165,31 @@ const idAccessor = (d: TNode) => d.id;
 const childrenAccessor = (d: TNode) => (d.type === 'dir' ? (d.children ?? []) : null);
 
 /**
+ * react-arborist は <Tree> ごとに react-dnd の `<DndProvider backend={HTML5Backend}>` を
+ * 内部で張る。react-dnd のマネージャーは **render 中に**
+ * `window[Symbol.for('__REACT_DND_CONTEXT_INSTANCE__')]` へ作られ、**effect の cleanup で
+ * 参照数が 0 になると null に戻される**という非対称な作りになっている。タイルごとに
+ * FileTree が居る画面 (= この repo の通常構成) では「シングルトンは null なのに、生きて
+ * いる木が前のマネージャーを掴んだままで backend は setup 済み」という状態が残りうる。
+ * その状態でどれか 1 つの木が再レンダーすると 2 本目の HTML5Backend が setup され、
+ * `Cannot have two HTML5 backends at the same time.` を投げて **React ルートごと落ちる**
+ * (実測 2026-09-15: この状態を作ってから 1 行クリックしただけで #root が空になった)。
+ *
+ * この木は disableDrag / disableDrop で DnD を一切使っていないので backend 自体が要らない。
+ * 何もしないバックエンドを渡し、window グローバル経由の共有ごと無効化する。
+ * (将来この木で DnD を有効にするなら、代わりに `dndManager` へ
+ *  `createDragDropManager(HTML5Backend, window)` の単一インスタンスを渡すこと。)
+ */
+const noDndBackend = () => ({
+  setup() {},
+  teardown() {},
+  connectDragSource: () => () => {},
+  connectDragPreview: () => () => {},
+  connectDropTarget: () => () => {},
+  profile: () => ({}),
+});
+
+/**
  * react-arborist は <Tree> の children (= 行レンダラー) を props.children として保持し、
  * row-container.tsx L75-79 で `const Node = tree.renderNode; <Node .../>` と要素タイプ
  * そのものとして描画する。そのため FileTree のレンダー関数の内側でこのコンポーネントを
@@ -778,6 +803,7 @@ export default function FileTree({
               rowHeight={24}
               indent={12}
               openByDefault={false}
+              dndBackend={noDndBackend}
               disableDrag
               disableDrop
               disableEdit

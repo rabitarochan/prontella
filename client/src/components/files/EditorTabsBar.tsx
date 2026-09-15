@@ -22,6 +22,7 @@ export interface TabsBarCallbacks {
   onCloseTab: (key: string) => void;
   onOpenPreview: (path: string) => void;
   onSplit: () => void;
+  onEqualize: () => void;
   /** ストリップへのドロップ。index はストリップ上の挿入位置 (ドラッグ元タブ込みの並びに対する)。 */
   onDropTab: (index: number, drag: EditorTabDrag) => void;
 }
@@ -32,6 +33,7 @@ export default function EditorTabsBar({
   entries,
   message,
   isActiveGroup,
+  canEqualize,
   callbacks,
 }: {
   leafId: string;
@@ -40,6 +42,8 @@ export default function EditorTabsBar({
   /** 保存結果等のメッセージ。アクティブグループのバーにだけ出す。 */
   message: string;
   isActiveGroup: boolean;
+  /** グループが 2 つ以上あるか (1 つのときは均等割りが無意味なのでボタンを出さない)。 */
+  canEqualize: boolean;
   callbacks: TabsBarCallbacks;
 }) {
   const t = useT();
@@ -180,6 +184,15 @@ export default function EditorTabsBar({
           title={t('files.openPreview')}
         >
           <span className="codicon codicon-open-preview" />
+        </button>
+      )}
+      {canEqualize && (
+        <button
+          className="icon-btn"
+          onClick={callbacks.onEqualize}
+          title={t('files.equalizeGroupsTooltip')}
+        >
+          <span className="codicon codicon-layout" />
         </button>
       )}
       {group.activeKey !== null && (

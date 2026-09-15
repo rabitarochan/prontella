@@ -5,6 +5,8 @@ import type { DropZone } from '../layout/dropZones';
 import { loadLeafTermState, saveLeafTermState, type LeafTermState } from '../layout/termState';
 import {
   activateSession,
+  allTermGroups,
+  equalizeTermGroupSizes,
   findTermGroup,
   groupOfSession,
   moveSessionToGroup,
@@ -315,6 +317,8 @@ export default function TermPanel({
       </>
     );
 
+  const canEqualize = allTermGroups(groupRoot).length > 1;
+
   const renderGroup = (group: TermGroup) => (
     <TermGroupPane
       key={group.id}
@@ -326,6 +330,7 @@ export default function TermPanel({
       hostFor={hostFor}
       emptyContent={emptyContent}
       labelOf={labelOf}
+      canEqualize={canEqualize}
       callbacks={{
         onActivate: (id) =>
           groupsApi.set(activateSession(groupsApi.stateRef.current.root, group.id, id), {
@@ -338,6 +343,8 @@ export default function TermPanel({
           run(() => create(runCmd, { groupId: group.id, activeSessionId: group.activeId }));
         },
         onSplit: () => splitGroup(group.id),
+        onEqualize: () =>
+          groupsApi.set(equalizeTermGroupSizes(groupsApi.stateRef.current.root)),
         onDropTab: (index, drag) => dropOnTabStrip(group.id, index, drag),
         onDropZone: (zone, drag) => dropOnZone(group.id, zone, drag),
         onFocusGroup: () => groupsApi.setActiveGroup(group.id),

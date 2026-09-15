@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Group, Separator } from 'react-resizable-panels';
 import { useT } from '../../i18n';
 import type { ActiveRepo, TerminalSession, Worktree } from '../../types';
-import { leaves, type TileNode } from '../../layout/tileTree';
+import { collapsedExtent, isMaximized, leaves, type TileNode } from '../../layout/tileTree';
 import type { TileActions } from '../../layout/useTileLayout';
 import SplitPanel from '../SplitPanel';
 import TilePane from './TilePane';
@@ -67,6 +67,8 @@ export default function TileGrid({
           leaf={node}
           sessions={sessions}
           focused={actions.focusedLeafId === node.id}
+          minimized={!!node.minimized}
+          maximized={isMaximized(root, node.id)}
           actions={actions}
           host={getHost(node.id)}
         />
@@ -74,6 +76,14 @@ export default function TileGrid({
     }
     const separatorClass =
       node.dir === 'row' ? 'pane-separator-h' : 'pane-separator-v';
+    // 畳まれた子は px 固定、展開中の子は defaultSize を渡さず「残りを等分」で
+    // 受け取らせる。px と % を兄弟で混ぜると既定レイアウトの正規化で両方が縮む。
+    // ponytail: 畳んでいるあいだ、展開中の兄弟が 2 枚以上あるとその比率は等分に
+    // なる (復元すれば木の sizes から戻る)。比率を保つには Group の実寸 px を
+    // 測って % を自前計算するしかなく、それは display:none 下で 0 になる測定に
+    // 依存する。実害が出たらそこで初めて測定込みの実装へ上げる。
+    const extents = node.children.map((c) => collapsedExtent(c, node.dir));
+    const anyCollapsed = extents.some((e) => e !== null);
     return (
       // Key by structure: adding/removing panels remounts the Group cleanly so
       // the sizes reapply from the tree (the single source of truth). This is
@@ -84,6 +94,9 @@ export default function TileGrid({
         className="tile-group"
         onLayoutChanged={(layout, meta) => {
           if (!meta.isUserInteraction) return;
+          // 畳んでいるあいだのドラッグは書き戻さない。木に残った畳む前の比率が
+          // そのまま「復元したときのサイズ」になる (復元用の state を持たずに済む)。
+          if (anyCollapsed) return;
           actions.applySizes(
             node.id,
             node.children.map((c) => layout[c.id] ?? 0),
@@ -95,7 +108,12 @@ export default function TileGrid({
             {i > 0 && <Separator className={`pane-separator ${separatorClass}`} />}
             <SplitPanel
               id={child.id}
-              initialSize={`${node.sizes[i] ?? 100 / node.children.length}%`}
+              fixedPx={extents[i] ?? undefined}
+              initialSize={
+                extents[i] !== null || anyCollapsed
+                  ? undefined
+                  : `${node.sizes[i] ?? 100 / node.children.length}%`
+              }
               className="tile-panel"
             >
               {renderNode(child)}

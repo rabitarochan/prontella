@@ -28,12 +28,18 @@ import { Panel } from 'react-resizable-panels';
 export default function SplitPanel({
   id,
   initialSize,
+  fixedPx,
   className,
   style,
   children,
 }: {
   id: string;
-  initialSize: string;
+  /** 省略すると Panel は defaultSize 無しになり、**残りを兄弟と等分**で受け取る
+   *  (react-resizable-panels の既定レイアウト計算)。畳まれた兄弟がいる Group で
+   *  展開中のペインに使う — px と % を兄弟で混ぜずに合計 100% を保てる。 */
+  initialSize?: string;
+  /** 畳まれたペイン: この px にサイズを固定し、ドラッグで開けなくする。 */
+  fixedPx?: number;
   className: string;
   /** `overflow: hidden` の後にマージされる追加スタイル。Panel は className と style を
    *  **内側の div** に付け、その既定は `overflow: auto`。インラインはクラス規則に勝つので、
@@ -41,12 +47,14 @@ export default function SplitPanel({
   style?: CSSProperties;
   children: ReactNode;
 }) {
-  const defaultSize = useRef(initialSize).current;
+  const frozen = useRef({ initialSize, fixedPx }).current;
+  const fixed = frozen.fixedPx !== undefined ? `${frozen.fixedPx}px` : null;
   return (
     <Panel
       id={id}
-      defaultSize={defaultSize}
-      minSize="120px"
+      defaultSize={fixed ?? frozen.initialSize}
+      minSize={fixed ?? '120px'}
+      maxSize={fixed ?? undefined}
       className={className}
       style={{ overflow: 'hidden', ...style }}
     >

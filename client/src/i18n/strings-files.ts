@@ -58,6 +58,10 @@ export const FILES_STRINGS = {
   },
   'files.saveHintCtrlS': { ja: 'Ctrl+S でも保存できます', en: 'You can also save with Ctrl+S' },
   'files.splitEditorTooltip': { ja: 'エディターを右に分割', en: 'Split editor right' },
+  'files.equalizeGroupsTooltip': {
+    ja: 'エディターグループを均等割り',
+    en: 'Even out the editor groups',
+  },
   'files.saving': { ja: '保存中...', en: 'Saving…' },
   'files.save': { ja: '保存', en: 'Save' },
 
@@ -143,6 +147,10 @@ export const FILES_STRINGS = {
   'term.splitTerminalTooltip': {
     ja: 'アクティブなターミナルを右隣へ分割',
     en: 'Split the active terminal to the right',
+  },
+  'term.equalizeGroupsTooltip': {
+    ja: 'ターミナルグループを均等割り',
+    en: 'Even out the terminal groups',
   },
 
   // ---- Claude 使用量 (ターミナルタイルのヘッダー) ----
@@ -260,6 +268,9 @@ export const FILES_STRINGS = {
   },
   'tile.splitRightTooltip': { ja: '右に分割', en: 'Split right' },
   'tile.splitDownTooltip': { ja: '下に分割', en: 'Split down' },
+  'tile.minimizeTooltip': { ja: '最小化 (ヘッダーだけ残す)', en: 'Minimize (header only)' },
+  'tile.maximizeTooltip': { ja: '最大化 (他のパネルを畳む)', en: 'Maximize (fold the other panels)' },
+  'tile.restoreTooltip': { ja: '元のサイズに戻す', en: 'Restore' },
   'tile.empty': { ja: 'タイルがありません', en: 'No tiles' },
   'tile.resetLayout': { ja: 'レイアウト初期化', en: 'Reset layout' },
   'tile.closeSessionsConfirm': {

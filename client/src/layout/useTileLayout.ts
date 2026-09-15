@@ -8,18 +8,23 @@ import {
   adoptSessions,
   appendSession,
   createDefaultLayout,
+  equalize as equalizeTree,
   findLeaf,
+  isMaximized,
   leaves,
   makeLeaf,
+  maximizeLeaf,
   moveLeaf,
   normalize,
   pruneSessions,
   removeLeaf,
   removeSession,
+  restoreAll,
   sanitize,
   setSizes,
   splitLeaf,
   swapLeaves,
+  toggleMinimize,
   updateLeaf,
   type TileView,
   type TileNode,
@@ -76,6 +81,12 @@ export interface TileActions {
   move: (srcId: string, targetId: string, zone: TileDropZone) => void;
   /** Persist pane sizes after a drag. */
   applySizes: (splitId: string, sizes: number[]) => void;
+  /** Fold/unfold one tile down to its header (no-op when it is the last open one). */
+  minimize: (leafId: string) => void;
+  /** Fold every other tile / restore them all. */
+  toggleMaximize: (leafId: string) => void;
+  /** Give every split an equal share and unfold everything. */
+  equalize: () => void;
   /** Back to the default layout (escape hatch for broken layouts). */
   reset: () => void;
 }
@@ -281,6 +292,29 @@ export function useTileLayout(
     setLayout((prev) => ({ ...prev, root: prev.root ? setSizes(prev.root, splitId, sizes) : null }));
   }, []);
 
+  const minimize = useCallback(
+    (leafId: string) => {
+      const root = layoutRef.current.root;
+      if (root) update(toggleMinimize(root, leafId));
+    },
+    [update],
+  );
+
+  const toggleMaximize = useCallback(
+    (leafId: string) => {
+      const root = layoutRef.current.root;
+      if (!root) return;
+      update(isMaximized(root, leafId) ? restoreAll(root) : maximizeLeaf(root, leafId));
+      setFocusedLeafId(leafId);
+    },
+    [update],
+  );
+
+  const equalize = useCallback(() => {
+    const root = layoutRef.current.root;
+    if (root) update(equalizeTree(root));
+  }, [update]);
+
   const reset = useCallback(() => {
     // Re-adopt live sessions immediately so terminals reappear without
     // waiting for the next poll tick.
@@ -301,6 +335,9 @@ export function useTileLayout(
     openChat,
     move,
     applySizes,
+    minimize,
+    toggleMaximize,
+    equalize,
     reset,
   };
 }

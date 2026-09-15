@@ -147,12 +147,7 @@ const CORE_STRINGS = {
   'deck.statConflicted': { ja: 'コンフリクト', en: 'Conflicts' },
 
   // ---- ワークツリービュー ----
-  'wt.resetLayout': { ja: 'レイアウトを初期化', en: 'Reset layout' },
-  'wt.resetLayoutMessage': {
-    ja: 'レイアウトを初期化しますか?(未保存の編集内容は失われます)',
-    en: 'Reset the layout? (Unsaved edits will be lost.)',
-  },
-  'wt.resetLayoutConfirm': { ja: '初期化', en: 'Reset' },
+  'wt.equalizeLayout': { ja: 'パネルを均等割り', en: 'Even out panels' },
 
   // ---- テーマ ----
   'theme.light': { ja: 'ライト', en: 'Light' },

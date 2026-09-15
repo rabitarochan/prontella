@@ -18,6 +18,7 @@
 
 import {
   equalSizes,
+  equalizeSizesOf,
   findLeafOf,
   insertBesideLeaf,
   leavesOf,
@@ -231,6 +232,11 @@ export function setTermGroupSizes(
   sizes: number[],
 ): TermGroupNode {
   return setSizesOf<TermGroup>(root, splitId, sizes);
+}
+
+/** すべてのターミナルグループを均等割りする (split の id は振り直される)。 */
+export function equalizeTermGroupSizes(root: TermGroupNode): TermGroupNode {
+  return equalizeSizesOf<TermGroup>(root);
 }
 
 /**

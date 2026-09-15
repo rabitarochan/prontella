@@ -159,3 +159,23 @@ export function normalizeOf<L extends LeafBase>(node: NodeOf<L> | null): NodeOf<
   if (children.length === 1) return children[0];
   return { ...node, children, sizes: renormalized(sizes) };
 }
+
+/**
+ * Give every split's children an equal share.
+ *
+ * ⚠ **split の id を振り直して返す**。両ジオメトリ層 (TileGrid / SplitTreeView) は
+ * Group を `${node.id}:${childIds}` でキーしており、SplitPanel は defaultSize を
+ * マウント時に凍結する (SplitPanel.tsx の理由を参照)。したがって sizes だけ書き換えても
+ * 画面には反映されない — id を変えて Group を再マウントさせるのが、専用の epoch state を
+ * 持たずに「プログラム的なサイズ変更」を効かせる唯一の経路。leaf の id は変えないので、
+ * leaf.id でキーされたコンテンツのポータルは remount されない。
+ */
+export function equalizeSizesOf<L extends LeafBase>(node: NodeOf<L>): NodeOf<L> {
+  if (node.type === 'leaf') return node;
+  return {
+    ...node,
+    id: newId(),
+    sizes: equalSizes(node.children.length),
+    children: node.children.map(equalizeSizesOf),
+  };
+}

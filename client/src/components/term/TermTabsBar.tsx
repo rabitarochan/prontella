@@ -23,6 +23,8 @@ export interface TermTabsBarCallbacks {
   onCreate: (run?: string) => void;
   /** 分割ボタン: アクティブなターミナルを右隣の新グループへ移す。 */
   onSplit: () => void;
+  /** 均等割りボタン: グループツリー全体のサイズを等分する。 */
+  onEqualize: () => void;
   /** ストリップへのドロップ。index はドラッグ元タブ込みの並びに対する挿入位置。 */
   onDropTab: (index: number, drag: TermTabDrag) => void;
 }
@@ -33,6 +35,7 @@ export default function TermTabsBar({
   liveMap,
   busy,
   labelOf,
+  canEqualize,
   callbacks,
 }: {
   leafId: string;
@@ -40,6 +43,8 @@ export default function TermTabsBar({
   /** 生存セッションの id → 情報。ここに無い id は終了済み (タブだけ残っている)。 */
   liveMap: Map<string, TerminalSession>;
   busy: boolean;
+  /** グループが 2 つ以上あるか (1 つのときは均等割りが無意味なのでボタンを出さない)。 */
+  canEqualize: boolean;
   /** タブ名。既定はセッションのタイトル。ターミナルモニターは worktree 名を出す。 */
   labelOf?: (session: TerminalSession) => string;
   callbacks: TermTabsBarCallbacks;
@@ -175,6 +180,15 @@ export default function TermTabsBar({
         >
           ✦
         </button>
+        {canEqualize && (
+          <button
+            className="icon-btn"
+            title={t('term.equalizeGroupsTooltip')}
+            onClick={callbacks.onEqualize}
+          >
+            <span className="codicon codicon-layout" />
+          </button>
+        )}
         {group.sessions.length > 1 && (
           <button className="icon-btn" title={t('term.splitTerminalTooltip')} onClick={callbacks.onSplit}>
             <span className="codicon codicon-split-horizontal" />

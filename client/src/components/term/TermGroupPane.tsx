@@ -29,6 +29,7 @@ export default function TermGroupPane({
   hostFor,
   emptyContent,
   labelOf,
+  canEqualize,
   callbacks,
 }: {
   group: TermGroup;
@@ -36,6 +37,8 @@ export default function TermGroupPane({
   liveMap: Map<string, TerminalSession>;
   busy: boolean;
   isActiveGroup: boolean;
+  /** グループが 2 つ以上あるか (TermTabsBar へ委譲)。 */
+  canEqualize: boolean;
   /** タブ名 (TermTabsBar へ委譲)。 */
   labelOf?: (session: TerminalSession) => string;
   /** セッション id → 安定 host div (TermPanel が所有)。 */
@@ -84,6 +87,7 @@ export default function TermGroupPane({
         liveMap={liveMap}
         busy={busy}
         labelOf={labelOf}
+        canEqualize={canEqualize}
         callbacks={callbacks}
       />
       <div className="term-group-body" ref={bodyRef}>

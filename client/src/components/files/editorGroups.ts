@@ -12,6 +12,7 @@
 
 import { refKey, tabKey, type OpenTabRef, type TabKind } from '../../editorState';
 import {
+  equalizeSizesOf,
   findLeafOf,
   insertBesideLeaf,
   leavesOf,
@@ -346,6 +347,11 @@ export function pickEviction(
 
 export function setGroupSizes(root: GroupNode, splitId: string, sizes: number[]): GroupNode {
   return setSizesOf<EditorGroup>(root, splitId, sizes);
+}
+
+/** すべてのエディターグループを均等割りする (split の id は振り直される)。 */
+export function equalizeGroupSizes(root: GroupNode): GroupNode {
+  return equalizeSizesOf<EditorGroup>(root);
 }
 
 export { tabKey };

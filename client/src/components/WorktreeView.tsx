@@ -8,7 +8,6 @@ import {
   setActiveWorktreeCommands,
 } from '../layout/worktreeCommands';
 import { useAgentStatusResolver } from '../agentEvents';
-import { useConfirm } from './ConfirmDialog';
 import OpenInEditorButton from './OpenInEditorButton';
 import StatusBadge from './StatusBadge';
 import TileGrid from './tiles/TileGrid';
@@ -20,7 +19,6 @@ import TileGrid from './tiles/TileGrid';
  */
 export default function WorktreeView({ repo, worktree }: { repo: ActiveRepo; worktree: Worktree }) {
   const t = useT();
-  const { confirm: confirmDialog, dialog } = useConfirm();
   // エージェント状態は /ws/events のプッシュから導出する (ポーリング間隔に依存させない)。
   const agentStatus = useAgentStatusResolver();
   const { sessions, create, createAgent, kill } = useTerminalSessions(worktree.path);
@@ -54,19 +52,9 @@ export default function WorktreeView({ repo, worktree }: { repo: ActiveRepo; wor
         <div className="wt-header-actions">
           <OpenInEditorButton dir={worktree.path} />
           <button
-            className="icon-btn layout-reset"
-            title={t('wt.resetLayout')}
-            onClick={() => {
-              void (async () => {
-                const ok = await confirmDialog({
-                  title: t('wt.resetLayout'),
-                  message: t('wt.resetLayoutMessage'),
-                  confirmLabel: t('wt.resetLayoutConfirm'),
-                  severity: 'danger',
-                });
-                if (ok) tiles.reset();
-              })();
-            }}
+            className="icon-btn layout-equalize"
+            title={t('wt.equalizeLayout')}
+            onClick={() => tiles.equalize()}
           >
             <span className="codicon codicon-layout" />
           </button>
@@ -75,7 +63,6 @@ export default function WorktreeView({ repo, worktree }: { repo: ActiveRepo; wor
       <div className="wt-body">
         <TileGrid repo={repo} worktree={worktree} sessions={sessions} actions={tiles} />
       </div>
-      {dialog}
     </div>
   );
 }

@@ -1927,6 +1927,49 @@ button.statusbar-item:hover:not(:disabled) {
   justify-content: center;
   border-radius: 6px;
 }
+/* 畳んだタイル: 本文だけ隠してヘッダーを残す。host 自体は DOM に残るので
+   xterm / Monaco のインスタンスと WebSocket は生きたまま */
+.tile-body[hidden] {
+  display: none;
+}
+.tile-pane.minimized .tile-header {
+  border-bottom: none;
+  padding: 4px 2px;
+  gap: 6px;
+}
+.tile-pane.minimized .tile-restore {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+}
+.tile-pane.minimized .tile-restore svg {
+  width: 14px;
+  height: 14px;
+}
+/* 細いタイルはヘッダーを縦積みにする (= 左右分割で畳んだときの縦レール)。
+   木の分割方向ではなく実際の形で切り替えるので、入れ子分割でどちら向きに
+   畳まれても、また単に狭いだけのタイルでも同じように効く */
+@container tile (max-width: 90px) {
+  .tile-header {
+    flex-direction: column;
+    height: 100%;
+    justify-content: flex-start;
+  }
+  .tile-pane.minimized .tile-drag-handle {
+    width: 26px;
+    height: 14px;
+  }
+}
+/* 狭いタイルでは分割ボタンを落とす (最小化 / 最大化 / クローズを優先) */
+@container tile (max-width: 280px) {
+  .tile-actions .tile-split-btn {
+    display: none;
+  }
+}
 .tile-body {
   flex: 1;
   min-height: 0;

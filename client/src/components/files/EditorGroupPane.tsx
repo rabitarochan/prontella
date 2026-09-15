@@ -82,6 +82,10 @@ export interface PaneShared {
   /** 外部変更バナーの「編集を継続」。 */
   dismissDiskChange: (key: string) => void;
   splitGroup: (groupId: string) => void;
+  /** グループツリー全体を均等割りする。 */
+  equalizeGroups: () => void;
+  /** 現在のグループ数 (タブバーの均等割りボタンの表示条件)。 */
+  groupCount: number;
   focusGroup: (groupId: string) => void;
   /** タブ DnD の解決 (同一 leaf: 並べ替え/移動/分割。別 leaf: 転送)。 */
   dropOnTabStrip: (dstGroupId: string, index: number, drag: EditorTabDrag) => void;
@@ -320,11 +324,13 @@ export default function EditorGroupPane({
           entries={entries}
           message={message}
           isActiveGroup={isActiveGroup}
+          canEqualize={shared.groupCount > 1}
           callbacks={{
             onSwitchTab: (key) => sharedRef.current.switchTab(group.id, key),
             onCloseTab: (key) => sharedRef.current.closeTab(group.id, key),
             onOpenPreview: (path) => sharedRef.current.openPreview(path),
             onSplit: () => sharedRef.current.splitGroup(group.id),
+            onEqualize: () => sharedRef.current.equalizeGroups(),
             onDropTab: (index, d) => sharedRef.current.dropOnTabStrip(group.id, index, d),
           }}
         />

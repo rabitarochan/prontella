@@ -9,6 +9,7 @@
 
 import {
   equalSizes,
+  equalizeSizesOf,
   findLeafOf,
   insertBesideLeaf,
   leavesOf,
@@ -31,6 +32,8 @@ export interface LeafNode {
   /** owned terminal session ids, in tab order */
   sessions: string[];
   activeSession: string | null;
+  /** 畳まれている (ヘッダー / 縦レールだけ表示)。最大化は「自分以外が全部 minimized」で導出する */
+  minimized?: boolean;
 }
 
 export interface SplitNode {
@@ -271,6 +274,7 @@ export function sanitize(value: unknown): WorktreeLayout | null {
       type?: unknown;
       id?: unknown;
       view?: unknown;
+      minimized?: unknown;
       sessions?: unknown;
       activeSession?: unknown;
       dir?: unknown;
@@ -293,7 +297,9 @@ export function sanitize(value: unknown): WorktreeLayout | null {
         typeof node.activeSession === 'string' && sessions.includes(node.activeSession)
           ? node.activeSession
           : (sessions[sessions.length - 1] ?? null);
-      return { type: 'leaf', id: uniqueId(node.id), view, sessions, activeSession };
+      const leaf: LeafNode = { type: 'leaf', id: uniqueId(node.id), view, sessions, activeSession };
+      if (node.minimized === true) leaf.minimized = true;
+      return leaf;
     }
     if (node.type === 'split') {
       if (!Array.isArray(node.children)) return null;
@@ -315,4 +321,87 @@ export function sanitize(value: unknown): WorktreeLayout | null {
   const root = sanitizeNode(v.root);
   if (!root) return null;
   return { version: 2, root: normalize(root) };
+}
+
+// --- 最小化 / 最大化 / 均等割り ------------------------------------------
+//
+// 最小化は leaf の `minimized` フラグだけ。最大化は「自分以外の leaf が全部
+// minimized」で導出するので、状態を二重に持たない。
+//
+// ⚠ サイズ系の変換はすべて **split の id を振り直して返す**。両ジオメトリ層は
+// Group を `${node.id}:${childIds}` でキーし、SplitPanel が defaultSize を凍結
+// するため、木を書き換えただけでは画面に反映されない (splitTree.ts の
+// equalizeSizesOf のコメントを参照)。
+
+/**
+ * 畳まれたタイルが軸方向に占める px。`.tile-header` の実寸 (padding 8px ×2 +
+ * 26px + 罫線) にカード枠を足した値。ヘッダーの寸法を変えたらここも合わせる。
+ */
+export const COLLAPSED_PX = 45;
+
+/** split の id だけ振り直す (leaf.id は不変 = ポータルのコンテンツは remount しない)。 */
+function respawnSplitIds(node: TileNode): TileNode {
+  if (node.type === 'leaf') return node;
+  return { ...node, id: newId(), children: node.children.map(respawnSplitIds) };
+}
+
+function mapLeaves(node: TileNode, fn: (leaf: LeafNode) => LeafNode): TileNode {
+  if (node.type === 'leaf') return fn(node);
+  return { ...node, children: node.children.map((c) => mapLeaves(c, fn)) };
+}
+
+function setMinimized(leaf: LeafNode, on: boolean): LeafNode {
+  if (!!leaf.minimized === on) return leaf;
+  if (on) return { ...leaf, minimized: true };
+  const { minimized: _drop, ...rest } = leaf;
+  return rest;
+}
+
+/**
+ * 部分木が丸ごと畳まれているときに `axis` 方向で占める px。1 枚でも展開中の
+ * leaf があれば `null` (= 通常どおり % で配分する)。
+ *
+ * split を軸に沿って測るので、自分の分割方向が軸と同じなら子の和、直交して
+ * いれば子の最大値になる。これで `row[A, column[B, C]]` の A を最大化したとき、
+ * 右枝は「ヘッダー 2 段ぶんの幅」ではなく 1 本ぶんの幅に畳まれる。
+ */
+export function collapsedExtent(node: TileNode, axis: 'row' | 'column'): number | null {
+  if (node.type === 'leaf') return node.minimized ? COLLAPSED_PX : null;
+  const parts = node.children.map((c) => collapsedExtent(c, axis));
+  if (parts.some((p) => p === null)) return null;
+  const px = parts as number[];
+  return node.dir === axis ? px.reduce((a, b) => a + b, 0) : Math.max(...px);
+}
+
+/** `leafId` 以外のすべての leaf を畳む。 */
+export function maximizeLeaf(root: TileNode, leafId: string): TileNode {
+  if (!findLeaf(root, leafId)) return root;
+  return respawnSplitIds(mapLeaves(root, (l) => setMinimized(l, l.id !== leafId)));
+}
+
+/** すべての leaf の畳みを解除する (サイズは木に残った値がそのまま復活する)。 */
+export function restoreAll(root: TileNode): TileNode {
+  return respawnSplitIds(mapLeaves(root, (l) => setMinimized(l, false)));
+}
+
+/** 1 枚だけ畳み/展開を反転。展開中が 0 枚になる操作は no-op。 */
+export function toggleMinimize(root: TileNode, leafId: string): TileNode {
+  const all = leaves(root);
+  const target = all.find((l) => l.id === leafId);
+  if (!target) return root;
+  const next = !target.minimized;
+  if (next && all.every((l) => l.id === leafId || l.minimized)) return root;
+  return respawnSplitIds(mapLeaves(root, (l) => (l.id === leafId ? setMinimized(l, next) : l)));
+}
+
+/** `leafId` だけが展開中か (= 最大化されているか)。1 枚しかない木では常に false。 */
+export function isMaximized(root: TileNode | null, leafId: string): boolean {
+  const all = leaves(root);
+  if (all.length < 2) return false;
+  return all.every((l) => (l.id === leafId ? !l.minimized : !!l.minimized));
+}
+
+/** 全 split を均等割りし、畳みもすべて解除する (最大化からの脱出口を兼ねる)。 */
+export function equalize(root: TileNode): TileNode {
+  return equalizeSizesOf<LeafNode>(mapLeaves(root, (l) => setMinimized(l, false)));
 }

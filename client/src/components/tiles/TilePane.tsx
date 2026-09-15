@@ -45,12 +45,19 @@ export default function TilePane({
   leaf,
   sessions,
   focused,
+  minimized,
+  maximized,
   actions,
   host,
 }: {
   leaf: LeafNode;
   sessions: TerminalSession[] | null;
   focused: boolean;
+  /** 畳まれている: ヘッダー (縦に細いときは縦レール) だけを出し、本文は隠す。
+   *  host は DOM に残したままなので xterm / Monaco のインスタンスは生き残る。 */
+  minimized: boolean;
+  /** このタイルだけが展開中 = 最大化状態。ボタンが「復元」に変わる。 */
+  maximized: boolean;
   actions: TileActions;
   host: HTMLDivElement;
 }) {
@@ -91,7 +98,7 @@ export default function TilePane({
   // give it back to the focused terminal. Mount-only: focus changes from
   // clicks are handled by the browser itself.
   useEffect(() => {
-    if (focused) host.querySelector('textarea')?.focus();
+    if (focused && !minimized) host.querySelector('textarea')?.focus();
   }, []);
 
   // Adopt the host node. Must be idempotent: appendChild detaches and
@@ -132,7 +139,9 @@ export default function TilePane({
 
   return (
     <section
-      className={`tile-pane ${focused ? 'focused' : ''} ${isDragSource ? 'dragging' : ''}`}
+      className={`tile-pane ${focused ? 'focused' : ''} ${isDragSource ? 'dragging' : ''} ${
+        minimized ? 'minimized' : ''
+      }`}
       onMouseDownCapture={() => actions.focusLeaf(leaf.id)}
     >
       <header
@@ -141,85 +150,117 @@ export default function TilePane({
         onDragStart={onHeaderDragStart}
         onDragEnd={dndEnd}
       >
-        {/* 先頭ゾーン: ビュー切替 + (files ビュー時) ツリー列ヘッダーのポータル先。
-            かつては --files-tree-w でツリー列幅に揃えていたが、ツリー列は
-            react-resizable-panels でユーザーが動かせるようになったため固定幅は廃止した
-            (ヘッダーは内容ぶんの幅で流れる) */}
-        <div className="tile-header-lead">
-          <span className="tile-drag-handle" title={t('tile.dragHint')}>
-            <GripVertical />
-          </span>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                className="tile-view-trigger"
-                title={`${t(current.labelKey)} — ${t('tile.switchViewTooltip')}`}
-              >
-                <CurrentIcon />
-                <ChevronDown className="tile-view-chevron" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
-              {VIEWS.map(({ view, labelKey, Icon }) => (
-                <DropdownMenuItem key={view} onSelect={() => actions.setView(leaf.id, view)}>
-                  <Icon />
-                  {t(labelKey)}
-                  {view === 'term' && ptyCount > 0 && (
-                    <span className="tile-tab-count">{ptyCount}</span>
-                  )}
-                  {view === 'chat' && chatCount > 0 && (
-                    <span className="tile-tab-count">{chatCount}</span>
-                  )}
-                  {leaf.view === view && <Check className="ml-auto text-primary" />}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          {!tabsInBar && leaf.sessions.length > 0 && (
-            <span className="tile-tab-count">{leaf.sessions.length}</span>
-          )}
-          {!tabsInBar && termStatus && <StatusBadge status={termStatus} dot />}
+        {minimized ? (
+          <>
+            <span className="tile-drag-handle" title={t('tile.dragHint')}>
+              <GripVertical />
+            </span>
+            <button
+              className="icon-btn tile-restore"
+              title={`${t(current.labelKey)} — ${t('tile.restoreTooltip')}`}
+              onClick={() => actions.minimize(leaf.id)}
+            >
+              <CurrentIcon />
+            </button>
+            {termStatus && <StatusBadge status={termStatus} dot />}
+          </>
+        ) : (
+          <>
+          {/* 先頭ゾーン: ビュー切替 + (files ビュー時) ツリー列ヘッダーのポータル先。
+              かつては --files-tree-w でツリー列幅に揃えていたが、ツリー列は
+              react-resizable-panels でユーザーが動かせるようになったため固定幅は廃止した
+              (ヘッダーは内容ぶんの幅で流れる) */}
+          <div className="tile-header-lead">
+            <span className="tile-drag-handle" title={t('tile.dragHint')}>
+              <GripVertical />
+            </span>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className="tile-view-trigger"
+                  title={`${t(current.labelKey)} — ${t('tile.switchViewTooltip')}`}
+                >
+                  <CurrentIcon />
+                  <ChevronDown className="tile-view-chevron" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
+                {VIEWS.map(({ view, labelKey, Icon }) => (
+                  <DropdownMenuItem key={view} onSelect={() => actions.setView(leaf.id, view)}>
+                    <Icon />
+                    {t(labelKey)}
+                    {view === 'term' && ptyCount > 0 && (
+                      <span className="tile-tab-count">{ptyCount}</span>
+                    )}
+                    {view === 'chat' && chatCount > 0 && (
+                      <span className="tile-tab-count">{chatCount}</span>
+                    )}
+                    {leaf.view === view && <Check className="ml-auto text-primary" />}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {!tabsInBar && leaf.sessions.length > 0 && (
+              <span className="tile-tab-count">{leaf.sessions.length}</span>
+            )}
+            {!tabsInBar && termStatus && <StatusBadge status={termStatus} dot />}
+            <span
+              className="tile-bar-slot tile-bar-slot-lead"
+              ref={(el) => {
+                if (!el) return;
+                const key = leaf.id + LEAD_SLOT_SUFFIX;
+                setSlot(key, el);
+                return () => clearSlot(key, el);
+              }}
+            />
+          </div>
+          {/* メインゾーン: パネル側 (FilesTab 等) が createPortal でヘッダー UI を
+              差し込むスロット。TilePane は remount 自由なため、登録はストア経由 */}
           <span
-            className="tile-bar-slot tile-bar-slot-lead"
+            className="tile-bar-slot"
             ref={(el) => {
               if (!el) return;
-              const key = leaf.id + LEAD_SLOT_SUFFIX;
-              setSlot(key, el);
-              return () => clearSlot(key, el);
+              setSlot(leaf.id, el);
+              return () => clearSlot(leaf.id, el);
             }}
           />
-        </div>
-        {/* メインゾーン: パネル側 (FilesTab 等) が createPortal でヘッダー UI を
-            差し込むスロット。TilePane は remount 自由なため、登録はストア経由 */}
-        <span
-          className="tile-bar-slot"
-          ref={(el) => {
-            if (!el) return;
-            setSlot(leaf.id, el);
-            return () => clearSlot(leaf.id, el);
-          }}
-        />
-        <span className="tile-actions">
-          <button
-            className="icon-btn"
-            title={t('tile.splitRightTooltip')}
-            onClick={() => actions.split(leaf.id, 'row')}
-          >
-            <span className="codicon codicon-split-horizontal" />
-          </button>
-          <button
-            className="icon-btn"
-            title={t('tile.splitDownTooltip')}
-            onClick={() => actions.split(leaf.id, 'column')}
-          >
-            <span className="codicon codicon-split-vertical" />
-          </button>
-          <button className="icon-btn" title={t('tile.closeTitle')} onClick={() => void close()}>
-            <span className="codicon codicon-close" />
-          </button>
-        </span>
+          <span className="tile-actions">
+            <button
+              className="icon-btn tile-split-btn"
+              title={t('tile.splitRightTooltip')}
+              onClick={() => actions.split(leaf.id, 'row')}
+            >
+              <span className="codicon codicon-split-horizontal" />
+            </button>
+            <button
+              className="icon-btn tile-split-btn"
+              title={t('tile.splitDownTooltip')}
+              onClick={() => actions.split(leaf.id, 'column')}
+            >
+              <span className="codicon codicon-split-vertical" />
+            </button>
+            <button
+              className="icon-btn"
+              title={t('tile.minimizeTooltip')}
+              onClick={() => actions.minimize(leaf.id)}
+            >
+              <span className="codicon codicon-chrome-minimize" />
+            </button>
+            <button
+              className="icon-btn"
+              title={maximized ? t('tile.restoreTooltip') : t('tile.maximizeTooltip')}
+              onClick={() => actions.toggleMaximize(leaf.id)}
+            >
+              <span className={`codicon ${maximized ? 'codicon-screen-normal' : 'codicon-screen-full'}`} />
+            </button>
+            <button className="icon-btn" title={t('tile.closeTitle')} onClick={() => void close()}>
+              <span className="codicon codicon-close" />
+            </button>
+          </span>
+          </>
+        )}
       </header>
-      <div className="tile-body" ref={adoptHost} />
+      <div className="tile-body" ref={adoptHost} hidden={minimized} />
       {/* ドロップ先オーバーレイ: ドラッグ中のみタイル全面を覆い、5 ゾーン
           (上下左右 = 分割挿入 / 中央 = 位置交換) のインジケーターを出す。
           全面で dragover を受けるので xterm/Monaco がイベントを奪うことはない */}

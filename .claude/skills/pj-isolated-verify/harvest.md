@@ -269,3 +269,28 @@
   到達確認を挟むだけ。untrusted を既定に戻すわけではない)
 - result: 到達確認 → untrusted 駆動へ切り替えて 14 項目 PASS。フォーカスを奪っていないことは
   `document.activeElement` で別途アサートし、untrusted 化で失われる観測を補った。
+
+## 013: 可視ペインへのスコープ限定と、成果物との突き合わせを罠に足す
+
+- date: 2026-09-17
+- context: 競合解決の 3 画面マージエディターを CDP で検証中、
+  `document.querySelector('.conflict-marker-count')` / `.conflict-actions-bar button.primary`
+  が **DOM 順 1 枚目 = 非アクティブで `display:none` のまま常駐している別ファイルのペイン**を
+  掴んだ。そちらは直前に解決済みでボタンが有効だったため押下が通り、
+  「✓ 保存してステージしました」という**偽の合格**が出た。画面だけを見ていれば PASS で
+  終わっていたが、`git status --porcelain=v2` が `u AA` のままで作業ツリーにマーカーが
+  残っていたことから発覚した。CodeLens の漏れ検査でも同じ構造で偽 PASS を踏みかけた
+  (隠れたタブの Monaco はそもそもレンズを描画しないので、数えると必ず 0 になる)。
+- change: 罠 28 を追加。Why = prontella は**ステートフルなタブを display:none で常駐させる**
+  設計 (DiffTabsPane) を採っており、「画面に 1 つしかないはず」の前提が構造的に成り立たない。
+  How = 測る前に `getBoundingClientRect().height > 0` で可視ルートを 1 枚選び、
+  以降の全セレクターをその配下に限定する / **UI の成功表示を合格判定に使わず**、
+  成果物の実状態 (`git status --porcelain=v2`・ファイル内容) と突き合わせて初めて PASS にする。
+  **012 の「罠リストへ足さない」判断は踏襲しない** — あれは手順 5 の条項が片側しか
+  書いていなかったのが原因だったのに対し、今回は**この製品の DOM 構造を知らないと
+  避けられない**性質のもので、手順の一般条項に書いても同じ取り違えを防げない。
+- supersedes: —
+- result: 可視ペインに限定して測り直し、a.txt / added.txt とも正しいペインで解決 →
+  `git merge --continue` 成功・ツリー clean まで確認。CodeLens の漏れ検査も
+  可視の FilesTab (1302x268) で同じマーカー入り `a.txt` を開き、lens 0 / 競合ペイン 1 を
+  実測して初めて結論になった。全ステップで新規コンソールエラー 0。

@@ -55,6 +55,17 @@ describe('ScreenMirror', () => {
     m.dispose();
   });
 
+  it('reports OSC 0 / OSC 2 titles', async () => {
+    const m = new ScreenMirror(40, 5, 10);
+    const seen: string[] = [];
+    m.onTitleChange((t) => seen.push(t));
+    m.write(`${ESC}]0;shell\x07`);
+    m.write(`${ESC}]2;Claude — running tests\x1b\\`);
+    await snapshot(m);
+    expect(seen).toEqual(['shell', 'Claude — running tests']);
+    m.dispose();
+  });
+
   it('ignores writes and snapshots after dispose', async () => {
     const m = new ScreenMirror(40, 5, 10);
     m.dispose();

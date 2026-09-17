@@ -39,6 +39,7 @@ const ACTIVITY_FLUSH_MS = 250; // activity 変化の broadcastEvent 合体窓
 const CARRY_MAX = 400; // stripped chars carried over to match across chunk splits
 const FLUSH_MS = 16; // ws 'data' broadcast coalescing window (~1 frame)
 const MAX_PENDING = 64 * 1024; // chars; burst guard — flush immediately past this
+const MAX_TITLE_CHARS = 120; // OSC タイトルの上限 (タブに収まらない長さは切る)
 
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]/g;
@@ -357,6 +358,9 @@ export class PtyManager {
     };
     this.sessions.set(session.id, session);
 
+    // アプリが OSC 0/2 で名乗ったタイトルを採用する (既定は cwd 名 / 'Claude Code')。
+    session.mirror.onTitleChange((title) => this.setTitle(session, title));
+
     metrics.event('session', { kind: 'pty', open: 1 }, { sid: id, cwd: session.cwd, claude: run === 'claude' });
     proc.onData((data) => this.onData(session, data));
     proc.onExit(() => {
@@ -521,6 +525,17 @@ export class PtyManager {
     // 巻き込まれないよう、表示内容の変化は別経路で配信する。
     if (changed) this.scheduleActivityPublish(session);
     return true;
+  }
+
+  /**
+   * 端末が名乗ったタイトルを反映する。TUI は進捗をタイトルに出して高頻度で
+   * 書き換えるので、配信は activity と同じ窓で合体させる。
+   */
+  private setTitle(session: Session, raw: string): void {
+    const title = raw.trim().replace(/\s+/g, ' ').slice(0, MAX_TITLE_CHARS);
+    if (!title || title === session.title || session.exited) return;
+    session.title = title;
+    this.scheduleActivityPublish(session);
   }
 
   /**

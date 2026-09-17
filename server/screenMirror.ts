@@ -43,6 +43,17 @@ export class ScreenMirror {
     this.term.write(data);
   }
 
+  /**
+   * OSC 0 / OSC 2 でアプリが名乗った端末タイトルを受け取る。Claude Code の
+   * ように進捗をタイトルへ出す TUI がいるので、鏡がすでにパースしている値を
+   * そのまま使う (中継用に別のパーサーを足さない)。
+   */
+  onTitleChange(cb: (title: string) => void): void {
+    this.term.onTitleChange((title) => {
+      if (!this.disposed) cb(title);
+    });
+  }
+
   resize(cols: number, rows: number): void {
     if (this.disposed) return;
     if (this.term.cols === cols && this.term.rows === rows) return;

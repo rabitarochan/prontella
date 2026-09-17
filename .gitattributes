@@ -1,0 +1,4 @@
+# .editorconfig はエディターにしか効かない。git の checkout / commit での改行変換は
+# core.autocrlf (= 開発者ごとの設定) が握っていて、Git for Windows の system 設定は
+# 既定で true。ここで固定してリポジトリー側を唯一の正にする。
+* text=auto eol=lf

@@ -2309,9 +2309,70 @@ button.statusbar-item:hover:not(:disabled) {
 .conflict-chip-actions {
   gap: 4px;
 }
+
+/* 3 画面マージエディター: 上段 (Current | Incoming) / ドラッグ可能な境界 / 下段 (Result)。
+   行サイズは React 側のインラインスタイル (gridTemplateRows) が持つ。
+   react-resizable-panels を使わない理由は ConflictResolvePane の onDividerDown を参照。 */
+.conflict-split {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 100%;
+}
+.conflict-split-top {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 0;
+  overflow: hidden;
+}
+.conflict-side,
+.conflict-result {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.conflict-side + .conflict-side {
+  border-left: 1px solid var(--border);
+}
+.conflict-side-head {
+  flex: none;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.conflict-side-body {
+  flex: 1;
+  min-height: 0;
+}
+.conflict-divider {
+  background: var(--border);
+  cursor: row-resize;
+  touch-action: none;
+}
+.conflict-divider:hover {
+  background: var(--blue);
+}
 .conflict-editor-host {
   flex: 1;
   min-height: 0;
+}
+
+/* 結果ペインの競合範囲ハイライト (ConflictResolvePane の conflictDecorations)。
+   Monaco の行の上に重ねるので、文字が読めるよう十分に薄い色を使う。 */
+.conflict-block-ours {
+  background: color-mix(in srgb, var(--green) 14%, transparent);
+}
+.conflict-block-theirs {
+  background: color-mix(in srgb, var(--blue) 14%, transparent);
+}
+.conflict-marker-line {
+  background: color-mix(in srgb, var(--yellow) 18%, transparent);
 }
 .conflict-actions-bar {
   display: flex;

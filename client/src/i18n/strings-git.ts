@@ -476,6 +476,24 @@ export const GIT_STRINGS = {
     en: '{n} unresolved conflicts remain',
   },
   'conflict.resolvedButton': { ja: '解決済み (保存してステージ)', en: 'Resolved (save and stage)' },
+  // 3 画面マージエディター (上段 2 ペイン + 下段の結果ペイン)
+  'conflict.paneCurrent': { ja: 'Current (ours) — 共通祖先からの変更', en: 'Current (ours) — changes from base' },
+  'conflict.paneIncoming': {
+    ja: 'Incoming (theirs) — 共通祖先からの変更',
+    en: 'Incoming (theirs) — changes from base',
+  },
+  'conflict.paneResult': { ja: 'Result — 保存される内容', en: 'Result — what gets saved' },
+  'conflict.stagesUnavailable': {
+    ja: 'この競合の index stage (:1/:2/:3) は読めません (解決済み、またはバイナリー)',
+    en: 'Index stages (:1/:2/:3) are unavailable (already resolved, or binary).',
+  },
+  'conflict.lensTakeOurs': { ja: 'Current を取り込む', en: 'Take Current' },
+  'conflict.lensTakeTheirs': { ja: 'Incoming を取り込む', en: 'Take Incoming' },
+  'conflict.lensTakeBoth': { ja: '両方', en: 'Take Both' },
+  'conflict.splitDividerTooltip': {
+    ja: 'ドラッグで上下の比率を変更 (上まで畳むと 1 画面)',
+    en: 'Drag to resize (collapse the top for a single pane)',
+  },
 
   // ---- StashDiffPane ----
   'stashdiff.noDiff': { ja: '差分はありません (tracked な変更なし)', en: 'No diff (no tracked changes).' },

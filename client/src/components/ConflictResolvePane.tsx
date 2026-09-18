@@ -42,16 +42,23 @@ const EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOptions = {
 };
 
 // 上段 2 ペインは横幅が半分しかないので **inline (unified) 差分**にする。
-// hideUnchangedRegions で無関係な行を畳み、「このサイドが base から何を変えたか」だけが見える。
+//
+// hideUnchangedRegions は **立てない**: 実ファイル (1331 行・競合ブロック 1 個で 682 行) で
+// 測ると Incoming 側が丸ごと「293 hidden lines」に畳まれ、コードが 1 行も見えなかった。
+// 競合解決では変更行そのものより **前後の文脈** が判断材料なので、畳むと用を成さない。
+// renderOverviewRuler は立てる: 長いファイルでは変更箇所がスクロールバー側に出ないと、
+// どこに差分があるか当てずっぽうでスクロールすることになる。
 const SIDE_DIFF_OPTIONS: monaco.editor.IDiffEditorConstructionOptions = {
   readOnly: true,
   renderSideBySide: false,
-  fontSize: 12,
+  // 結果ペイン (EDITOR_OPTIONS) と**同じ文字サイズ**にする。ここだけ小さくすると行高が
+  // 変わり、px でのスクロール同期が 3 ペインで行としてズレる (実測で踏んだ)。
+  fontSize: 13,
   minimap: { enabled: false },
   scrollBeyondLastLine: false,
   automaticLayout: true,
-  renderOverviewRuler: false,
-  hideUnchangedRegions: { enabled: true },
+  renderOverviewRuler: true,
+  hideUnchangedRegions: { enabled: false },
 };
 
 const SIDE_LABEL_KEYS: Record<ConflictSide, StringKey> = {
@@ -123,29 +130,83 @@ function ensureLensProvider() {
   monaco.languages.registerCodeLensProvider('*', lensProvider);
 }
 
-/** 競合ブロックの背景ハイライト。ours 範囲 / theirs 範囲 / マーカー行を塗り分ける。 */
+// 結果ペインのスクロールエリア (overview ruler) に出す色。Monaco の ruler は CSS クラスでは
+// なく色の実値を要求するので、ここだけ styles.css のトークンと二重に持つ (--green / --blue /
+// --yellow のライトテーマ実測値)。背景ハイライトより濃くしないとスクロールバー幅では見えない。
+const RULER_COLORS = {
+  ours: 'rgba(5, 150, 105, 0.7)',
+  theirs: 'rgba(37, 99, 235, 0.7)',
+  marker: 'rgba(217, 119, 6, 0.85)',
+} as const;
+
+/** 競合ブロックの背景ハイライト。ours 範囲 / theirs 範囲 / マーカー行を塗り分ける。
+ *  同じ範囲を overview ruler にも出して、長いファイルでも競合位置がスクロールバーで分かるようにする。 */
 function conflictDecorations(blocks: ConflictBlock[]): monaco.editor.IModelDeltaDecoration[] {
   const decorations: monaco.editor.IModelDeltaDecoration[] = [];
-  const wholeLine = (from: number, to: number, className: string) => {
+  const wholeLine = (from: number, to: number, className: string, rulerColor: string) => {
     if (to < from) return;
     decorations.push({
       range: new monaco.Range(from, 1, to, 1),
-      options: { isWholeLine: true, className },
+      options: {
+        isWholeLine: true,
+        className,
+        overviewRuler: { color: rulerColor, position: monaco.editor.OverviewRulerLane.Full },
+      },
     });
   };
   for (const block of blocks) {
     // ConflictBlock の行番号は 0-based、Monaco は 1-based。範囲 [start, end) は
     // 1-based の閉区間 [start+1, end] になる。
-    wholeLine(block.oursStart + 1, block.oursEnd, 'conflict-block-ours');
-    wholeLine(block.theirsStart + 1, block.theirsEnd, 'conflict-block-theirs');
+    wholeLine(block.oursStart + 1, block.oursEnd, 'conflict-block-ours', RULER_COLORS.ours);
+    wholeLine(block.theirsStart + 1, block.theirsEnd, 'conflict-block-theirs', RULER_COLORS.theirs);
     // マーカー行: '<<<<<<<' / '=======' / '>>>>>>>' と、diff3 なら '|||||||'。
     // sepLine は 0-based で theirsStart - 1 → 1-based では theirsStart。
     // baseLine は 0-based で oursEnd → 1-based では oursEnd + 1 (hasBase のときだけ)。
     const markers = [block.startLine + 1, block.theirsStart, block.endLine + 1];
     if (block.hasBase) markers.push(block.oursEnd + 1);
-    for (const line of markers) wholeLine(line, line, 'conflict-marker-line');
+    for (const line of markers) wholeLine(line, line, 'conflict-marker-line', RULER_COLORS.marker);
   }
   return decorations;
+}
+
+/**
+ * 3 ペインのスクロール同期。register(editor) で参加させ、返る関数で外す。
+ *
+ * **絶対スクロール位置 (px) で合わせる**。上段 2 枚は同じ base を土台にした差分なので、
+ * これで行がそのまま対応する (ここが同期のいちばんの用途)。結果ペインは競合マーカーの
+ * 行数だけ長いのでズレるが、競合の外は同じ内容なので実用上は追随する。行単位で厳密に
+ * 揃えるには 3-way 整列が要るので、そこまではやらない。
+ */
+function useScrollSync() {
+  const editorsRef = useRef(new Set<monaco.editor.ICodeEditor>());
+  // setScrollTop は同期的に相手の onDidScrollChange を呼ぶので、再入を止めないと往復する。
+  const busyRef = useRef(false);
+
+  return useCallback((editor: monaco.editor.ICodeEditor) => {
+    const sub = editor.onDidScrollChange((e) => {
+      if (busyRef.current || (!e.scrollTopChanged && !e.scrollLeftChanged)) return;
+      busyRef.current = true;
+      try {
+        for (const other of editorsRef.current) {
+          if (other === editor) continue;
+          // **既に同じ位置なら触らない**のが収束条件。3 ペインは行数が違う (結果ペインは
+          // 競合マーカーの分だけ長い) ので、末尾付近では setScrollTop が clamp され、
+          // 相手が別の値で鳴き返す。busyRef だけだと (Monaco が鳴き返しを次フレームに
+          // 回した場合) その往復が止まらず、入力が通らなくなる。この等値判定があれば
+          // clamp 後の値で 1 往復して必ず収束する。
+          if (e.scrollTopChanged && other.getScrollTop() !== e.scrollTop) other.setScrollTop(e.scrollTop);
+          if (e.scrollLeftChanged && other.getScrollLeft() !== e.scrollLeft) other.setScrollLeft(e.scrollLeft);
+        }
+      } finally {
+        busyRef.current = false;
+      }
+    });
+    editorsRef.current.add(editor);
+    return () => {
+      sub.dispose();
+      editorsRef.current.delete(editor); // 上段は非アクティブで unmount されるので必須
+    };
+  }, []);
 }
 
 export default function ConflictResolvePane({
@@ -244,10 +305,19 @@ export default function ConflictResolvePane({
 
   const blocks = useMemo(() => parseConflictBlocks(draft), [draft]);
 
+  const registerScroll = useScrollSync();
+
   const onMount: OnMount = (editor) => {
     editorRef.current = editor;
     setEditorReady(true);
   };
+
+  // 結果ペインは常時マウントなので、登録も 1 回だけでよい (上段は ConflictSideDiff 側で
+  // マウント/アンマウントのたびに出入りする)。
+  useEffect(() => {
+    if (!editorReady || !editorRef.current) return;
+    return registerScroll(editorRef.current);
+  }, [editorReady, registerScroll]);
 
   const onChange = (value: string | undefined) => setDraft(value ?? '');
 
@@ -437,6 +507,7 @@ export default function ConflictResolvePane({
             modified={pair.modified}
             language={languageFor(path)}
             theme={monacoThemeName(resolvedTheme)}
+            registerScroll={registerScroll}
             // ours / theirs でモデルの URI を分ける (DiffEditor は path を持たないので
             // key で作り分けるだけ。取り違えの実害は無いが再マウント境界を明示する)。
             key={kind}
@@ -581,17 +652,23 @@ function ConflictSideDiff({
   modified,
   language,
   theme,
+  registerScroll,
 }: {
   original: string;
   modified: string;
   language: string | undefined;
   theme: string;
+  /** スクロール同期への参加。返り値の関数をアンマウント時に必ず呼ぶ。 */
+  registerScroll: (editor: monaco.editor.ICodeEditor) => () => void;
 }) {
   const editorRef = useRef<MonacoDiffEditor | null>(null);
+  const unregisterRef = useRef<(() => void) | null>(null);
   useEffect(
     () => () => {
       const editor = editorRef.current;
       editorRef.current = null;
+      unregisterRef.current?.(); // 購読を外すのはモデルを壊す前
+      unregisterRef.current = null;
       if (!editor) return; // フェッチ完了前のアンマウントでは未生成
       const models = editor.getModel();
       editor.setModel(null); // 先に widget からモデルを外す
@@ -613,6 +690,9 @@ function ConflictSideDiff({
       options={SIDE_DIFF_OPTIONS}
       onMount={(editor) => {
         editorRef.current = editor;
+        // inline (renderSideBySide: false) では見えているのは modified 側のエディター。
+        // original 側は非表示なので同期に入れても意味がない。
+        unregisterRef.current = registerScroll(editor.getModifiedEditor());
       }}
     />
   );

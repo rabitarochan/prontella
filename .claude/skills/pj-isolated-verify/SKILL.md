@@ -49,7 +49,18 @@ description: prontella の動作検証を、原則としてユーザーの実設
      同じ接続でキーイベントは正常だった)。`document.addEventListener('click', …, true)` で
      受信を確かめ、届かないなら `el.click()`(untrusted)へ落として**その旨を所見に明記する**。
      フォーカス依存でない判定(状態・描画・永続化)なら untrusted でも結論は変わらない。
-     Radix の DropdownMenu だけは `pointerdown` で開くので `PointerEvent` を合成する
+     Radix の DropdownMenu だけは `pointerdown` で開くので `PointerEvent` を合成する。
+     **到達数が 0 なら、untrusted へ落とす前にまず `Page.bringToFront` +
+     `Emulation.setFocusEmulationEnabled({enabled:true})` を入れて測り直す** —
+     CDP の入力が **trusted も untrusted も同時に全滅**する状態が実在する
+     (2026-09-18 実測。`keydown` 到達数 0 → 復旧後 12)。untrusted という出口も塞がるため、
+     この一段が無いと手順に忠実であるほど製品を疑う方向へ逸れる。
+     判定材料として **`document.hasFocus()` は使えない** — 入力が死んでいる間もずっと
+     `true` を返す。生死は必ず自前のリスナー(`window.addEventListener('keydown', …, true)`)
+     の到達数で見る。また **`Input.*` は ack が返らないことがある**ので
+     (`mouseWheel` で実測) 送信は必ずタイムアウトで囲む。囲まないとスクリプトが永久に待つ。
+     **入力が死んでいた間に取った観測値は全部捨てる** — 残骸を根拠に結論を書くと、
+     正常な実装を「壊れている」と報告することになる(実際に一度書きかけた)
    - アプリ内ダイアログは React 製(ConfirmDialog)なので native dialog 処理は不要。native の
      `prompt`/`confirm` が残る箇所(Sidebar の worktree 削除等)は `Page.handleJavaScriptDialog` で
      先に応答を仕込む
@@ -267,6 +278,16 @@ description: prontella の動作検証を、原則としてユーザーの実設
     **必ず可視状態で**行う(でないと常に PASS する)。
     併せて **UI の成功表示を合格判定にしない** — 成果物の実状態
     (`git status --porcelain=v2`・作業ツリーのファイル内容)と突き合わせて初めて PASS にする
+29. **仮想化エディター(Monaco)の表示位置は画面座標で測る**: 「見えている先頭行」を
+    `.line-numbers` の `style.top` で並べ替えて求めると偽の値になる。同梱 Monaco では
+    **`style.top` が空文字**でソートが効かず、DOM 順(ノード再利用順)の先頭を拾うため。
+    さらに **sticky scroll ウィジェット**が囲みスコープの行番号を本文の外に描くので、
+    除外しないと常に同じ行を拾う。2026-09-18 実測では、この 2 つで
+    「3 ペインとも 37 行目で一致」という**偽の合格**が出た(実際は上段 62 / 結果 353)。
+    `.lines-content` の `style.top` を scrollTop 代わりに読む手も、3 枚が揃って `-1096px` を
+    返しながら表示行が違うという矛盾値を返した。**行番号ノードを
+    `getBoundingClientRect().top` と対にして並べ替え、sticky scroll を除外する**。
+    値が矛盾したら DOM 由来の推測を捨て、`Page.captureScreenshot` の目視を正とする
 
 ## フィクスチャの作り方
 

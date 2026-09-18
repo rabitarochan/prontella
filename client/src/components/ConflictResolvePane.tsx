@@ -51,8 +51,10 @@ const EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOptions = {
 const SIDE_DIFF_OPTIONS: monaco.editor.IDiffEditorConstructionOptions = {
   readOnly: true,
   renderSideBySide: false,
-  // 結果ペイン (EDITOR_OPTIONS) と**同じ文字サイズ**にする。ここだけ小さくすると行高が
-  // 変わり、px でのスクロール同期が 3 ペインで行としてズレる (実測で踏んだ)。
+  // 結果ペイン (EDITOR_OPTIONS) と**同じ文字サイズ**にする。スクロール同期を px で
+  // やっている以上、行高が等しくないと「同じ px = 同じ行」が成り立たないため。
+  // (検証中に 3 行のズレを見たが、結果ペイン側の `<<<<<<<` マーカー行と CodeLens の
+  //  view zone でも説明がつくので、文字サイズが原因だとまでは切り分けていない。)
   fontSize: 13,
   minimap: { enabled: false },
   scrollBeyondLastLine: false,

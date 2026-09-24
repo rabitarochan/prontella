@@ -131,7 +131,9 @@ export const api = {
   diffPair: (
     dir: string,
     path: string,
-    scope: 'worktree' | 'staged' | 'commit',
+    // conflict-ours / conflict-theirs は競合中の index stage (:1 base vs :2 ours / :3 theirs)。
+    // ConflictResolvePane の 3 画面マージエディター上段で使う。
+    scope: 'worktree' | 'staged' | 'commit' | 'conflict-ours' | 'conflict-theirs',
     opts: { hash?: string; origPath?: string; encoding?: string } = {},
   ) => {
     const params = new URLSearchParams({ dir, path, scope });

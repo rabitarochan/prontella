@@ -240,6 +240,9 @@ export default function DiffTabsPane({
                     dir={dir}
                     leafId={leafId}
                     path={tab.path}
+                    // 上段の DiffEditor 2 枚を非アクティブ時にアンマウントさせる
+                    // (下段の結果ペインは編集状態を持つので常駐のまま)。
+                    active={activeKey === tab.key}
                     onResolved={() => {
                       notifySiblings(tab.path, tab.key);
                       onStatusChanged?.();

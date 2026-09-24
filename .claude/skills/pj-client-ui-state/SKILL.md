@@ -416,3 +416,22 @@ description: prontella のクライアント(React / Monaco / xterm / react-arbo
 - **検証**: 残留ポーリングの不在は `window.setTimeout` をラップして**delay === 10 の呼び出し数**を
   数える(削除済みファイル / 祖先ごと消えたパスへ切り替えて 0 のままを確認。2026-09-10 実測)。
   祖先の展開は仮想化のせいで `rows` が当てにならないので、**スクロールを 0 へ戻してから**見る
+
+## 21. Monaco の言語機能プロバイダーは登録した画面だけに効かない — モデル URI で絞る
+
+- **症状**: 特定のペインにだけ CodeLens (やホバー・コードアクション) を足したのに、
+  無関係なファイルパネルのエディターにも同じものが出る。タブを開くほど同じ項目が重複する
+- **機構**: `monaco.languages.register*Provider(selector, …)` は**言語セレクター単位の
+  グローバル登録**で、対象は「そのエディター」ではなく**そのプロセスの全モデル**。
+  `'*'` はアプリ中の全エディターに発火する。コンポーネント内で呼ぶ書き方は局所的に見えるが
+  作用範囲はプロセス全体で、マウントごとに登録すれば provider が積み上がる
+- **打ち手**: provider は**モジュールスコープで 1 回だけ**張り、
+  `Map<model.uri.toString(), …>` のレジストリーに載っているモデルにだけ結果を返す
+  (それ以外は空配列)。ペインはマウント時に登録し、**アンマウント時に必ず delete** する。
+  コマンドも `monaco.editor.registerCommand` で 1 個だけ張り、URI を引数で運んで
+  レジストリー経由でディスパッチする。`CodeLensProvider.onDidChange` は `IEvent<this>` なので
+  `Emitter<CodeLensProvider>` を作り **provider 自身を fire** する (`ConflictResolvePane` が実装例)
+- **検証**: **漏れ先の画面で・同じパスのファイルを・可視状態で**開いて数える。prontella は
+  `${leafId}-conflict/${path}` と `${leafId}/${path}` で URI を分けているので、同じファイルを
+  両方で同時に開くのが最も厳しい対照になる。隠れたタブ (`display:none`) で数えると Monaco が
+  そもそも描画しないので**必ず 0 になり偽の PASS** が出る (2026-09-17 実測。pj-isolated-verify 罠 28)

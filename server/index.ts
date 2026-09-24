@@ -526,6 +526,14 @@ app.get('/api/git/diff-pair', asyncHandler(async (req, res) => {
       modifiedBuf = null; // deleted from the working tree
       modifiedMissing = true;
     }
+  } else if (scope === 'conflict-ours' || scope === 'conflict-theirs') {
+    // 競合中の index stage: :1=base(共通祖先) / :2=ours(HEAD) / :3=theirs(MERGE_HEAD)。
+    // ConflictResolvePane の 3 画面マージエディター上段 (base→ours / base→theirs の diff) 用。
+    // blob 同士の比較なので filters は立てない (scope=staged と同じ理由。git.ts の
+    // getFileAtRevBuffer のコメントに実測値)。add/add 競合では :1 が無く null → 全行追加
+    // として表示される (期待どおり)。競合が解決済みなら :2/:3 とも null で両側空になる。
+    originalBuf = await git.getFileAtRevBuffer(dir, ':1', origPath);
+    modifiedBuf = await git.getFileAtRevBuffer(dir, scope === 'conflict-ours' ? ':2' : ':3', filePath);
   } else {
     throw new Error(`不正な scope です: ${scope}`);
   }

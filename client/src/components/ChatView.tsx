@@ -13,8 +13,9 @@ import { useT, type StringKey } from '../i18n';
 import { useSubmitKey, type SubmitKeyMode } from '../layout/submitKeyStore';
 import { openLiveSocket, type LinkPhase, type LiveSocket } from '../lib/liveSocket';
 import { metrics } from '../metrics/core';
-import { highlightInto } from '../markdown/highlight';
+import { decorateCodeBlocks } from '../markdown/highlight';
 import { renderMarkdownToFragment } from '../markdown/render';
+import { useTheme } from '../theme/themeStore';
 import type {
   AgentChatEvent,
   AgentModelInfo,
@@ -83,6 +84,8 @@ function fmtTokens(n: number): string {
 
 /** assistant 本文の markdown 描画。renderMarkdownToFragment がセキュリティ境界。 */
 function MarkdownBlock({ source, root }: { source: string; root: string }) {
+  // mermaid の図は配色を SVG に焼き込むので、テーマが変わったら描き直す必要がある。
+  const resolvedTheme = useTheme((s) => s.resolved);
   const mount = useCallback(
     (node: HTMLDivElement | null) => {
       if (!node) return;
@@ -92,11 +95,9 @@ function MarkdownBlock({ source, root }: { source: string; root: string }) {
         allowExternalImages: false,
       });
       node.replaceChildren(fragment);
-      for (const codeEl of node.querySelectorAll<HTMLElement>('code[data-lang]')) {
-        void highlightInto(codeEl, codeEl.textContent ?? '', codeEl.dataset.lang ?? '');
-      }
+      void decorateCodeBlocks(node, resolvedTheme);
     },
-    [source, root],
+    [source, root, resolvedTheme],
   );
   // render.ts の <a> は例外なく href="#"。素通りさせると SPA ごとリロードされる
   const onClick = (e: MouseEvent<HTMLDivElement>) => {

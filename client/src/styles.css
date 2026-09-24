@@ -3925,6 +3925,22 @@ button.statusbar-item:hover:not(:disabled) {
   font-size: 0.85em;
   white-space: pre;
 }
+/* ```mermaid フェンスを描画した図 (markdown/mermaid.ts が pre.md-code と差し替える)。
+   配色は mermaid が SVG 内の <style> に焼き込むので、ここでは寸法だけ面倒を見る。 */
+.md-preview-body .md-mermaid {
+  margin: 0.8em 0;
+  text-align: center;
+  overflow-x: auto;
+}
+.md-preview-body .md-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+/* 構文エラー等で作図できなかったコードブロック。ソースはそのまま読めるので、
+   図にならなかったことだけ控えめに示す (理由は title 属性に入っている)。 */
+.md-preview-body pre.md-mermaid-failed {
+  border-color: color-mix(in srgb, var(--yellow) 45%, var(--border));
+}
 .md-preview-body img {
   max-width: 100%;
   border-radius: 4px;

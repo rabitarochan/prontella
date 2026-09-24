@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { useT } from '../i18n';
 import { renderMarkdownToFragment } from '../markdown/render';
-import { highlightInto } from '../markdown/highlight';
+import { decorateCodeBlocks } from '../markdown/highlight';
 import { isMarkdownPath } from '../markdown/paths';
+import { useTheme } from '../theme/themeStore';
 
 export interface MarkdownPreviewProps {
   /** ワークツリー絶対パス。相対リンク・画像パス解決 (renderMarkdownToFragment) にそのまま渡す。 */
@@ -58,6 +59,9 @@ export default function MarkdownPreview({
   scrollPositions,
 }: MarkdownPreviewProps) {
   const t = useT();
+  // mermaid の図は配色を SVG に焼き込むので、テーマが変わったら描き直す必要がある
+  // (monaco の colorize は CSS クラス経由なので従来は購読不要だった)。
+  const resolvedTheme = useTheme((s) => s.resolved);
   // 外部画像を読み込むかどうかはこのコンポーネントの state のみで持ち、永続化しない
   // (タブの寿命と揃える。既定は false — 起動直後・切替直後は一切の外部通信を発生させない)。
   const [allowExternalImages, setAllowExternalImages] = useState(false);
@@ -90,8 +94,8 @@ export default function MarkdownPreview({
   // effect の deps が変化したかどうかに関係なく) 必ず描き直すことで、この 2 経路
   // (「内容が変わった」「ノードが張り直された」) のどちらが起きても描画が保証される
   // 構造にする。
-  const latestRef = useRef({ source, path, root, allowExternalImages });
-  latestRef.current = { source, path, root, allowExternalImages };
+  const latestRef = useRef({ source, path, root, allowExternalImages, resolvedTheme });
+  latestRef.current = { source, path, root, allowExternalImages, resolvedTheme };
   // 直前に描画した内容の署名。同じ内容を同じノードに対して二重に描画しない
   // (ref コールバックと effect の両方から呼ばれるため、素朴にやると同一コミット内で
   // 2 回描画されることがある)。ノードが新規 (子要素が空) なら署名が一致していても
@@ -101,7 +105,7 @@ export default function MarkdownPreview({
   const renderBody = useCallback((container: HTMLDivElement) => {
     const cur = latestRef.current;
     if (cur.source === null) return;
-    const sig = JSON.stringify([cur.path, cur.root, cur.allowExternalImages, cur.source]);
+    const sig = JSON.stringify([cur.path, cur.root, cur.allowExternalImages, cur.resolvedTheme, cur.source]);
     if (lastRenderedSigRef.current === sig && container.childNodes.length > 0) return;
     lastRenderedSigRef.current = sig;
 
@@ -116,15 +120,13 @@ export default function MarkdownPreview({
     // 出て後から色が付く、という体験を優先する)。
     container.scrollTop = scrollPositions.get(cur.path) ?? 0;
 
-    // コードブロックの着色 (T7)。render.ts が data-lang 属性を付けたものだけが対象
-    // (info string が無いフェンスは data-lang 自体が無く、ここでも対象外 = プレーン表示)。
-    // 各要素の書き込み可否は highlightInto 自身が el.isConnected で判定するので、
-    // ここでは待たずに撃ちっぱなしでよい(進行描画: プレーンが即出て直後に着色される)。
-    for (const codeEl of container.querySelectorAll<HTMLElement>('code[data-lang]')) {
-      const lang = codeEl.dataset.lang ?? '';
-      const code = codeEl.textContent ?? '';
-      void highlightInto(codeEl, code, lang);
-    }
+    // コードブロックの後処理 (T7 の着色 + mermaid の作図)。render.ts が data-lang 属性を
+    // 付けたものだけが対象 (info string が無いフェンスは data-lang 自体が無く、ここでも
+    // 対象外 = プレーン表示)。各要素の書き込み可否は後処理側が el.isConnected で判定するので、
+    // ここでは待たずに撃ちっぱなしでよい(進行描画: プレーンが即出て直後に着色/作図される)。
+    // ponytail: 図の描画で本文の高さが伸びるぶん、長い文書では復元したスクロール位置が
+    // ずれる。待っている間のユーザー操作と競合するので、実害が出るまで再調整はしない。
+    void decorateCodeBlocks(container, cur.resolvedTheme);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // 中身は常に latestRef 経由で最新値を読むので、identity を固定してよい
 
@@ -132,7 +134,7 @@ export default function MarkdownPreview({
   // showBody が true の間ずっと同一なので、ここでは deps 変化時にだけ描き直す。
   useEffect(() => {
     if (bodyRef.current) renderBody(bodyRef.current);
-  }, [source, path, root, allowExternalImages, renderBody]);
+  }, [source, path, root, allowExternalImages, resolvedTheme, renderBody]);
 
   // body の DOM ノードが (再) マウントされた瞬間に必ず描き直す ref コールバック。
   // identity を renderBody 同様固定することで、親の無関係な再レンダーのたびに

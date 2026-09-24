@@ -107,6 +107,66 @@ export function resolvedBlockLines(
   return [...ours, ...theirs];
 }
 
+/** 結果ペインで塗り分ける区分。ours/theirs の内容行と、マーカー行そのもの。 */
+export type ConflictHighlightKind = 'ours' | 'theirs' | 'marker';
+
+/** 装飾する行範囲。**1-based の閉区間** (Monaco の Range と同じ数え方)。 */
+export interface ConflictHighlight {
+  startLine: number;
+  endLine: number;
+  kind: ConflictHighlightKind;
+}
+
+/**
+ * 競合ブロックを「塗る行範囲」に変換する。ConflictResolvePane はこの結果を Monaco の
+ * IModelDeltaDecoration へ写すだけにして、**行番号の計算をここに閉じ込める**。
+ * ConflictBlock は 0-based・半開区間 [start, end)、Monaco は 1-based・閉区間なので
+ * 変換を間違えても型では捕まらない — テストで守れる形にしておくための分離。
+ *
+ * マーカー行の導出もここでやる: `=======` は 0-based で theirsStart - 1 なので
+ * 1-based では theirsStart、diff3 の `|||||||` は 0-based で oursEnd なので
+ * 1-based では oursEnd + 1 になる。
+ * 共通祖先セクション (diff3 の `|||||||`〜`=======` の中身) は塗らない —
+ * resolvedBlockLines がどの kind でも採用しないため。
+ */
+export function conflictHighlights(blocks: ConflictBlock[]): ConflictHighlight[] {
+  const highlights: ConflictHighlight[] = [];
+  const push = (startLine: number, endLine: number, kind: ConflictHighlightKind) => {
+    if (endLine < startLine) return; // 片側が空の競合 (追加 vs 削除) では範囲が消える
+    highlights.push({ startLine, endLine, kind });
+  };
+  for (const block of blocks) {
+    push(block.oursStart + 1, block.oursEnd, 'ours');
+    push(block.theirsStart + 1, block.theirsEnd, 'theirs');
+    const markers = [block.startLine + 1, block.theirsStart, block.endLine + 1];
+    if (block.hasBase) markers.push(block.oursEnd + 1);
+    for (const line of markers) push(line, line, 'marker');
+  }
+  return highlights;
+}
+
+/** 結果ペインの CodeLens 1 個ぶん。`line` は 1-based (`<<<<<<<` の行)。 */
+export interface ConflictLens {
+  line: number;
+  blockIndex: number;
+  kind: ConflictResolveKind;
+}
+
+/**
+ * 競合ブロックごとに kinds ぶんの CodeLens を並べる。同じ行に出した lens は
+ * Monaco が ' | ' で 1 行にまとめるので、行はブロックの開始行に揃える。
+ * blockIndex はコマンドの引数としてそのまま運ばれるため、**blocks の添字と
+ * 一致していること**が置換対象の正しさを決める。
+ */
+export function conflictLenses(
+  blocks: ConflictBlock[],
+  kinds: readonly ConflictResolveKind[],
+): ConflictLens[] {
+  return blocks.flatMap((block, blockIndex) =>
+    kinds.map((kind) => ({ line: block.startLine + 1, blockIndex, kind })),
+  );
+}
+
 /**
  * ブロック 1 件を kind で解決した後のテキスト全体を返す純粋版(Monaco を介さない)。
  * ConflictResolvePane 本体は Monaco の pushEditOperations でブロック範囲だけを

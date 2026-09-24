@@ -3,10 +3,13 @@ import Editor, { DiffEditor, type MonacoDiffEditor, type OnMount } from '@monaco
 import * as monaco from 'monaco-editor';
 import { api } from '../api';
 import {
+  conflictHighlights,
+  conflictLenses,
   parseConflictBlocks,
   resolvedBlockLines,
   splitLines,
   type ConflictBlock,
+  type ConflictHighlightKind,
   type ConflictResolveKind,
 } from '../conflictBlocks';
 import { useT, type StringKey } from '../i18n';
@@ -100,18 +103,12 @@ const lensProvider: monaco.languages.CodeLensProvider = {
     const uri = model.uri.toString();
     const entry = lensRegistry.get(uri);
     if (!entry) return { lenses: [], dispose: () => {} };
-    const lenses = entry.blocks.flatMap((block, index) =>
-      LENS_KINDS.map((kind) => ({
-        // '<<<<<<<' 行の上に出す。同じ行の lens は Monaco が ' | ' で 1 行にまとめる。
-        range: {
-          startLineNumber: block.startLine + 1,
-          startColumn: 1,
-          endLineNumber: block.startLine + 1,
-          endColumn: 1,
-        },
-        command: { id: APPLY_COMMAND_ID, title: entry.labels[kind], arguments: [uri, index, kind] },
-      })),
-    );
+    // 行と blockIndex の対応は conflictLenses (テスト済みの純関数) が持つ。
+    // ここは Monaco の形へ写し、コマンドの引数に URI を添えるだけ。
+    const lenses = conflictLenses(entry.blocks, LENS_KINDS).map(({ line, blockIndex, kind }) => ({
+      range: { startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: 1 },
+      command: { id: APPLY_COMMAND_ID, title: entry.labels[kind], arguments: [uri, blockIndex, kind] },
+    }));
     return { lenses, dispose: () => {} };
   },
 };
@@ -141,34 +138,27 @@ const RULER_COLORS = {
   marker: 'rgba(217, 119, 6, 0.85)',
 } as const;
 
-/** 競合ブロックの背景ハイライト。ours 範囲 / theirs 範囲 / マーカー行を塗り分ける。
- *  同じ範囲を overview ruler にも出して、長いファイルでも競合位置がスクロールバーで分かるようにする。 */
+const HIGHLIGHT_CLASSES: Record<ConflictHighlightKind, string> = {
+  ours: 'conflict-block-ours',
+  theirs: 'conflict-block-theirs',
+  marker: 'conflict-marker-line',
+};
+
+/** 競合ブロックの背景ハイライト。行範囲の計算は conflictHighlights (テスト済みの純関数)
+ *  に任せ、ここは Monaco の形へ写すだけ。overview ruler にも同じ範囲を出して、
+ *  長いファイルでも競合位置がスクロールバーで分かるようにする。 */
 function conflictDecorations(blocks: ConflictBlock[]): monaco.editor.IModelDeltaDecoration[] {
-  const decorations: monaco.editor.IModelDeltaDecoration[] = [];
-  const wholeLine = (from: number, to: number, className: string, rulerColor: string) => {
-    if (to < from) return;
-    decorations.push({
-      range: new monaco.Range(from, 1, to, 1),
-      options: {
-        isWholeLine: true,
-        className,
-        overviewRuler: { color: rulerColor, position: monaco.editor.OverviewRulerLane.Full },
+  return conflictHighlights(blocks).map(({ startLine, endLine, kind }) => ({
+    range: new monaco.Range(startLine, 1, endLine, 1),
+    options: {
+      isWholeLine: true,
+      className: HIGHLIGHT_CLASSES[kind],
+      overviewRuler: {
+        color: RULER_COLORS[kind],
+        position: monaco.editor.OverviewRulerLane.Full,
       },
-    });
-  };
-  for (const block of blocks) {
-    // ConflictBlock の行番号は 0-based、Monaco は 1-based。範囲 [start, end) は
-    // 1-based の閉区間 [start+1, end] になる。
-    wholeLine(block.oursStart + 1, block.oursEnd, 'conflict-block-ours', RULER_COLORS.ours);
-    wholeLine(block.theirsStart + 1, block.theirsEnd, 'conflict-block-theirs', RULER_COLORS.theirs);
-    // マーカー行: '<<<<<<<' / '=======' / '>>>>>>>' と、diff3 なら '|||||||'。
-    // sepLine は 0-based で theirsStart - 1 → 1-based では theirsStart。
-    // baseLine は 0-based で oursEnd → 1-based では oursEnd + 1 (hasBase のときだけ)。
-    const markers = [block.startLine + 1, block.theirsStart, block.endLine + 1];
-    if (block.hasBase) markers.push(block.oursEnd + 1);
-    for (const line of markers) wholeLine(line, line, 'conflict-marker-line', RULER_COLORS.marker);
-  }
-  return decorations;
+    },
+  }));
 }
 
 /**

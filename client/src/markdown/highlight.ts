@@ -11,8 +11,9 @@
  */
 import * as monaco from 'monaco-editor';
 import { monacoThemeName } from '../theme/monacoTheme';
-import { useTheme } from '../theme/themeStore';
+import { useTheme, type ResolvedTheme } from '../theme/themeStore';
 import DOMPurify from 'dompurify';
+import { renderMermaidInto } from './mermaid';
 
 // フェンスの情報文字列 (```ts / ```bash など) → monaco の言語 ID への逆引き索引。
 // monaco-setup.ts の languageFor はファイル名/拡張子からの解決であり、フェンストークン
@@ -166,4 +167,24 @@ export async function highlightInto(el: HTMLElement, code: string, lang: string)
   });
   if (!el.isConnected) return; // sanitize 自体は同期だが、直前の判定と対にして書き込み直前にも確認する
   el.replaceChildren(fragment);
+}
+
+/**
+ * サニタイズ済みフラグメント内のコードブロックをまとめて後処理する唯一の入り口。
+ * `render.ts` の fence レンダラーが付けた `data-lang` を見て、mermaid なら図に描き換え、
+ * それ以外は従来どおり colorize する。
+ *
+ * 呼び出し元は MarkdownPreview (ファイルペイン) と ChatView (アシスタント本文) の 2 箇所。
+ * 以前はこの走査ループが両方に重複していたため、片方にだけ分岐を足すともう片方が
+ * 取り残される形になっていた — 分岐はここ 1 箇所にだけ置く。
+ */
+export async function decorateCodeBlocks(root: ParentNode, theme: ResolvedTheme): Promise<void> {
+  const jobs: Promise<void>[] = [];
+  for (const codeEl of root.querySelectorAll<HTMLElement>('code[data-lang]')) {
+    const lang = codeEl.dataset.lang ?? '';
+    const code = codeEl.textContent ?? '';
+    const pre = lang.toLowerCase() === 'mermaid' ? codeEl.closest('pre') : null;
+    jobs.push(pre ? renderMermaidInto(pre, code, theme) : highlightInto(codeEl, code, lang));
+  }
+  await Promise.all(jobs);
 }

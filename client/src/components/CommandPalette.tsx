@@ -6,6 +6,7 @@ import { findWorktree, resolveAndSelect, useAgentEvents, waitingSessions } from 
 import { useLang, useT } from '../i18n';
 import { enterMonitor, enterVnc, exitMonitor, exitVnc } from '../layout/mainMode';
 import { useMonitorView } from '../layout/monitorViewStore';
+import { useScratchTerm } from '../layout/scratchTermStore';
 import { getActiveWorktreeCommands } from '../layout/worktreeCommands';
 import { useVncView } from '../layout/vncViewStore';
 import { setMetricsTier, useMetricsConfig } from '../metrics';
@@ -118,6 +119,13 @@ export default function CommandPalette({
       });
     }
     // Rail のトグルと同じ経路 (layout/mainMode): 入るときは選択を外し、他方のモードを抜ける
+    all.push({
+      id: 'cmd:scratch',
+      section: 'commands',
+      icon: 'terminal',
+      label: t('scratch.paletteToggle'),
+      run: () => useScratchTerm.getState().toggle(),
+    });
     all.push({
       id: 'cmd:monitor',
       section: 'commands',

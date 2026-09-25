@@ -12,7 +12,7 @@ import * as files from './files.js';
 import * as diffEncoding from './diffEncoding.js';
 import * as search from './search.js';
 import { buildPartialPatchLines, checkApplyHunksRequest, hashHunk, splitDiffHunks, type ApplyDirection } from './diffPatch.js';
-import { PtyManager, aggregateStatus, conptyMode } from './pty.js';
+import { PtyManager, aggregateStatus, conptyMode, homeDir } from './pty.js';
 import { ensureHookAssets, warnIfHooksBlocked } from './hooks.js';
 import { AgentSessionManager } from './agentSession.js';
 import { attachEvents, eventsSocketCount } from './sessionEvents.js';
@@ -369,7 +369,9 @@ app.get('/api/repos/:id/branches', asyncHandler(async (req, res) => {
 // ---- settings --------------------------------------------------------------
 
 app.get('/api/settings', (_req, res) => {
-  res.json({ worktreeLayout: config.getWorktreeLayout() });
+  // homeDir は読み取り専用の追加情報 (PUT の対象外)。どの worktree にも属さない
+  // 一時ターミナルの cwd をクライアントが知るために要る。
+  res.json({ worktreeLayout: config.getWorktreeLayout(), homeDir });
 });
 
 // 400 を返す必要があるため asyncHandler(常に 500) ではなく自前ラップにする(pj-git-route 定石)。

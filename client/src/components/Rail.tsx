@@ -1,6 +1,7 @@
 import { useLang, useT } from '../i18n';
 import { enterMonitor, enterVnc, exitMonitor, exitVnc } from '../layout/mainMode';
 import { useMonitorView } from '../layout/monitorViewStore';
+import { useScratchTerm } from '../layout/scratchTermStore';
 import { useVncView } from '../layout/vncViewStore';
 import { useMetricsConfig } from '../metrics';
 import { useDeck } from '../store';
@@ -20,6 +21,8 @@ export default function Rail({ onOpenPalette }: { onOpenPalette: () => void }) {
   const setLang = useLang((s) => s.setLang);
   const vncActive = useVncView((s) => s.active);
   const monitorActive = useMonitorView((s) => s.active);
+  const scratchOpen = useScratchTerm((s) => s.open);
+  const toggleScratch = useScratchTerm((s) => s.toggle);
   const metricsTier = useMetricsConfig((s) => s.tier);
 
   return (
@@ -29,6 +32,13 @@ export default function Rail({ onOpenPalette }: { onOpenPalette: () => void }) {
           <span className="rail-logo-mark">◆</span> Prontella
         </button>
         <span className="rail-title-actions">
+          <button
+            className={`icon-btn${scratchOpen ? ' monitor-btn-active' : ''}`}
+            title={t('scratch.railTooltip')}
+            onClick={toggleScratch}
+          >
+            <span className="codicon codicon-terminal" />
+          </button>
           <button
             className={`icon-btn${monitorActive ? ' monitor-btn-active' : ''}`}
             title={t('monitor.railTooltip')}

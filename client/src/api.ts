@@ -84,7 +84,7 @@ export const api = {
   setRepoFlags: (id: string, flags: { pinned?: boolean } | { archived?: boolean }) =>
     patch<{ repos: RepoMeta[] }>(`/api/repos/${id}`, flags),
 
-  settings: () => request<{ worktreeLayout: WorktreeLayout }>('/api/settings'),
+  settings: () => request<{ worktreeLayout: WorktreeLayout; homeDir: string }>('/api/settings'),
   saveSettings: (worktreeLayout: WorktreeLayout) =>
     put<{ worktreeLayout: WorktreeLayout }>('/api/settings', { worktreeLayout }),
 

@@ -10,10 +10,12 @@ import CommandPalette from './components/CommandPalette';
 import DeckView from './components/DeckView';
 import QuickOpenModal from './components/QuickOpenModal';
 import Rail from './components/Rail';
+import ScratchTermModal from './components/ScratchTermModal';
 import TerminalMonitorView from './components/TerminalMonitorView';
 import VncView from './components/VncView';
 import WorktreeView from './components/WorktreeView';
 import { useMonitorView } from './layout/monitorViewStore';
+import { useScratchTerm } from './layout/scratchTermStore';
 import { useVncView } from './layout/vncViewStore';
 import { usePageActivity, wirePageActivity } from './lib/pageActivity';
 import { createPollLoop } from './lib/pollLoop';
@@ -44,6 +46,9 @@ export default function App() {
   const setVncActive = useVncView((s) => s.setActive);
   const monitorActive = useMonitorView((s) => s.active);
   const setMonitorActive = useMonitorView((s) => s.setActive);
+  const scratchVisited = useScratchTerm((s) => s.visited);
+  const scratchHome = useScratchTerm((s) => s.homeDir);
+  const toggleScratch = useScratchTerm((s) => s.toggle);
   useSearchHotkeys(setQuickOpenTarget);
 
   // Ctrl+K = グローバルコマンドパレット。Ctrl+P (ファイル検索) と同じ流儀:
@@ -61,9 +66,30 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, []);
 
+  // Ctrl+@ = 一時ターミナル (どの workspace にも属さない、ホームで開く PTY)。
+  // VS Code の統合ターミナルと同じ打鍵で、US 配列の Ctrl+` も同じ動作にする。
+  //
+  // Ctrl+K と違い **ターミナルフォーカス中でも横取りする**: フォーカスが
+  // xterm にある状態から閉じられる必要があるため (VS Code も横取りする)。
+  // Shift は弾かない — US 配列では '@' に Shift が要る。
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.altKey || e.metaKey) return;
+      if (e.key !== '@' && e.key !== '`') return;
+      e.preventDefault();
+      e.stopPropagation();
+      toggleScratch();
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [toggleScratch]);
+
   useEffect(() => {
     connectAgentEvents();
     wirePageActivity();
+    // ホームディレクトリーを先に引いておく (一時ターミナルの cwd。ベル経由で
+    // ホームのセッションへ飛ぶ経路でもパスが要る)。
+    void useScratchTerm.getState().loadHomeDir();
     // 非表示 = 停止 (サーバー側の git.exe 起動を抑える) / 可視かつフォーカスあり = POLL_MS /
     // 可視だがフォーカスなし (別ウィンドウで眺めているだけ) = POLL_UNFOCUSED_MS。
     //
@@ -154,6 +180,9 @@ export default function App() {
       {worktreeTarget && (
         <AddWorktreeModal repo={worktreeTarget} onClose={() => setWorktreeTarget(null)} />
       )}
+      {/* 一時ターミナル: 一度開いたら閉じてもアンマウントしない (xterm の接続と
+          スクロールバックを保つ)。main の外に置くので worktree 切替でも生き残る。 */}
+      {scratchVisited && scratchHome && <ScratchTermModal homeDir={scratchHome} />}
     </div>
   );
 }

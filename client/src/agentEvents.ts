@@ -4,6 +4,7 @@ import { t } from './i18n';
 import { chime, desktopNotify } from './notify';
 import { openLiveSocket } from './lib/liveSocket';
 import { resolveAgentStatus } from './agentStatus';
+import { useScratchTerm } from './layout/scratchTermStore';
 import { locateSession, normPath } from './sessionLocate';
 import { useDeck } from './store';
 import type { ActiveRepo, AgentStatus, TerminalSession, Worktree } from './types';
@@ -113,6 +114,13 @@ export function waitingSessions(sessions: Record<string, TerminalSession>): Term
  * 表示する) ため、失敗の表示自体はここでは行わない。
  */
 export async function resolveAndSelect(cwd: string): Promise<boolean> {
+  // どの worktree にも属さないホームのセッション (一時ターミナル) は
+  // locateSession が解決できないので、先にモーダルを開く経路へ振る。
+  const home = useScratchTerm.getState().homeDir;
+  if (home && normPath(cwd) === normPath(home)) {
+    useScratchTerm.getState().setOpen(true);
+    return true;
+  }
   const location = locateSession(useDeck.getState().repos, cwd);
   if (location?.kind === 'worktree') {
     useDeck.getState().select({ repoId: location.repo.id, worktreePath: location.worktree.path });

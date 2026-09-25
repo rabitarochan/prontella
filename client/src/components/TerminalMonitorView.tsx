@@ -3,6 +3,7 @@ import { resolveAndSelect, sessionLabel, useAgentEvents } from '../agentEvents';
 import { api } from '../api';
 import { useT } from '../i18n';
 import { exitMonitor } from '../layout/mainMode';
+import { useScratchTerm } from '../layout/scratchTermStore';
 import {
   MONITOR_LEAF_ID,
   MONITOR_TERM_ROOT,
@@ -32,6 +33,13 @@ import TermPanel from './TermPanel';
  */
 export default function TerminalMonitorView() {
   const t = useT();
+  // 一時ターミナルのモーダルはモニターと排他ではないので、同じセッションが
+  // このページ内に 2 枚 (モニター + モーダル) 同時に描かれうる。PTY の winsize は
+  // 1 つなので両方が主張すると後勝ちになり、モーダルを閉じたあともモニターの
+  // ターミナルが縮んだまま残る (実測 2026-09-24: 187x55 → 190x42 のまま固定。
+  // pj-client-ui-state §19 と同型)。覆われている間は非表示扱いにして主張を降り、
+  // 閉じた瞬間に XTermView の可視性 effect が自分のサイズを取り戻す。
+  const scratchOpen = useScratchTerm((s) => s.open);
   const sessions = useAgentEvents((s) => s.sessions);
   // ラベルは cwd → 登録済み worktree の解決結果なので、repos の読み込みでも再計算する
   const repos = useDeck((s) => s.repos);
@@ -117,7 +125,7 @@ export default function TerminalMonitorView() {
             sessions={ptySessions}
             ownedIds={ownedIds}
             activeId={activeId}
-            visible
+            visible={!scratchOpen}
             onActivate={setActiveId}
             onCloseTab={async (id) => {
               await api.killTerminal(id);

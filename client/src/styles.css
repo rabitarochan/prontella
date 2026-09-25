@@ -4203,6 +4203,39 @@ button.statusbar-item:hover:not(:disabled) {
   min-height: 0;
 }
 
+/* ---- 一時ターミナル (モーダル: ホームディレクトリーの PTY) ----
+   中身のヘッダー / 本文はモニターのクラス (.monitor-header* / .monitor-body) を
+   そのまま使い、ここでは外枠 (暗幕 + 中央パネル) だけを定義する。 */
+
+.scratch-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 55%);
+  /* ダークでは地 (--background: #0c0a09) もモーダル本文 (xterm の黒) も既に暗いので、
+     黒幕を濃くしても手前と奥が分離しない。輝度以外の手掛かり = ぼかしで奥行きを出す。
+     ponytail: 背後で TUI が描き続けていると毎フレーム再合成になる。体感に
+     響いたら blur を外し、下の縁 (--surface-active) とシャドウだけで見せる */
+  backdrop-filter: blur(3px);
+}
+
+.scratch-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(1400px, 85vw);
+  height: 80vh;
+  overflow: hidden;
+  background: var(--bg-panel);
+  /* 縁は --border ではなく 1 段明るい面色。ダークの --border (#292524) は
+     地 (#0c0a09) に対してほぼ見えず、モーダルの輪郭が消える */
+  border: 1px solid var(--surface-active);
+  border-radius: 8px;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 55%);
+}
+
 .vnc-screen-wrap {
   position: relative;
   flex: 1;

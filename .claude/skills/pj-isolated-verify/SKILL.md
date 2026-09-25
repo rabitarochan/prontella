@@ -15,7 +15,12 @@ description: prontella の動作検証を、原則としてユーザーの実設
 - **例外: 実ユーザー環境そのものが検証対象のときは USERPROFILE を差し替えない**。
   差し替えると `os.homedir()` だけでなく**子プロセスに渡す env や PATH の再構成結果まで
   変わる**ため、検証が対象を測れなくなる(例: `pj-child-env` の「OS 既定環境を正しく
-  再構成できているか」の検証。2026-08-28 実測)。この場合は**ポート分離だけを維持**し、
+  再構成できているか」の検証。2026-08-28 実測)。**子プロセスがユーザープロフィール下の
+  キャッシュや設定を読む場合も同じ**(例: 言語サーバー Roslyn は MSBuild/NuGet 経由で
+  `~/.nuget/packages` を読む。隔離 home ではプロジェクトは読めても参照が解決されず、補完/ホバーが
+  null になり**製品の不具合と区別がつかない**。2026-09-12 実測)。`.nuget` / `.npm` / `.cargo` /
+  `.m2` のような**ホーム直下のツールキャッシュに依存する子プロセス**を起動する機能は、隔離 home では
+  検証できないと最初から判断する。この場合は**ポート分離だけを維持**し、
   代わりに **(a) 実データへの書き込み経路を事前に洗い出す**(`~/.prontella/config.json`、
   `agent-sessions/`、`hook-settings.json`)**(b) 終了後に残骸の不在とファイルの健全性を確認して
   報告する**。隔離を外したことは所見に明記する
@@ -267,7 +272,21 @@ description: prontella の動作検証を、原則としてユーザーの実設
     `WindowsPowerShell\Modules\PSReadLine\2.0.0` が解決され、「変更前も予測は出なかった」
     という**誤った結論**が出かけた(実際の pwsh は PS7 のパスが先頭に来る)。
     再現が「効かなかった」ときは、まず自分の再現手順の順序を疑う
-28. **同じ UI が複数枚同時にマウントされている画面では `querySelector` が隠れている方を掴む**:
+28. **claude-in-chrome で Monaco を判定するときの 4 つの偽陰性**(2026-09-12 実測、LSP フェーズ 2):
+    (a) `.monaco-editor .view-line` の **DOM 順は行順ではない**(仮想化で使い回す)。行の内容を読む
+    ときは `style.top` でソートし、末尾行は `slice(-n)` で取らない。(b) `computer.type` に **改行は
+    入れられない**(`"\nconst"` は丸ごと落ちる)。改行は `key: "Enter"` で送る。(c) MCP のタブは
+    `document.visibilityState` が `hidden` のことがあり、**window `focus` を dispatch しても
+    外部変更の取り込み(ディスク突き合わせ)が走らない**(`visibilityState !== 'visible'` で早期
+    return)。`Object.defineProperty(document, 'visibilityState', { value: 'visible' })` で強制してから
+    `focus` を送ると製品と同じ経路が走る。(d) 波線 (`.squiggly-*`) やウィジェットの有無を
+    **変更直後の 1 回**で読むと、まだ描かれていない/消えていない瞬間を拾う。判定は「2〜3 秒
+    待って再読」+ hover の文言(マーカーの本文)で裏を取る。**加えて、数万行のファイルを
+    モデルに載せた直後は `Page.captureScreenshot` が 30 秒でタイムアウトする**(レンダラーが
+    トークナイズ中)。スクリーンショットが要るなら数秒待ってからもう一度撮る。
+    ドロップダウン項目を `find` の ref で押すと `onSelect` が**2 回**走ることがある
+    (`$/prontella/restart` が 2 回飛んだ)— 「1 回で正しく動くか」の判定には座標クリックを使う
+29. **同じ UI が複数枚同時にマウントされている画面では `querySelector` が隠れている方を掴む**:
     prontella はステートフルなタブ(競合タブ・未保存の差分タブ)を非アクティブでも
     `display:none` で常駐させる(DiffTabsPane)。`document.querySelector('.conflict-marker-count')`
     は **DOM 順の 1 枚目** = 別ファイルの隠れたペインを返すので、そこのボタンを押して
@@ -278,7 +297,7 @@ description: prontella の動作検証を、原則としてユーザーの実設
     **必ず可視状態で**行う(でないと常に PASS する)。
     併せて **UI の成功表示を合格判定にしない** — 成果物の実状態
     (`git status --porcelain=v2`・作業ツリーのファイル内容)と突き合わせて初めて PASS にする
-29. **仮想化エディター(Monaco)の表示位置は画面座標で測る**: 「見えている先頭行」を
+30. **仮想化エディター(Monaco)の表示位置は画面座標で測る**: 「見えている先頭行」を
     `.line-numbers` の `style.top` で並べ替えて求めると偽の値になる。同梱 Monaco では
     **`style.top` が空文字**でソートが効かず、DOM 順(ノード再利用順)の先頭を拾うため。
     さらに **sticky scroll ウィジェット**が囲みスコープの行番号を本文の外に描くので、

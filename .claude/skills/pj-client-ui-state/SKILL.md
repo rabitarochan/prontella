@@ -417,7 +417,38 @@ description: prontella のクライアント(React / Monaco / xterm / react-arbo
   数える(削除済みファイル / 祖先ごと消えたパスへ切り替えて 0 のままを確認。2026-09-10 実測)。
   祖先の展開は仮想化のせいで `rows` が当てにならないので、**スクロールを 0 へ戻してから**見る
 
-## 21. Monaco の言語機能プロバイダーは登録した画面だけに効かない — モデル URI で絞る
+## 21. Monaco が内部で使う汎用クラス名をグローバル CSS に定義しない
+
+- **症状**: 補完ウィジェットに候補が「ある」(aria-label は正しい) のにアイコンしか見えず、
+  ラベルの文字が出ない。ライト/ダーク両方
+- **機構**: Monaco の補完行は内側に `.contents > .main > .left / .right` という**短い汎用クラス名**を
+  使う。アプリの `styles.css` に `<main className="main">` 用の `.main { display:flex;
+  flex-direction:column; … }` があり、Monaco の行内の `.main` にも当たって縦積みになった。
+  アイコンが行幅いっぱいに伸び、ラベルが 2 行目に落ちて行高 18px で切れる
+- **打ち手**: アプリ側のクラスを `.app-main` に改名。**`.main` / `.left` / `.right` / `.contents` /
+  `.label` / `.icon` のような 1 語の汎用名をグローバルに定義しない**(Monaco・xterm・
+  react-arborist は内部でそういう名前を使い、どれも `.monaco-editor` 等の接頭辞で守られていない)。
+  既存の名前を使うなら接頭辞付き (`.app-main`) か、アプリのルート要素以下に閉じるセレクターにする
+- **切り分け**: 「候補はあるが見えない」は LSP/プロバイダーではなく CSS。`.suggest-icon` の幅と
+  `.monaco-icon-label` の `getBoundingClientRect` を測ると、行の外に出ているのが一目で分かる
+  (2026-09-12 実測: アイコン幅 414px、ラベル top が行 top + 17px)
+
+## 22. Portal の中に命令的 UI (Monaco) を作るなら useRef ではなくコールバック ref
+
+- **症状**: Radix `Dialog` の中で `useEffect` + `useRef` で `monaco.editor.create(hostRef.current)` を
+  呼ぶモーダル (ExternalFileModal) が、タイトルだけ出て中身が空。コンソールにエラーは無い
+- **機構**: Radix の `Portal` は**最初のコミットでは子を描画しない** (`useLayoutEffect` で
+  `mounted` を立ててから `createPortal` する)。そのため親コンポーネントの effect が走った時点で
+  `hostRef.current` は null → 早期 return → deps (`[model, line]`) は変わらないので**二度と走らない**。
+  2 回目のコミットで要素は生まれるが、effect を起こす人がいない
+- **打ち手**: 要素を **コールバック ref で state に持ち** (`const [host, setHost] = useState<HTMLDivElement|null>(null)`、
+  `<div ref={setHost} />`)、effect の deps に `host` を入れる。Portal 配下・条件付き描画・
+  `Presence` 配下の要素に命令的 API を当てるときは常にこの形にする
+- **切り分け**: React fiber の hooks を辿り、effect フックの `destroy` が undefined なら「早期 return
+  したまま」= 要素が無かった時に走った証拠 (2026-09-12 実測)。`document.querySelector` で要素が
+  今あることは、effect 実行時にあったことを意味しない
+
+## 23. Monaco の言語機能プロバイダーは登録した画面だけに効かない — モデル URI で絞る
 
 - **症状**: 特定のペインにだけ CodeLens (やホバー・コードアクション) を足したのに、
   無関係なファイルパネルのエディターにも同じものが出る。タブを開くほど同じ項目が重複する
@@ -434,4 +465,4 @@ description: prontella のクライアント(React / Monaco / xterm / react-arbo
 - **検証**: **漏れ先の画面で・同じパスのファイルを・可視状態で**開いて数える。prontella は
   `${leafId}-conflict/${path}` と `${leafId}/${path}` で URI を分けているので、同じファイルを
   両方で同時に開くのが最も厳しい対照になる。隠れたタブ (`display:none`) で数えると Monaco が
-  そもそも描画しないので**必ず 0 になり偽の PASS** が出る (2026-09-17 実測。pj-isolated-verify 罠 28)
+  そもそも描画しないので**必ず 0 になり偽の PASS** が出る (2026-09-17 実測。pj-isolated-verify 罠 29)

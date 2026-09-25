@@ -3,6 +3,7 @@ import fuzzysort from 'fuzzysort';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { useT } from '../i18n';
+import { searchWorkspaceSymbols, symbolIcon, type SymbolHit } from '../lsp/symbols';
 import { getCachedFileList, refreshFileList, type QuickOpenTarget } from '../search/fileListCache';
 import type { FilesTabHandle } from '../search/registry';
 import { fileIcon } from './FileTree';
@@ -45,10 +46,16 @@ function highlightIndexes(text: string, indexes: ReadonlySet<number>): ReactNode
   return parts;
 }
 
+const SYMBOL_DEBOUNCE_MS = 150;
+
 /**
  * Ctrl+P Quick Open: fuzzy file name search over the target worktree.
  * Stale-while-revalidate — the cached list renders instantly, a background
  * refetch swaps in fresh data.
+ *
+ * `#` 接頭辞はワークスペースのシンボル検索 (LSP `workspace/symbol`、VS Code と同じ流儀)。
+ * ファイル一覧と違いキャッシュは持たず、入力を 150ms デバウンスして LS に投げる (tsgo は 1ms、
+ * Roslyn は初回 4 秒・以後 30〜150ms)。
  */
 export default function QuickOpenModal({
   target,
@@ -63,6 +70,26 @@ export default function QuickOpenModal({
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const symbolMode = query.startsWith('#');
+  const symbolQuery = symbolMode ? query.slice(1).trim() : '';
+  const [symbols, setSymbols] = useState<{ query: string; hits: SymbolHit[] } | null>(null);
+
+  useEffect(() => {
+    if (!symbolMode || !symbolQuery) {
+      setSymbols(null);
+      return;
+    }
+    let alive = true;
+    const timer = setTimeout(() => {
+      void searchWorkspaceSymbols(target.root, symbolQuery).then((hits) => {
+        if (alive) setSymbols({ query: symbolQuery, hits });
+      });
+    }, SYMBOL_DEBOUNCE_MS);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [symbolMode, symbolQuery, target.root]);
 
   useEffect(() => {
     let alive = true;
@@ -98,7 +125,8 @@ export default function QuickOpenModal({
     }));
   }, [entry, query, target]);
 
-  useEffect(() => setSelected(0), [items]);
+  const symbolHits = symbolMode && symbols?.query === symbolQuery ? symbols.hits : [];
+  useEffect(() => setSelected(0), [items, symbolHits]);
 
   useEffect(() => {
     listRef.current?.children[selected]?.scrollIntoView({ block: 'nearest' });
@@ -109,16 +137,23 @@ export default function QuickOpenModal({
     target.openFile(item.rel);
     onClose();
   };
+  const openSymbol = (hit: SymbolHit | undefined) => {
+    if (!hit) return;
+    target.openAtLine(hit.path, hit.line, hit.column);
+    onClose();
+  };
+  const count = symbolMode ? symbolHits.length : items.length;
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
-      if (items.length === 0) return;
+      if (count === 0) return;
       const delta = e.key === 'ArrowDown' ? 1 : -1;
-      setSelected((s) => (s + delta + items.length) % items.length);
+      setSelected((s) => (s + delta + count) % count);
     } else if (e.key === 'Enter') {
       if (e.nativeEvent.isComposing || e.keyCode === 229) return; // IME confirm
-      openItem(items[selected]);
+      if (symbolMode) openSymbol(symbolHits[selected]);
+      else openItem(items[selected]);
     } else if (e.key === 'Escape') {
       onClose();
     }
@@ -143,15 +178,44 @@ export default function QuickOpenModal({
           spellCheck={false}
         />
         <div className="max-h-[420px] overflow-y-auto p-1" ref={listRef}>
-          {!entry && (
+          {symbolMode && !symbolQuery && (
+            <div className="text-muted-foreground py-6 text-center text-sm">{t('files.symbolSearchHint')}</div>
+          )}
+          {symbolMode && symbolQuery && symbols?.query !== symbolQuery && (
             <div className="text-muted-foreground py-6 text-center text-sm">{t('common.loading')}</div>
           )}
-          {entry && items.length === 0 && (
+          {symbolMode && symbols?.query === symbolQuery && symbolHits.length === 0 && (
+            <div className="text-muted-foreground py-6 text-center text-sm">{t('files.noSymbolsFound')}</div>
+          )}
+          {symbolMode &&
+            symbolHits.map((hit, i) => (
+              <div
+                key={`${hit.path}:${hit.line}:${hit.column}:${hit.name}`}
+                className={cn(
+                  'flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm',
+                  i === selected && 'bg-accent text-accent-foreground',
+                )}
+                onClick={() => openSymbol(hit)}
+                onMouseEnter={() => setSelected(i)}
+                title={`${hit.path}:${hit.line}`}
+              >
+                <span className={`codicon codicon-${symbolIcon(hit.kind)} shrink-0 text-[14px]!`} />
+                <span className="shrink-0">{hit.name}</span>
+                {hit.containerName && <span className="text-muted-foreground shrink-0 text-xs">{hit.containerName}</span>}
+                <span className="text-muted-foreground truncate text-xs">
+                  {hit.path}:{hit.line}
+                </span>
+              </div>
+            ))}
+          {!symbolMode && !entry && (
+            <div className="text-muted-foreground py-6 text-center text-sm">{t('common.loading')}</div>
+          )}
+          {!symbolMode && entry && items.length === 0 && (
             <div className="text-muted-foreground py-6 text-center text-sm">
               {t('files.noFilesFound')}
             </div>
           )}
-          {items.map((item, i) => {
+          {!symbolMode && items.map((item, i) => {
             const name = basename(item.rel);
             const dirLen = item.rel.length - name.length; // includes the trailing '/'
             const { icon, color } = fileIcon(name);

@@ -26,7 +26,14 @@ import {
 import { useT, type StringKey } from '../i18n';
 import { isMarkdownPath } from '../markdown/paths';
 import { registerFilesTab, touchFilesTab, unregisterFilesTab } from '../search/registry';
+import { switchLspMode } from '../lsp';
+import { serverIdForPath } from '../lsp/languages';
+import { getLspSession } from '../lsp/session';
+import { useLspStatus } from '../lsp/useLspStatus';
+import { registerLspWorkspace, unregisterLspWorkspace } from '../lsp/workspaces';
+import type * as monaco from 'monaco-editor';
 import BlameModal from './BlameModal';
+import ExternalFileModal from './ExternalFileModal';
 import { useConfirm } from './ConfirmDialog';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import EditorStatusBar from './EditorStatusBar';
@@ -157,6 +164,8 @@ export default function FilesTab({
   const [fileMenu, setFileMenu] = useState<{ x: number; y: number; path: string; kind: 'file' | 'dir' } | null>(null);
   const [historyPath, setHistoryPath] = useState<string | null>(null);
   const [blamePath, setBlamePath] = useState<string | null>(null);
+  // 定義ジャンプ / 参照の着地先が root 外 (lib.dom.d.ts、Roslyn のメタデータ) のときの読み取り専用ビューアー
+  const [externalView, setExternalView] = useState<{ model: monaco.editor.ITextModel; line: number; column: number } | null>(null);
   const treeCtl = useRef<FileTreeHandle | null>(null);
 
   // ---- 永続化 --------------------------------------------------------------
@@ -754,9 +763,22 @@ export default function FilesTab({
       },
       showSearchPanel: () => showSearchPanelRef.current(),
     });
-    return () => unregisterFilesTab(id);
+    // 定義ジャンプの着地と通知 (client/src/lsp)。leafId 単位 — モデル URI の第 1 セグメントで引かれる
+    registerLspWorkspace(leafId, {
+      root,
+      openAtLine: (path, line, column) => openAtLineRef.current(path, line, column),
+      openExternal: (model, line, column) => setExternalView({ model, line, column }),
+      notify: (text) => {
+        entriesApi.setMessage(text);
+        setTimeout(() => entriesApi.setMessage(''), 2500);
+      },
+    });
+    return () => {
+      unregisterFilesTab(id);
+      unregisterLspWorkspace(leafId);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [root]);
+  }, [root, leafId]);
 
   // ---- ロード / root 切替 / 永続化 effect 群 --------------------------------
 
@@ -918,6 +940,10 @@ export default function FilesTab({
     activeEntry.file !== null &&
     !activeEntry.file.binary &&
     !activeEntry.file.tooLarge;
+
+  // ステータスバーはアクティブファイルの言語サーバーを出す (対象外の拡張子は TS 扱いで「内蔵」表示)
+  const lspServer = serverIdForPath(activeEntry?.path ?? '') ?? 'typescript';
+  const lspStatus = useLspStatus(root, lspServer);
 
   /** setMessage を一定時間で消す (save の成功メッセージと同じ寿命)。 */
   const flashMessage = (text: string) => {
@@ -1169,6 +1195,17 @@ export default function FilesTab({
               editor={activeEditor}
               activePath={activeEntry.path}
               file={activeEntry.file}
+              lsp={
+                lspStatus
+                  ? {
+                      ...lspStatus,
+                      server: lspServer,
+                      onRestart: () => getLspSession(root, lspServer).restart(),
+                      onTurnOff: () => void switchLspMode(lspServer === 'typescript' ? 'builtin' : 'off', lspServer),
+                      onUseLsp: () => void switchLspMode('lsp', lspServer),
+                    }
+                  : undefined
+              }
               onReloadWithEncoding={(encoding) => void reloadWithEncoding(encoding)}
               onSaveWithEncoding={(encoding, bom) => {
                 const target = activeGroupEditorKey();
@@ -1196,6 +1233,7 @@ export default function FilesTab({
         <FileHistoryModal dir={root} path={historyPath} onClose={() => setHistoryPath(null)} />
       )}
       {blamePath && <BlameModal dir={root} path={blamePath} onClose={() => setBlamePath(null)} />}
+      {externalView && <ExternalFileModal model={externalView.model} line={externalView.line} column={externalView.column} onClose={() => setExternalView(null)} />}
       {dialog}
     </div>
   );

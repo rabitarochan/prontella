@@ -287,7 +287,37 @@
   547→0)・検索パネル経由の遅延 reveal・削除済みパスでの `setTimeout(...,10)` 残留 0 を確認。
   純関数 `ancestorDirs` は `.ts` に切り出して vitest で守った(§0 の方針どおり)。
 
-## 013: 木の sizes を書き換えても画面に届かない — 動かすときの契約 (§17b)
+## 013: Monaco 内部の汎用クラス名とグローバル CSS の衝突 (§21)
+
+- date: 2026-09-12
+- context: LSP の補完を有効にしたユーザーから「補完ウィンドウの文字が見えない」報告。候補は
+  返っていて aria-label も正しく、当初は LSP の変換 (label の形) を疑ったが、要素の矩形を測ると
+  `.suggest-icon` が行幅いっぱいに伸び、ラベルが行の外に押し出されていた。原因はアプリの
+  グローバル `.main { flex-direction: column }` が Monaco の補完行内の `.main` にも当たっていたこと。
+  内蔵 TS の補完でも同じだったはずで、LSP は無関係。
+- change: §21 を追加。Why = Monaco / xterm / react-arborist は内部で 1 語の汎用クラス名を接頭辞
+  無しで使うため、アプリのグローバル定義が静かに混入する。How = アプリ側は接頭辞付き名か
+  ルート配下に閉じたセレクターにする。切り分けは矩形の実測 (見た目の症状からは原因が特定できない)。
+- supersedes: —
+- result: `.main` → `.app-main` の改名で解消 (2026-09-12)。
+
+## 014: Portal 配下の命令的 UI はコールバック ref で要素を state に持つ (§22)
+
+- date: 2026-09-13
+- context: LSP フェーズ 2 で root 外ファイルの読み取り専用ビューアー (ExternalFileModal) を
+  BlameModal と同じ Radix Dialog で作り、中に Monaco を `useEffect` + `useRef` で生成したところ、
+  タイトルだけ出て中身が空。エラーは出ず、`document.querySelector` では host 要素が存在した。
+  React fiber の effect フックを辿ると `destroy` が undefined (= 早期 return したまま) で、
+  Radix Portal が最初のコミットで子を描かない (`mounted` state を layout effect で立ててから
+  `createPortal`) ため、effect 実行時点で ref が null だったと分かった。
+- change: §22 を追加。Why = Portal / Presence / 条件付き描画の配下では「ref が付く」と「effect が
+  走る」の順序が保証されず、useRef + 固定 deps は初回に取り逃すと永久に再実行されない。
+  How = コールバック ref で要素を state に持ち effect の deps に入れる。切り分けは fiber の
+  effect フックの destroy の有無。
+- supersedes: —
+- result: コールバック ref に直して同じ操作でモーダルに Monaco が描画された (2026-09-12)。
+
+## 015: 木の sizes を書き換えても画面に届かない — 動かすときの契約 (§17b)
 
 - date: 2026-09-15
 - context: タイルの最小化 / 最大化と、3 つの分割木 (タイル / エディターグループ /
@@ -324,7 +354,7 @@
   §11 の符号反転は再発しなかった。純関数 (`equalizeSizesOf` / `collapsedExtent` /
   `toggleMinimize`) は `.ts` に置いて vitest 20 件で守った (§0 の方針どおり)。
 
-## 014: Monaco の言語機能プロバイダーは「登録した画面だけに効く」ではない
+## 016: Monaco の言語機能プロバイダーは「登録した画面だけに効く」ではない
 
 - date: 2026-09-17
 - context: 競合解決ペインを VS Code 風の 3 画面マージエディターに作り替える際、
@@ -335,7 +365,7 @@
   マウントごとに登録すれば provider が積み上がり、同じレンズがタブの枚数だけ重複する。
   この漏れは**型検査でもユニットテストでも原理的に捕まらない**(§0 のとおりクライアントの
   コンポーネントテストが無い)。
-- change: §21 を追加。Why = 登録の見た目(コンポーネント内・エディター 1 枚に紐づくよう
+- change: §23 を追加。Why = 登録の見た目(コンポーネント内・エディター 1 枚に紐づくよう
   読める)と実際の作用範囲(プロセス全体)が食い違うため、素直に書くと漏れる。
   How = provider は**モジュールスコープで 1 回だけ**張り、`Map<model.uri.toString(), …>`
   のレジストリーに載っているモデルにだけ結果を返す(それ以外は空配列) /

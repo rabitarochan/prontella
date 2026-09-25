@@ -14,6 +14,8 @@ export interface RepoConfig {
 
 interface DeckConfig {
   repos: RepoConfig[];
+  /** 言語サーバー設定。検証は server/lsp/registry.ts の checkLspConfig (vnc と同じ扱い)。 */
+  lsp?: unknown;
   [key: string]: unknown; // トップレベルの未知キーも loadConfig→saveConfig で往復させる
 }
 

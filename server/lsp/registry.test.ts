@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { checkLspConfig, findSolution, languageIdFor, resolveLaunch, serverIdFor, type ResolveEnv } from './registry.js';
+import { checkLspConfig, findSolution, languageIdFor, launchEnv, resolveLaunch, serverIdFor, type ResolveEnv } from './registry.js';
 
 describe('languageIdFor', () => {
   it('.tsx は typescriptreact、.jsx は javascriptreact (tsgo は最初の languageId で固定するため)', () => {
@@ -75,6 +75,35 @@ describe('checkLspConfig', () => {
     expect(checkLspConfig({ csharp: { solution: 'a\nb' } }).ok).toBe(false);
     expect(checkLspConfig({ csharp: { solution: 7 } }).ok).toBe(false);
   });
+
+  it('dotnetRoot は C# だけ (絶対パスの文字列、制御文字は拒否)', () => {
+    const root = 'C:\\Users\\me\\AppData\\Local\\mise\\dotnet-root';
+    expect(checkLspConfig({ csharp: { dotnetRoot: root } })).toEqual({ ok: true, config: { ...DEFAULTS, csharp: { mode: 'lsp', dotnetRoot: root } } });
+    expect(checkLspConfig({ typescript: { dotnetRoot: root } }).ok).toBe(false);
+    expect(checkLspConfig({ csharp: { dotnetRoot: '' } }).ok).toBe(false);
+    expect(checkLspConfig({ csharp: { dotnetRoot: 'a\nb' } }).ok).toBe(false);
+    expect(checkLspConfig({ csharp: { dotnetRoot: 7 } }).ok).toBe(false);
+  });
+});
+
+describe('launchEnv', () => {
+  const root = 'C:\\Users\\me\\AppData\\Local\\mise\\dotnet-root';
+
+  it('dotnetRoot 無しなら env をそのまま返す', () => {
+    const env = { Path: 'C:\\Windows' };
+    expect(launchEnv({ mode: 'lsp' }, env, 'win32')).toBe(env);
+  });
+
+  it('dotnetRoot は DOTNET_ROOT と PATH の先頭の両方に入る (apphost と BuildHost が別々に見る)。レジストリー由来の Path キーを差し替え、PATH を増やさない', () => {
+    const out = launchEnv({ mode: 'lsp', dotnetRoot: root }, { Path: 'C:\\Windows;C:\\Users\\me\\.dotnet\\tools', USERPROFILE: 'C:\\Users\\me' }, 'win32');
+    expect(out).toEqual({ Path: `${root};C:\\Windows;C:\\Users\\me\\.dotnet\\tools`, USERPROFILE: 'C:\\Users\\me', DOTNET_ROOT: root });
+    expect(Object.keys(out)).not.toContain('PATH');
+  });
+
+  it('PATH が無ければ dotnetRoot だけ、posix は : 区切り', () => {
+    expect(launchEnv({ mode: 'lsp', dotnetRoot: '/opt/dotnet' }, {}, 'linux')).toEqual({ DOTNET_ROOT: '/opt/dotnet', PATH: '/opt/dotnet' });
+    expect(launchEnv({ mode: 'lsp', dotnetRoot: '/opt/dotnet' }, { PATH: '/usr/bin' }, 'linux').PATH).toBe('/opt/dotnet:/usr/bin');
+  });
 });
 
 describe('resolveLaunch', () => {
@@ -94,6 +123,7 @@ describe('resolveLaunch', () => {
     pid: 4242,
     exists: (p) => exists.map((e) => path.resolve(e)).includes(path.resolve(p)),
     listDir: (p) => dirs[path.resolve(p)] ?? [],
+    bundledTsgo: null,
     ...extra,
   });
   const tsgo = path.join(nm, '@typescript', 'typescript-win32-x64', 'lib', 'tsc.exe');
@@ -140,7 +170,13 @@ describe('resolveLaunch', () => {
     expect(r?.args[0]).toBe(globalCli);
   });
 
-  it('5. 何も無ければ null', () => {
+  it('5. ワークスペースにも config にも PATH にも無ければ prontella 同梱の tsgo、それも無ければ null', () => {
+    const bundled = path.join('C:\\prontella', 'node_modules', '@typescript', 'typescript-win32-x64', 'lib', 'tsc.exe');
+    expect(resolveLaunch(base([bundled], { bundledTsgo: bundled }))).toEqual({ command: bundled, args: ['--lsp', '--stdio'], source: 'bundled-tsgo' });
+    // 同梱はユーザーのもの (config / PATH) より後
+    expect(resolveLaunch(base([bundled], { bundledTsgo: bundled, config: { mode: 'lsp', command: 'X' } }))?.source).toBe('config');
+    // パスがあっても実体が無ければ null (npm 配布版: typescript は devDependency)
+    expect(resolveLaunch(base([], { bundledTsgo: bundled }))).toBeNull();
     expect(resolveLaunch(base([]))).toBeNull();
   });
 

@@ -39,7 +39,9 @@ LSP ブリッジ固有で、**コードを読んでも分からない**こと (�
    initialize 時間・初回可用・ウォーム p50/p95・`positionEncoding`・常駐メモリー・
    `exit` で死ぬか・サーバー→クライアント要求の一覧。**閾値は設計書 §3/§6 のまま、測定後に動かさない**
 2. `registry.ts`: `SERVER_IDS` / `EXT_TO_LANGUAGE` / `MODES_BY_SERVER` / `resolveXxx` を足す。
-   解決順は「ワークスペース同梱 → config 明示 → 拡張同梱 → PATH → ツール置き場」。
+   解決順は「ワークスペース同梱 → config 明示 → 拡張同梱 → PATH → ツール置き場 → prontella 同梱 (TS の tsgo、
+   `bundledTsgoPath()`。ユーザーのものより後)」。TS の「未検出」はまず root の `node_modules/typescript` の有無を疑う
+   (別プロジェクトの TS は見ない)。
    `.cmd` シムは `shell: true` 無しで起動できないので実体を叩く (`shell: true` は禁止: cp932 化けと注入)
 3. `host.ts`: env は必ず `terminalEnv()` (言語サーバーはワークスペースのコードを実行する。
    `pj-child-env` の agentSession と同じ側)。`answerServerRequest` に既定応答を足すのは
@@ -110,6 +112,14 @@ LSP ブリッジ固有で、**コードを読んでも分からない**こと (�
 - `dotnet restore` 済みが前提。**隔離 home (`USERPROFILE` 差替) では `~/.nuget/packages` を
   見失い、プロジェクトは読めても参照が解決されず補完/ホバーが null** → C# の実機検証は実 home +
   別ポート (`pj-isolated-verify` の例外規律)
+- **apphost は `DOTNET_ROOT` (無ければ Program Files) を、csproj を読む BuildHost は PATH 上の `dotnet` を見る — 両方要る**
+  (RESULTS.md 2026-09-25)。`terminalEnv()` はレジストリー再構成なので、mise 等がシェルの profile でだけ入れる
+  `DOTNET_ROOT` / PATH の dotnet を持たず、PTY では動く `dotnet` が LS には無い。片方だけだと「`You must install .NET` で
+  即終了 → 停止」か「全 csproj が `Win32Exception` → misc 扱いで補完 0 件」。対処は `lsp.csharp.dotnetRoot` の明示設定を
+  `launchEnv()` で両方に重ねる。継承 env から取り返さない (`pj-child-env` の決定則)
+- dotnet tool 版 (`roslyn-language-server`) の shim は .NET 10 SDK では `.cmd` なので registry の `.exe` 判定には当たらない。
+  実体 (`.store/.../roslyn-language-server.exe`、thin client + daemon) は prontella の既定引数で動くので、使うなら
+  `lsp.csharp.command` で明示する。既定の解決順は VS Code 拡張が先
 
 ## 3. Monaco 側の制約
 
@@ -146,7 +156,10 @@ LSP ブリッジ固有で、**コードを読んでも分からない**こと (�
 
 ## 5. 切り分け手順
 
-1. **まず mode**: `GET /api/lsp/mode`。ステータスバーが「TS: 内蔵」なら LSP は動いていない
+1. **まず mode**: `GET /api/lsp/mode`。ステータスバーが「TS: 内蔵」なら LSP は動いていない。
+   「LSP: 未検出」(disabled) は起動コマンドが解決できていない = root の `node_modules/typescript` / 拡張 / PATH を見る。
+   「LSP: 停止」(unavailable) は起動したが 60 秒に 3 回終了 = **ステータスバー項目の tooltip に stderr 末尾が出る**ので
+   まずそれを読む。`You must install .NET` なら env に `DOTNET_ROOT` が無い (mise 等 → `lsp.csharp.dotnetRoot`)
 2. `PRONTELLA_LSP_TRACE=1` でサーバーを起動 → `[lsp >] / [lsp <]` に method/id/エラーが出る
    (本文は出ない)。「要求が LS に届いたか」「null は LS が返したか、セッションが返したか」がここで分かる
 3. **ブラウザーを閉じてから** `/ws/lsp` を Node の `ws` で直叩きするプローブを書く

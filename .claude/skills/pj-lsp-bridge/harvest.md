@@ -68,3 +68,31 @@
 - supersedes: —
 - result: TS 隔離 / C# 実 home の両方で、端末で作ったファイルの export が auto-import 候補に出て、
   Ctrl+P `#` で新規ファイルのクラスが見つかり着地した (2026-09-13)。
+
+## 004: LS の env に .NET が無い (mise) / TS はワークスペース以外を見ない (§1 / §2 / §5)
+
+- date: 2026-09-25
+- context: ユーザー報告「TypeScript: LSP 未検出、C#: LSP 停止」。TS は解決順がそのワークスペースの
+  `node_modules/typescript` しか見ないため、TS を持たないプロジェクトで null になっていた (prontella 自身が
+  TS 7 を持っているのに使っていない)。C# は VS Code 拡張の Roslyn が `You must install .NET` で即終了していた:
+  この機体の .NET は mise 管理で、`DOTNET_ROOT` と PATH の dotnet はシェル profile (`mise activate`) が入れる
+  だけでレジストリーに無く、`terminalEnv()` (レジストリー再構成) には何も無い。PTY は profile が走るので気づかない。
+  スパイクで env を変えて 4 分岐を測り、apphost は `DOTNET_ROOT`、BuildHost は PATH の dotnet を見る = 両方要ると
+  確定 (片方だけだと「起動しない」か「全 csproj が Win32Exception で misc、補完 0 件」)。継承 env から通す案は
+  `pj-child-env` の決定則 (起動元シェルで挙動が変わる) に反するので採らず、ユーザーの希望どおり config の明示設定にした。
+  付随: 実 config の `lsp.csharp.mode` が `""` で `lsp` セクション全体が無視されていた (既定と一致していたので無症状)。
+- change: §1 の解決順に「prontella 同梱 tsgo (最後)」と「未検出はまず root の typescript の有無」を追加。
+  §2 Roslyn に「DOTNET_ROOT と PATH の両方が要る / terminalEnv には profile 由来の変数が無い / 対処は
+  `lsp.csharp.dotnetRoot` を `launchEnv()` で重ねる / dotnet tool は `.cmd` shim なので registry に当たらない、
+  `command` で明示」を追加。§5 に「未検出 = 解決失敗、停止 = 3 回終了、tooltip の stderr を読む」を追加。
+  Why = LS は shell 無しで直接 spawn する唯一の「ユーザーのコードが走る」経路で、profile が補う能力を
+  構造的に持てない。env を継承から戻すのではなく、`command` / `solution` と同じ「明示設定を extra として重ねる」
+  形が既存の 2 系統の前提を保つ最小手。TS の同梱フォールバックは「ユーザーのものより後」に置けば
+  バージョン不一致の問題を作らない。
+- supersedes: —
+- result: 単体 (registry 27 件 / lsp 72 件) green。実機 (実 home、ビルド済み `bin/prontella.js` を port 3799、
+  `DOTNET_ROOT` を消したシェルから起動、`/ws/lsp` 直叩き): C# は kikimimi.sln で `vscode-ext` → ready 3.5 秒、
+  `base.OnStartup` の hover / 補完 42 件 / 診断 0。対照で `dotnetRoot` を外して Roslyn を kill すると即
+  `stopped (code=2147516547、Download the .NET runtime)` に戻り、戻すと再び ready (判別器の両分岐を確認)。
+  TS は typescript を持たない dbeaver の `.js` で `bundled-tsgo` → `Math.pow` の hover / 補完 1569 件。
+  残骸無し、対象 repo の `git status` 不変。ブラウザー拡張が未接続だったため UI 表示は未確認 (ユーザーの再起動後に確認)。

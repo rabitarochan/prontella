@@ -1,5 +1,7 @@
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
+import { envGet } from '../childEnv.js';
 
 /**
  * 言語 → 言語サーバーの対応表と、起動コマンドの解決 (純関数中心)。
@@ -57,6 +59,12 @@ export interface LspServerConfig {
   args?: string[];
   /** C# のみ: 全 doc をこのソリューション (root 相対 or 絶対) のプロセスへ。最寄り .sln の探索をしない */
   solution?: string;
+  /**
+   * C# のみ: `dotnet(.exe)` があるディレクトリーの絶対パス。LS の env に `DOTNET_ROOT` として入り、PATH の先頭にも付く。
+   * mise 等がシェルの profile でだけ .NET を PATH に入れる環境では、レジストリー再構成の `terminalEnv()` に
+   * .NET が無く Roslyn が起動できない (`launchEnv` 参照)。
+   */
+  dotnetRoot?: string;
 }
 
 export type LspConfig = Record<ServerId, LspServerConfig>;
@@ -125,7 +133,32 @@ function checkServer(id: ServerId, value: unknown, out: LspServerConfig): { ok: 
     }
     out.solution = obj.solution;
   }
+  if (obj.dotnetRoot !== undefined) {
+    if (id !== 'csharp' || typeof obj.dotnetRoot !== 'string' || obj.dotnetRoot.length === 0 || hasControlChar(obj.dotnetRoot)) {
+      return { ok: false, error: `lsp.${id}.dotnetRoot は C# のみ、空でも制御文字を含んでもいけません` };
+    }
+    out.dotnetRoot = obj.dotnetRoot;
+  }
   return { ok: true, config: out };
+}
+
+/**
+ * 言語サーバーに渡す env。`terminalEnv()` はレジストリー (Windows) / ログインシェル (POSIX) からの再構成なので、
+ * mise 等が対話シェルの profile でだけ入れる `DOTNET_ROOT` と PATH の dotnet を持たない。PTY は profile が
+ * 走るので困らないが、LS は shell 無しで直接 spawn する。継承 env から取り返すと deck の起動元シェルで挙動が
+ * 変わるので (pj-child-env の決定則)、明示設定 `lsp.csharp.dotnetRoot` を extra として重ねる。
+ *
+ * 実測 (RESULTS.md 2026-09-25): Roslyn の apphost は `DOTNET_ROOT` を、csproj を読む BuildHost は PATH 上の
+ * `dotnet` を見る。片方だけだと「起動しない」か「全プロジェクトが Win32Exception で misc 扱い (補完 0 件)」になる —
+ * **両方要る**。PATH のキー名はレジストリー由来だと `Path` なので、大文字小文字を無視して既存キーを差し替える。
+ */
+export function launchEnv(config: LspServerConfig, env: Record<string, string>, platform: NodeJS.Platform): Record<string, string> {
+  const root = config.dotnetRoot;
+  if (!root) return env;
+  const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
+  const sep = platform === 'win32' ? ';' : ':';
+  const current = envGet(env, 'PATH');
+  return { ...env, DOTNET_ROOT: root, [pathKey]: current ? `${root}${sep}${current}` : root };
 }
 
 // ---- 起動コマンドの解決 -----------------------------------------------------
@@ -134,7 +167,7 @@ export interface Launch {
   command: string;
   args: string[];
   /** ステータス表示用の短い出自 */
-  source: 'workspace-tsgo' | 'workspace-tls' | 'config' | 'path' | 'vscode-ext' | 'dotnet-tool';
+  source: 'workspace-tsgo' | 'workspace-tls' | 'config' | 'path' | 'bundled-tsgo' | 'vscode-ext' | 'dotnet-tool';
   /** 起動前に作っておくログディレクトリー (Roslyn の --extensionLogDirectory) */
   logDir?: string;
 }
@@ -154,6 +187,8 @@ export interface ResolveEnv {
   pid: number;
   exists: (abs: string) => boolean;
   listDir: (abs: string) => string[];
+  /** prontella 自身の node_modules の tsgo (`bundledTsgoPath()`)。無い配布形態では null */
+  bundledTsgo: string | null;
 }
 
 /**
@@ -165,7 +200,9 @@ export interface ResolveEnv {
  *   3. config.json の明示指定
  *   4. PATH 上の typescript-language-server (npm global の配置: `<dir>/node_modules/.../cli.mjs`)。
  *      `.cmd` シムは shell 無しで起動できないので実体の cli.mjs を process.execPath で叩く
- *   5. null (= disabled。無い環境が普通なのでエラーにしない)
+ *   5. prontella 自身の node_modules の tsgo (`bundledTsgoPath()`)。ワークスペースに TypeScript が無いプロジェクト
+ *      (JS のみ、スクリプト置き場) でも動かすための最後の手。ユーザーのもの (1〜4) より後
+ *   6. null (= disabled。無い環境が普通なのでエラーにしない)
  */
 export function resolveLaunch(r: ResolveEnv): Launch | null {
   if (r.serverId === 'csharp') return resolveCsharp(r);
@@ -190,7 +227,26 @@ export function resolveLaunch(r: ResolveEnv): Launch | null {
       if (r.exists(candidate)) return { command: r.execPath, args: [candidate, '--stdio'], source: 'path' };
     }
   }
+  if (r.bundledTsgo && r.exists(r.bundledTsgo)) {
+    return { command: r.bundledTsgo, args: ['--lsp', '--stdio'], source: 'bundled-tsgo' };
+  }
   return null;
+}
+
+/**
+ * prontella 自身の依存にある TypeScript 7 の実行ファイル。dev (`server/lsp/`) と dist (`dist/server/lsp/`) の
+ * どちらからも同じ node_modules に届く。プラットフォーム package の `exports` は `./package.json` だけなので
+ * それを解決して `lib/` を組む (typescript/lib/getExePath.js と同じ規則)。
+ * ponytail: typescript は devDependency なので npm 配布版では null → 従来どおり disabled。配布版でも効かせるなら
+ * optionalDependencies に移す。
+ */
+export function bundledTsgoPath(platform: NodeJS.Platform, arch: string): string | null {
+  try {
+    const pkg = createRequire(import.meta.url).resolve(`@typescript/typescript-${platform}-${arch}/package.json`);
+    return path.join(path.dirname(pkg), 'lib', platform === 'win32' ? 'tsc.exe' : 'tsc');
+  } catch {
+    return null;
+  }
 }
 
 /**

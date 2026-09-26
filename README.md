@@ -141,12 +141,15 @@ Open a worktree and hit "✦ Start Claude" to launch Claude Code with that direc
     The status bar item **"LSP" → "Use built-in TypeScript (reload)"** switches back to Monaco's worker (and
     **"TS: built-in" → "Use the language server (reload)"** switches forward again). The server is resolved in this order: the worktree's TypeScript 7 (`tsc --lsp`, Go-based; the workspace's own
     version), the worktree's `typescript-language-server` when a `tsserver.js` exists, `lsp.typescript.command` in
-    `config.json`, then a global `typescript-language-server` on `PATH`. Found nothing → the status bar says "not found".
+    `config.json`, a global `typescript-language-server` on `PATH`, then prontella's own bundled TypeScript 7 (present when
+    running from a source checkout). Found nothing → the status bar says "not found".
   - **C#** is on by default (`"lsp": { "csharp": { "mode": "lsp" | "off" } }`) and uses the official Roslyn language server
     (`Microsoft.CodeAnalysis.LanguageServer`): `lsp.csharp.command`, the VS Code C# extension's bundled copy
     (`~/.vscode/extensions/ms-dotnettools.csharp-*/.roslyn/`), `roslyn-language-server` on `PATH`, or `~/.dotnet/tools`
     (`dotnet tool install -g roslyn-language-server`). It needs a .NET 10 runtime and a restored solution
-    (`dotnet restore`). One server process is started per nearest `.sln` (walking up from the file), so a repository with
+    (`dotnet restore`). The server is spawned with the OS-level environment (not your shell profile), so if .NET is only
+    on `PATH` via a version manager such as mise, set `"lsp": { "csharp": { "dotnetRoot": "<dir containing dotnet>" } }`
+    — it is passed as `DOTNET_ROOT` and prepended to `PATH` (both are needed: the app host and the project loader). One server process is started per nearest `.sln` (walking up from the file), so a repository with
     several solutions gets one process each; the first load of a solution takes seconds to tens of seconds (the status
     bar shows "starting"), and the first completion in a freshly opened solution waits a few seconds more.
   - Files created, changed or deleted outside the editor (a terminal, an agent, `git checkout`) are reported to the

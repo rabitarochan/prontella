@@ -203,6 +203,10 @@ Why この順序: env を戻すと「deck をどの端末から起動したか�
   `where.exe` で実際に解決できるかを見る
 - **Volta は実行時に自分で PATH を足す**。ターミナル内の `node` が見る PATH に
   `Volta\tools\image\node\<ver>` が入っていても漏洩ではない
+- **mise が入れる `DOTNET_ROOT` / PATH の dotnet はシェル profile (`mise activate`) 由来でレジストリーに無い**。
+  PTY は profile が走るので気づかないが、**shell を経由せず直接 spawn する経路 (言語サーバー) では .NET アプリが
+  `You must install .NET` で起動できない** (2026-09-25)。対処は上の決定則どおり継承 env で取り返さず、
+  明示設定 (`lsp.csharp.dotnetRoot`) を `terminalEnv` の上に重ねる (`server/lsp/registry.ts` の `launchEnv`)
 - `process.env.ANTHROPIC_API_KEY` のような**判定も、実際に渡す env で行う**。
   渡す env と判定する env がズレると誤検知・見落としになる
 

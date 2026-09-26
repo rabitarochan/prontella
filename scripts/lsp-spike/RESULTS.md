@@ -204,3 +204,33 @@ root 配下 = `file` 扱いになり、`-ext` になるのは root の外に Typ
 | TS: 端末で `src/c.ts` (`export function zzNewThing`) を作る → 何もせず `zzNew` と打つ → 候補 `zzNewThing ./c` (auto-import) | ✓ 通知 1 件、削除で 2 件目 |
 | C#: `#BisuAiInfo` → 9 件 (class / method / interface、コンテナーと path:line) | ✓ |
 | C#: 端末で `__SpikeNew.cs` を作る → `#SpikeNewWatched` に出る → Enter で `__SpikeNew.cs:2` 列 14 に着地 | ✓ (ファイルは削除、`git status` 不変) |
+
+---
+
+# 2026-09-25 測定: Roslyn と .NET ランタイムの所在（`s3-roslyn.mjs` を kikimimi.sln に対して、env を変えて実行）
+
+背景: ユーザー報告「C# は LSP: 停止」。この機体の .NET は mise 管理 (`%LOCALAPPDATA%\mise\dotnet-root`) で、
+`DOTNET_ROOT` と PATH の dotnet はシェルの profile (`mise activate`) が入れるだけでレジストリーに無い。
+`C:\Program Files\dotnet` も無い。LS の env は `terminalEnv()` = レジストリー再構成なので何も無い。
+
+| env (レジストリー再構成 = Machine+User PATH のみ、が基準) | 結果 |
+|---|---|
+| 基準のまま (修正前の prontella) | apphost が `You must install .NET to run this application` / `.NET location: Not found` で即終了 → 60 秒に 3 回で unavailable (「停止」) |
+| + `DOTNET_ROOT` のみ | initialize 2.1 秒で通り projectInitializationComplete も来るが、全 csproj が `Error while loading … System.ComponentModel.Win32Exception` (BuildHost が `dotnet` を起動できない) → misc 扱い、IDE0005 が出て `base.` の補完 0 件 |
+| + PATH 先頭に dotnet-root のみ | apphost が起動できず (apphost は PATH を見ない) initialize タイムアウト 60 秒 |
+| + `DOTNET_ROOT` と PATH の両方 | initialize 0.8 秒、projectInitializationComplete 5.8 秒、`base.` で補完 42 件、診断 0 |
+
+**帰結:** apphost は `DOTNET_ROOT` (または既定の Program Files) を、csproj を読む BuildHost は PATH 上の `dotnet` を見る。
+**両方要る**。`pj-child-env` の決定則 (再構成で失われた能力を継承 env で取り返さない) に従い、継承 env からは通さず
+`lsp.csharp.dotnetRoot` の明示設定を `launchEnv()` で `DOTNET_ROOT` と PATH 先頭の両方に重ねる。
+
+付記:
+- `dotnet tool install -g roslyn-language-server --prerelease` (5.12.0-1.26426.8) の shim は .NET 10 SDK では
+  `~/.dotnet/tools/roslyn-language-server.cmd` (`.exe` ではない) なので registry の PATH / `~/.dotnet/tools` 判定には当たらない。
+  実体 `.store/roslyn-language-server/<ver>/roslyn-language-server.win-x64/<ver>/tools/net10.0/win-x64/roslyn-language-server.exe`
+  は「thin client + daemon」構成 (`--daemon` / `--daemonKeepAlive` 既定 900 秒) だが、prontella の既定引数
+  (`--stdio --logLevel --extensionLogDirectory --clientProcessId`) でそのまま initialize に応答し、shutdown/exit 後に残骸無し。
+  `lsp.csharp.command` で明示すれば使える。既定の解決順 (VS Code 拡張が先) は変えていない
+- TS の「未検出」は別件: 解決はそのワークスペース自身の `node_modules/typescript` しか見ないので、TS を持たない
+  プロジェクトでは null。prontella 自身の `node_modules/@typescript/typescript-<platform>-<arch>/lib/tsc(.exe)` を最後の
+  フォールバックに追加した (`bundledTsgoPath()`、source `bundled-tsgo`)

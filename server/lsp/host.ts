@@ -8,7 +8,7 @@ import { terminalEnv } from '../childEnv.js';
 import { metrics } from '../metrics/index.js';
 import { createMessageReader, encodeMessage } from './framing.js';
 import { createExtTable, type ExtTable } from './uri.js';
-import { fsExists, fsListDir, resolveLaunch, type Launch, type LspServerConfig, type ServerId } from './registry.js';
+import { bundledTsgoPath, fsExists, fsListDir, launchEnv, resolveLaunch, type Launch, type LspServerConfig, type ServerId } from './registry.js';
 
 /**
  * (root, serverId) ごとに言語サーバープロセスを 1 つ持ち、複数の WS セッションで共有する。
@@ -346,14 +346,15 @@ export class LspHost {
       this.setStatus(proc, { state: 'unavailable', error: frozen });
       return;
     }
-    const env = this.opts.env ?? terminalEnv;
+    const config = this.opts.configFor(serverId);
+    const env = (this.opts.env ?? terminalEnv)();
     const launch = this.opts.resolve
       ? this.opts.resolve(proc.root, serverId)
       : resolveLaunch({
           root: proc.root,
           serverId,
-          config: this.opts.configFor(serverId),
-          env: env(),
+          config,
+          env,
           platform: process.platform,
           arch: process.arch,
           execPath: process.execPath,
@@ -362,6 +363,7 @@ export class LspHost {
           pid: process.pid,
           exists: fsExists,
           listDir: fsListDir,
+          bundledTsgo: bundledTsgoPath(process.platform, process.arch),
         });
     if (!launch) {
       this.setStatus(proc, { state: 'disabled' });
@@ -388,12 +390,12 @@ export class LspHost {
     this.setStatus(proc, { state: 'starting', source: launch.source });
     // terminalEnv(): 言語サーバーはワークスペースの typescript と tsconfig の plugins (ユーザーのコード)
     // を実行するので、ユーザーの端末と同じ PATH でなければならない (pj-child-env: agentSession と同じ側)。
-    // shell: true は禁止 (cp932 化けと注入)。
+    // shell: true は禁止 (cp932 化けと注入)。lsp.csharp.dotnetRoot は launchEnv で DOTNET_ROOT / PATH に重ねる。
     const child = (this.opts.spawn ?? nodeSpawn)(launch.command, launch.args, {
       cwd: proc.root,
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: env(),
+      env: launchEnv(config, env, process.platform),
     });
     proc.child = child;
     proc.exited = false;

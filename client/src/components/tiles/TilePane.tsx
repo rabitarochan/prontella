@@ -1,11 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, ChevronDown, FileText, GitBranch, GripVertical, MessageSquare, Terminal } from 'lucide-react';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { FileText, GitBranch, GripVertical, MessageSquare, Terminal } from 'lucide-react';
 import { useT, type StringKey } from '../../i18n';
 import type { AgentStatus, TerminalSession } from '../../types';
 import { sessionKind } from '../../layout/sessionKinds';
@@ -127,7 +121,7 @@ export default function TilePane({
   };
 
   const termStatus = aggregateStatus(leaf, sessions);
-  // ドロップダウンのセッション数は kind で振り分ける (term = pty / chat = sdk)
+  // アクティビティバーのセッション数は kind で振り分ける (term = pty / chat = sdk)
   const ptyCount = leaf.sessions.filter((id) => sessionKind(id) !== 'sdk').length;
   const chatCount = leaf.sessions.length - ptyCount;
   // chat ビューではセッションタブ自体がバーに入る (ドット付き) ため、先頭ゾーンの
@@ -174,32 +168,6 @@ export default function TilePane({
             <span className="tile-drag-handle" title={t('tile.dragHint')}>
               <GripVertical />
             </span>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  className="tile-view-trigger"
-                  title={`${t(current.labelKey)} — ${t('tile.switchViewTooltip')}`}
-                >
-                  <CurrentIcon />
-                  <ChevronDown className="tile-view-chevron" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
-                {VIEWS.map(({ view, labelKey, Icon }) => (
-                  <DropdownMenuItem key={view} onSelect={() => actions.setView(leaf.id, view)}>
-                    <Icon />
-                    {t(labelKey)}
-                    {view === 'term' && ptyCount > 0 && (
-                      <span className="tile-tab-count">{ptyCount}</span>
-                    )}
-                    {view === 'chat' && chatCount > 0 && (
-                      <span className="tile-tab-count">{chatCount}</span>
-                    )}
-                    {leaf.view === view && <Check className="ml-auto text-primary" />}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
             {!tabsInBar && leaf.sessions.length > 0 && (
               <span className="tile-tab-count">{leaf.sessions.length}</span>
             )}
@@ -260,7 +228,27 @@ export default function TilePane({
           </>
         )}
       </header>
-      <div className="tile-body" ref={adoptHost} hidden={minimized} />
+      {/* VS Code のアクティビティバー風のビュー切替 (縦並び)。最小化時はバーごと隠す */}
+      <div className="tile-main" hidden={minimized}>
+        <nav className="tile-activity-bar">
+          {VIEWS.map(({ view, labelKey, Icon }) => {
+            const count = view === 'term' ? ptyCount : view === 'chat' ? chatCount : 0;
+            return (
+              <button
+                key={view}
+                className={`tile-activity-btn ${leaf.view === view ? 'active' : ''}`}
+                title={t(labelKey)}
+                aria-pressed={leaf.view === view}
+                onClick={() => actions.setView(leaf.id, view)}
+              >
+                <Icon />
+                {count > 0 && <span className="tile-activity-badge">{count}</span>}
+              </button>
+            );
+          })}
+        </nav>
+        <div className="tile-body" ref={adoptHost} />
+      </div>
       {/* ドロップ先オーバーレイ: ドラッグ中のみタイル全面を覆い、5 ゾーン
           (上下左右 = 分割挿入 / 中央 = 位置交換) のインジケーターを出す。
           全面で dragover を受けるので xterm/Monaco がイベントを奪うことはない */}

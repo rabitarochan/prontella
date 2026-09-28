@@ -1883,32 +1883,67 @@ button.statusbar-item:hover:not(:disabled) {
 .tile-pane.focused .tile-header {
   color: var(--fg);
 }
-/* ビュー切替トリガー: アイコン + 小さな▼のみ (モックアップの .view-btn) */
-.tile-view-trigger {
+/* ビュー切替: VS Code のアクティビティバー風に本文左端へ縦並び */
+.tile-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.tile-activity-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border-right: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+.tile-activity-btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 26px;
-  padding: 0 8px;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
   background: transparent;
   border: none;
   border-radius: 6px;
   color: var(--fg-dim);
-  white-space: nowrap;
 }
-.tile-view-trigger:hover:not(:disabled) {
+.tile-activity-btn:hover {
   background: var(--bg-hover);
   color: var(--fg);
 }
-.tile-view-trigger svg {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
+.tile-activity-btn.active {
+  color: var(--fg);
 }
-.tile-view-trigger .tile-view-chevron {
-  width: 10px;
-  height: 10px;
-  color: var(--fg-dim);
+.tile-activity-btn.active::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--primary);
+}
+.tile-activity-btn svg {
+  width: 16px;
+  height: 16px;
+}
+.tile-activity-badge {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 9px;
+  line-height: 13px;
+  text-align: center;
 }
 .tile-tab-count {
   font-size: 10px;
@@ -1931,7 +1966,7 @@ button.statusbar-item:hover:not(:disabled) {
 }
 /* 畳んだタイル: 本文だけ隠してヘッダーを残す。host 自体は DOM に残るので
    xterm / Monaco のインスタンスと WebSocket は生きたまま */
-.tile-body[hidden] {
+.tile-main[hidden] {
   display: none;
 }
 .tile-pane.minimized .tile-header {
@@ -1974,6 +2009,7 @@ button.statusbar-item:hover:not(:disabled) {
 }
 .tile-body {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   position: relative;
 }

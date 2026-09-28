@@ -287,7 +287,6 @@ export const FILES_STRINGS = {
     ja: '未保存の変更があります。タイルを閉じますか?',
     en: 'There are unsaved changes. Close the tile?',
   },
-  'tile.switchViewTooltip': { ja: '表示を切り替え', en: 'Switch view' },
   'tile.dragHint': {
     ja: 'ドラッグでタイルを移動 (端 = 分割 / 中央 = 入れ替え)',
     en: 'Drag to move tile (edges = split, center = swap)',

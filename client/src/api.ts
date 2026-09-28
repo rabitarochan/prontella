@@ -302,6 +302,11 @@ export const api = {
   terminals: (cwd?: string) =>
     request<TerminalSession[]>(`/api/terminals${cwd ? `?cwd=${q(cwd)}` : ''}`),
   createTerminal: (cwd: string, run?: string) => post<TerminalSession>('/api/terminals', { cwd, run }),
+  /** デバッグビューの起動設定ピッカー (root の .vscode/launch.json + 内蔵既定の可否)。file は root 相対 */
+  debugConfigs: (root: string, file: string) =>
+    request<{ configs: Array<{ name: string; type: string; request: 'launch' | 'attach' }>; warnings: string[]; default: { available: boolean } }>(
+      `/api/debug/configs?root=${q(root)}&file=${q(file)}`,
+    ),
   createAgent: (cwd: string, resume?: string) => post<TerminalSession>('/api/agents', { cwd, resume }),
   agentResumable: (cwd: string) =>
     request<AgentResumableSession[]>(`/api/agents/resumable?cwd=${q(cwd)}`),

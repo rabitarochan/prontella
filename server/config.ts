@@ -16,6 +16,8 @@ interface DeckConfig {
   repos: RepoConfig[];
   /** 言語サーバー設定。検証は server/lsp/registry.ts の checkLspConfig (vnc と同じ扱い)。 */
   lsp?: unknown;
+  /** デバッグアダプター設定。検証は server/debug/registry.ts の checkDebugConfig。 */
+  debug?: unknown;
   [key: string]: unknown; // トップレベルの未知キーも loadConfig→saveConfig で往復させる
 }
 

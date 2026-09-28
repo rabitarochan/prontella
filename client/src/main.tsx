@@ -11,6 +11,7 @@ import '@vscode/codicons/dist/codicon.css';
 import { bootMetrics } from './metrics';
 import { MetricsProfiler } from './metrics/react';
 import { initLsp } from './lsp';
+import { startDebugDecorations } from './debug/decorations';
 
 // メトリクス収集 (サーバーの tier が権威。off なら何も入らない)。描画を待たせない。
 void bootMetrics();
@@ -22,6 +23,8 @@ const isMobilePath = window.location.pathname.replace(/\/+$/, '') === '/m';
 // LSP の有効/無効は最初の TypeScript モデルが生まれる前 (= 描画前) に決める必要がある (client/src/lsp/index.ts)。
 // 失敗時は builtin に落ちるので描画は必ず進む。
 void initLsp().finally(() => {
+  // ブレークポイント / 現在行の装飾はモデルの生死に乗る (React に載せない)。最初のモデルより前に 1 回
+  startDebugDecorations();
   createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
       <MetricsProfiler>{isMobilePath ? <MobileApp /> : <App />}</MetricsProfiler>

@@ -4,6 +4,7 @@ import { sessionKind } from '../../layout/sessionKinds';
 import type { LeafNode, TileView } from '../../layout/tileTree';
 import type { TileActions } from '../../layout/useTileLayout';
 import ChatPanel from '../ChatPanel';
+import DebugTab from '../DebugTab';
 import FilesTab from '../FilesTab';
 import GitTab from '../GitTab';
 import TermPanel from '../TermPanel';
@@ -81,6 +82,11 @@ export default function TileWorkspace({
             onCloseTab={(id) => actions.closeSessionTab(leaf.id, id)}
             create={(resume) => actions.openChat(leaf.id, resume)}
           />
+        </div>
+      )}
+      {visited.has('debug') && (
+        <div className="tile-view" style={{ display: leaf.view === 'debug' ? undefined : 'none' }}>
+          <DebugTab root={worktree.path} leafId={leaf.id} visible={leaf.view === 'debug'} />
         </div>
       )}
     </div>

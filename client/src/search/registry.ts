@@ -13,7 +13,14 @@ export interface FilesTabHandle {
   /** Editor tabs only — a preview tab (see editorState.ts's TabKind) isn't "a file open
    *  for editing" in the sense Ctrl+P callers care about. */
   getOpenTabPaths: () => string[];
+  /** アクティブグループのエディタータブの path (デバッグの「アクティブファイルを実行」)。無ければ null */
+  getActivePath: () => string | null;
   showSearchPanel: () => void;
+}
+
+/** マウント順の全 FilesTab (デバッグビューが同じ root のエディターを探すため)。 */
+export function getFilesTabs(): FilesTabHandle[] {
+  return [...handles.values()];
 }
 
 const handles = new Map<string, FilesTabHandle>(); // insertion order = mount order

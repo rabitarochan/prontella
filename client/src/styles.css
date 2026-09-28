@@ -4382,3 +4382,218 @@ button.statusbar-item:hover:not(:disabled) {
   align-self: center;
   margin-top: 4px;
 }
+
+/* ---- デバッグ (DebugTab / client/src/debug) ------------------------------------- */
+.debug-tab {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  outline: none;
+  font-size: 12px;
+}
+.debug-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+.debug-config {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 2px 4px;
+  background: var(--bg-panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.debug-btn-start .codicon {
+  color: var(--git-gutter-add);
+}
+.debug-btn-stop .codicon {
+  color: var(--git-gutter-delete);
+}
+.debug-status {
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.debug-status-stopped {
+  color: #c98a00;
+}
+.debug-error {
+  padding: 4px 8px;
+  color: var(--git-gutter-delete);
+  border-bottom: 1px solid var(--hairline);
+  white-space: pre-wrap;
+}
+.debug-hint {
+  padding: 4px 8px;
+  color: var(--fg-dim);
+}
+.debug-panels {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.debug-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.debug-stack {
+  flex: 1 1 25%;
+}
+.debug-vars {
+  flex: 1 1 35%;
+}
+.debug-console {
+  flex: 1 1 40%;
+  border-bottom: none;
+}
+.debug-section h3 {
+  margin: 0;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.debug-section h3 .icon-btn {
+  width: 20px;
+  height: 20px;
+}
+.debug-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  min-height: 0;
+}
+.debug-section > .debug-list {
+  flex: 1;
+}
+.debug-empty {
+  padding: 2px 8px;
+  color: var(--fg-dim);
+}
+.debug-frame {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 1px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.debug-frame:hover {
+  background: var(--bg-hover);
+}
+.debug-frame.active {
+  background: var(--bg-active);
+}
+.debug-frame.dim,
+.debug-var.dim {
+  color: var(--fg-dim);
+}
+.debug-frame.noopen {
+  cursor: default;
+}
+.debug-frame-loc {
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.debug-var-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 4px;
+  white-space: nowrap;
+}
+.debug-var-row.expandable {
+  cursor: pointer;
+}
+.debug-var-row:hover {
+  background: var(--bg-hover);
+}
+.debug-var-row .codicon {
+  font-size: 12px;
+  width: 12px;
+}
+.debug-var-name {
+  color: var(--primary-dim);
+}
+.debug-var-value {
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.debug-console-lines {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px 8px;
+  font-family: ui-monospace, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.debug-line-stderr {
+  color: var(--git-gutter-delete);
+}
+.debug-line-input,
+.debug-line-console {
+  color: var(--fg-dim);
+}
+.debug-line-result {
+  color: var(--git-gutter-modify);
+}
+.debug-console-input {
+  font: inherit;
+  font-family: ui-monospace, Consolas, monospace;
+  padding: 3px 8px;
+  border: none;
+  border-top: 1px solid var(--hairline);
+  background: var(--bg-panel);
+  color: var(--fg);
+  outline: none;
+}
+
+/* Monaco のグリフ余白 (client/src/debug/decorations.ts) */
+.debug-bp-glyph {
+  position: relative;
+}
+.debug-bp-glyph::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  border-radius: 50%;
+  background: #e51400;
+}
+.debug-bp-glyph.unverified::before {
+  background: transparent;
+  border: 1.5px solid #e51400;
+  opacity: 0.7;
+}
+.debug-current-glyph::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  margin: -5px 0 0 -3px;
+  border-left: 8px solid #f5c400;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+}
+.debug-current-line {
+  background: rgba(245, 196, 0, 0.18);
+}

@@ -10,6 +10,9 @@ import { openLiveSocket, type LinkPhase, type LiveSocket } from '../lib/liveSock
  *   `prontella/session` を受けて回す。ここは要求/応答の対応付けと寿命だけ
  */
 
+/** サーバーの ADAPTER_IDS と同じ。node = vscode-js-debug、csharp = netcoredbg */
+export type AdapterId = 'node' | 'csharp';
+
 export interface DapResponse<T = unknown> {
   success: boolean;
   message?: string;
@@ -35,9 +38,9 @@ export class DebugRun {
   private pending = new Map<number, Pending>();
   private ended = false;
 
-  constructor(root: string, private handlers: DapEventHandlers) {
+  constructor(root: string, adapter: AdapterId, private handlers: DapEventHandlers) {
     this.socket = openLiveSocket({
-      path: `/ws/debug?root=${encodeURIComponent(root)}`,
+      path: `/ws/debug?root=${encodeURIComponent(root)}&adapter=${adapter}`,
       onMessage: (msg) => this.onMessage(msg),
       onPhase: (phase) => this.onPhase(phase),
     });

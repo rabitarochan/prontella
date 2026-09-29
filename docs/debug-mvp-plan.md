@@ -7,11 +7,12 @@
 
 | 項目 | 決定 |
 |---|---|
-| 対象 | Node/TS 先行 (vscode-js-debug、MIT)。C# (netcoredbg) は後追い — アダプター id で表を引く構造 (`server/debug/registry.ts` の `ADAPTER_IDS`)。vsdbg はライセンス上不可 |
-| 入手 | 自動ダウンロード: GitHub release `js-debug-dap-v<ver>.tar.gz` → `~/.prontella/tools/js-debug/<ver>/`。解決順 = `debug.node.dapDebugServer` (config.json) > tools > `~/.vscode/extensions/ms-vscode.js-debug-*` > ダウンロード |
-| 起動設定 | `.vscode/launch.json` 互換 (JSONC、`type` ∈ {node, pwa-node}、launch/attach、`${workspaceFolder}`/`${file}` のみ置換)。無ければ内蔵既定「アクティブファイルを node (.ts は root の tsx) で実行」 |
+| 対象 | Node/TS (vscode-js-debug、MIT、TCP) と C# (netcoredbg、MIT、stdio)。アダプター id で表を引く (`server/debug/registry.ts` の `ADAPTERS`)、WS の `adapter=` で選ぶ。vsdbg はライセンス上不可 |
+| 入手 | 自動ダウンロード: GitHub release → `~/.prontella/tools/<js-debug|netcoredbg>/<ver>/` (bsdtar で tar.gz / zip を展開)。解決順 = config.json の明示 (`debug.node.dapDebugServer` / `debug.csharp.netcoredbg`) > tools > VS Code 拡張 (node) / PATH (csharp) > ダウンロード |
+| 起動設定 | `.vscode/launch.json` 互換 (JSONC、`type` ∈ {node, pwa-node, coreclr}、launch/attach、`${workspaceFolder}`/`${file}` のみ置換)。無ければ内蔵既定「アクティブファイルを実行」: `.js` は node、`.ts` は root の tsx、`.cs` は最寄り `.csproj` のビルド済み `bin/Debug/<tfm>/<proj>.dll` |
+| C# の env | netcoredbg は PATH の `dotnet` が要る (DOTNET_ROOT だけでは不可)。LSP と同じ `lsp.csharp.dotnetRoot` を `launchEnv()` で PATH に重ねる |
 | MVP 範囲 | 行 BP (ガター) / 開始・一時停止・続行・ステップ 3 種・停止 / 現在行 / コールスタック / 変数 (遅延展開) / デバッグコンソール (output + REPL)。stdio は `internalConsole` (launch.json の `console` は上書き) |
-| 後回し | 条件付き BP / ウォッチ / ホバー評価 / integratedTerminal (`runInTerminal` → PTY。`PtyManager.create` に env 拡張が要る、RESULTS.md D9) / C# |
+| 後回し | 条件付き BP / ウォッチ / ホバー評価 / integratedTerminal (`runInTerminal` → PTY。`PtyManager.create` に env 拡張が要る、RESULTS.md D9) / C# の attach と `dotnet build` の自動実行 |
 
 ## 構造
 
@@ -32,8 +33,10 @@ server/debug/launchConfig.ts  JSONC 解釈・検証・変数置換・内蔵既�
   `startDebugging` の configuration を注入する → ブラウザー由来の絶対パス・任意コマンドがアダプターに届かない
 - **パス**: アダプター→クライアントは `source.path` を root 相対に (root 外は path を消す)、クライアント→アダプターは
   `setBreakpoints.source.path` と `{file}` だけ `safeResolve` で絶対化
+- **ハンドシェイクは VS Code と同じ順序**: initialize → launch (応答は待たない) → `initialized` → setBreakpoints → configurationDone →
+  launch 応答。netcoredbg は configurationDone を先に受けると launch に応答しない (js-debug はどちらでも通る)
 - **多重化**: vscode-js-debug は root 接続をランチャーにし、実ターゲットは `startDebugging` 逆要求 → 別 TCP 接続で動く。
-  停止・出力は子に来る。クライアントは `prontella/session` を受けたら子でも initialize → setBreakpoints → configurationDone → launch を回す
+  停止・出力は子に来る。クライアントは `prontella/session` を受けたら子でも同じハンドシェイクを回す。netcoredbg は接続 1 本
 - **後始末**: WS が閉じたら root に `disconnect{terminateDebuggee}` を送り、応答は待たず 1 s で adapter を kill。
   アダプターは 1 実行が終わっても自分では終わらないので、クライアントが root の `terminated` で接続を閉じる
 - **BP の検証状態**: setBreakpoints 応答の要求順で対応付け (id は重複する)、`breakpoint` changed は id で引く。実行していないときは塗る

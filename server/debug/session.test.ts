@@ -69,10 +69,11 @@ async function setup(opts: { launchJson?: string | null; failStart?: string; res
   const adapter = new FakeAdapter();
   let downloads = 0;
   attachDebug(ws as unknown as WebSocket, root, {
+    adapter: 'node',
     config: {},
     toolsDir: '/tools',
     env: () => ({}),
-    resolve: () => (opts.resolveNull && downloads === 0 ? null : { command: 'node', args: ['dap.js'], source: 'tools' }),
+    resolve: () => (opts.resolveNull && downloads === 0 ? null : { command: 'node', args: ['dap.js'], source: 'tools', transport: 'tcp' }),
     download: async () => {
       downloads++;
       return '/tools/x';
@@ -83,6 +84,7 @@ async function setup(opts: { launchJson?: string | null; failStart?: string; res
     },
     readLaunchJson: () => (opts.launchJson === undefined ? launchJson : opts.launchJson),
     exists: () => true,
+    listDir: () => [],
   });
   await settle();
   return { ws, adapter, downloads: () => downloads };
@@ -166,10 +168,11 @@ describe('attachDebug: アダプター → クライアント', () => {
       ] },
     }]);
   });
-  it.runIf(process.platform === 'win32')('win32: 小文字ドライブ (js-debug の応答形) も root 内と判定する', async () => {
+  it.runIf(process.platform === 'win32')('win32: 小文字ドライブ (js-debug の応答形) も root 内と判定し、相対部分の大小文字は保つ', async () => {
     const { ws, adapter } = await setup();
-    adapter.conns[0]!.emit({ seq: 1, type: 'event', event: 'breakpoint', body: { breakpoint: { id: 1, verified: true, source: { path: path.join(root, 'a.js').toLowerCase() } } } });
-    expect(ws.events('breakpoint')[0]!.body).toEqual({ breakpoint: { id: 1, verified: true, source: { path: 'a.js' } } });
+    const lower = root.toLowerCase();
+    adapter.conns[0]!.emit({ seq: 1, type: 'event', event: 'breakpoint', body: { breakpoint: { id: 1, verified: true, source: { path: path.join(lower, 'Src', 'Program.cs') } } } });
+    expect(ws.events('breakpoint')[0]!.body).toEqual({ breakpoint: { id: 1, verified: true, source: { path: 'Src/Program.cs' } } });
   });
   it('startDebugging → 2 本目の接続 + prontella/session、子の launch には configuration を注入', async () => {
     const { ws, adapter } = await setup();

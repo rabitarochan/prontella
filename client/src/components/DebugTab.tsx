@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
+import type { AdapterId } from '../debug/session';
 import { useDebugStore, type Frame, type RunState, type StartChoice, type Variable } from '../debug/store';
 import { useT, type StringKey } from '../i18n';
 import { getFilesTabs } from '../search/registry';
@@ -18,6 +19,10 @@ interface ConfigsInfo {
 
 const DEFAULT_KEY = '\0default';
 
+/** サーバーの launchConfig.ts の adapterForType / adapterForFile と同じ表 */
+const adapterForType = (type: string): AdapterId => (type === 'coreclr' ? 'csharp' : 'node');
+const adapterForFile = (file: string): AdapterId => (file.toLowerCase().endsWith('.cs') ? 'csharp' : 'node');
+
 function activeFileFor(root: string): string | null {
   const tabs = getFilesTabs().filter((h) => h.root === root);
   return (tabs.find((h) => h.isVisible()) ?? tabs[0])?.getActivePath() ?? null;
@@ -33,31 +38,41 @@ export default function DebugTab({ root, leafId, visible }: { root: string; leaf
   const [selected, setSelected] = useState<string>(DEFAULT_KEY);
   const [activeFile, setActiveFile] = useState<string | null>(null);
 
-  // 表示されるたびに launch.json と「今開いているファイル」を取り直す (設定 UI は無い。ファイルの手編集が入口)
+  // 表示されるたびに launch.json と「今開いているファイル」を取り直す (設定 UI は無い。ファイルの手編集が入口)。
+  // 表示中にエディターのタブが切り替わっても気づけるよう、アクティブファイルだけは 1 秒ごとに見る
+  // (ponytail: FilesTab に変更通知は無い。ローカルの getActivePath() だけなので API は変わったときしか叩かない)
   useEffect(() => {
     if (!visible) return;
-    const file = activeFileFor(root);
-    setActiveFile(file);
     let alive = true;
-    api.debugConfigs(root, file ?? '').then(
-      (r) => {
-        if (!alive) return;
-        setInfo({ configs: r.configs, warnings: r.warnings, defaultAvailable: r.default.available });
-        setSelected((cur) => (cur !== DEFAULT_KEY && r.configs.some((c) => c.name === cur) ? cur : r.configs[0] && !r.default.available ? r.configs[0].name : cur));
-      },
-      () => alive && setInfo({ configs: [], warnings: [], defaultAvailable: false }),
-    );
+    let current: string | null | undefined;
+    const refresh = () => {
+      const file = activeFileFor(root);
+      if (file === current) return;
+      current = file;
+      setActiveFile(file);
+      api.debugConfigs(root, file ?? '').then(
+        (r) => {
+          if (!alive || current !== file) return;
+          setInfo({ configs: r.configs, warnings: r.warnings, defaultAvailable: r.default.available });
+          setSelected((cur) => (cur !== DEFAULT_KEY && r.configs.some((c) => c.name === cur) ? cur : r.configs[0] && !r.default.available ? r.configs[0].name : cur));
+        },
+        () => alive && setInfo({ configs: [], warnings: [], defaultAvailable: false }),
+      );
+    };
+    refresh();
+    const timer = setInterval(refresh, 1_000);
     return () => {
       alive = false;
+      clearInterval(timer);
     };
   }, [root, visible, leafId]);
 
   const phase = run?.phase ?? 'idle';
   const active = phase === 'starting' || phase === 'running' || phase === 'stopped';
   const choice = (): StartChoice | null => {
-    if (selected === DEFAULT_KEY) return info.defaultAvailable && activeFile ? { file: activeFile, request: 'launch' } : null;
+    if (selected === DEFAULT_KEY) return info.defaultAvailable && activeFile ? { file: activeFile, request: 'launch', adapter: adapterForFile(activeFile) } : null;
     const c = info.configs.find((x) => x.name === selected);
-    return c ? { name: c.name, file: activeFile ?? undefined, request: c.request } : null;
+    return c ? { name: c.name, file: activeFile ?? undefined, request: c.request, adapter: adapterForType(c.type) } : null;
   };
   const canStart = !active && choice() !== null;
 

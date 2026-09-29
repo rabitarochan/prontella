@@ -2,6 +2,8 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { defaultConfig, parseLaunchConfigs, resolveLaunchRequest, stripJsonc, substituteVariables } from './launchConfig.js';
 
+const fsOf = (exists: (abs: string) => boolean, listDir: (abs: string) => string[] = () => []) => ({ exists, listDir });
+
 const root = path.resolve('/work/app');
 
 describe('stripJsonc', () => {
@@ -28,7 +30,7 @@ describe('parseLaunchConfigs', () => {
       ],
     });
     const r = parseLaunchConfigs(text);
-    expect(r.configs.map((c) => c.name)).toEqual(['A', 'C']);
+    expect(r.configs.map((c) => c.name)).toEqual(['A', 'CS', 'C']); // coreclr も対象 (C#)
     expect(r.warnings).toHaveLength(3);
   });
   it('壊れた JSON / configurations 無し', () => {
@@ -50,29 +52,32 @@ describe('substituteVariables', () => {
 
 describe('defaultConfig', () => {
   it('.js は node、.ts は tsx がある root だけ', () => {
-    expect(defaultConfig(root, path.join(root, 'a.js'), () => false)).toMatchObject({ type: 'pwa-node', program: path.join(root, 'a.js'), cwd: root });
-    expect(defaultConfig(root, path.join(root, 'a.ts'), () => false)).toBeNull();
-    expect(defaultConfig(root, path.join(root, 'a.ts'), () => true)).toMatchObject({ runtimeArgs: ['--import', 'tsx'] });
-    expect(defaultConfig(root, path.join(root, 'a.py'), () => true)).toBeNull();
+    expect(defaultConfig(root, path.join(root, 'a.js'), fsOf(() => false))).toMatchObject({ type: 'pwa-node', program: path.join(root, 'a.js'), cwd: root });
+    expect(defaultConfig(root, path.join(root, 'a.ts'), fsOf(() => false))).toBeNull();
+    expect(defaultConfig(root, path.join(root, 'a.ts'), fsOf(() => true))).toMatchObject({ runtimeArgs: ['--import', 'tsx'] });
+    expect(defaultConfig(root, path.join(root, 'a.py'), fsOf(() => true))).toBeNull();
   });
 });
 
 describe('resolveLaunchRequest', () => {
   const launchJson = JSON.stringify({ configurations: [{ type: 'node', request: 'launch', name: 'A', program: '${file}', console: 'integratedTerminal' }] });
-  const deps = { readLaunchJson: () => launchJson, exists: () => true };
+  const deps = { readLaunchJson: () => launchJson, exists: () => true, listDir: () => [] as string[] };
   it('name で launch.json を引き、file を埋め、console を上書きする', () => {
-    const r = resolveLaunchRequest(root, { name: 'A', file: 'src/a.js' }, deps);
+    const r = resolveLaunchRequest(root, { name: 'A', file: 'src/a.js' }, deps, 'node');
     expect(r).toEqual({ ok: true, config: { cwd: root, type: 'pwa-node', request: 'launch', name: 'A', program: path.join(root, 'src', 'a.js'), console: 'internalConsole' } });
   });
   it('file だけなら内蔵既定', () => {
-    const r = resolveLaunchRequest(root, { file: 'a.js' }, deps);
+    const r = resolveLaunchRequest(root, { file: 'a.js' }, deps, 'node');
     expect(r).toMatchObject({ ok: true, config: { type: 'pwa-node', program: path.join(root, 'a.js'), console: 'internalConsole' } });
   });
   it('root 外・未知の name・型違いは拒否', () => {
-    expect(resolveLaunchRequest(root, { file: '../etc/passwd' }, deps)).toMatchObject({ ok: false });
-    expect(resolveLaunchRequest(root, { name: 'nope' }, deps)).toMatchObject({ ok: false });
-    expect(resolveLaunchRequest(root, { name: 42 }, deps)).toMatchObject({ ok: false });
-    expect(resolveLaunchRequest(root, {}, deps)).toMatchObject({ ok: false });
-    expect(resolveLaunchRequest(root, { name: 'A' }, { ...deps, readLaunchJson: () => null })).toMatchObject({ ok: false });
+    expect(resolveLaunchRequest(root, { file: '../etc/passwd' }, deps, 'node')).toMatchObject({ ok: false });
+    expect(resolveLaunchRequest(root, { name: 'nope' }, deps, 'node')).toMatchObject({ ok: false });
+    expect(resolveLaunchRequest(root, { name: 42 }, deps, 'node')).toMatchObject({ ok: false });
+    expect(resolveLaunchRequest(root, {}, deps, 'node')).toMatchObject({ ok: false });
+    expect(resolveLaunchRequest(root, { name: 'A' }, { ...deps, readLaunchJson: () => null }, 'node')).toMatchObject({ ok: false });
+    // アダプターと type の不一致
+    expect(resolveLaunchRequest(root, { name: 'A', file: 'src/a.js' }, deps, 'csharp')).toMatchObject({ ok: false, error: expect.stringContaining('csharp') });
+    expect(resolveLaunchRequest(root, { file: 'a.js' }, deps, 'csharp')).toMatchObject({ ok: false });
   });
 });

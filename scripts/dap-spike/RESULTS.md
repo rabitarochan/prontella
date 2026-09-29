@@ -54,3 +54,34 @@
   無いと即死する (製品の不具合ではない。実 home には必ずある)
 - 実測 (E2E): launch.json 経由の launch → 子セッション → `util.js:3` で停止まで ≈ 0.6 s。`next` / `continue` / `evaluate` は
   ブラウザー越しでも体感遅延なし。BP の `verified` は停止直後の `breakpoint` changed で `true` になる
+
+## C# — netcoredbg 3.2.0-1092 (2026-09-29、`scripts/dap-spike/d3-netcoredbg.mjs`、.NET SDK 10.0.401 (mise))
+
+| # | 結果 | 判定 |
+|---|---|---|
+| 入手 | GitHub release `netcoredbg-win64.zip` (3.5 MB、linux は `.tar.gz`、osx は `.zip`)。**`Expand-Archive` はこの機体の `powershell` でモジュールが読めず失敗** → `C:\Windows\System32\tar.exe -xf` (bsdtar) は zip も 0.04 s で展開できる。レイアウト `netcoredbg/netcoredbg.exe` (+ dbgshim.dll、Microsoft.CodeAnalysis.*.dll) | bsdtar を明示パスで使う |
+| 起動 | `netcoredbg --interpreter=vscode` = **stdio の DAP** (`--server=<port>` もあるが不要)。初回起動 ≈ 3 s、以後 20 ms | stdio 経路を host に足す |
+| D2 | `capabilities` イベント + `initialized` が initialize 応答の**直後**に来る。`supportsConfigurationDoneRequest, supportsConditionalBreakpoints, supportTerminateDebuggee, supportsCancelRequest`、filters `all` / `user-unhandled`。launch 応答は即時、`process` イベント (`systemProcessId`) は configurationDone の後 | 事実 |
+| D3 | 逆要求 (`startDebugging` / `runInTerminal`) は**来ない**。接続は 1 本 | 多重化不要 |
+| D4 | launch 前の setBreakpoints は `verified:false, line:1, message:'The breakpoint is pending…'` (**応答の line は当てにならない**)。configurationDone 後に `breakpoint{changed, verified:true, line:<要求行>, endLine}`。要求行 9/10/11/25 いずれもその行で verified。`source.path` は**正しい大小文字の絶対パス** | 事実 |
+| D5 | launch → 最初の stopped **190〜290 ms** (プロセス起動込み。完全な初回のみ 5 s)。`next` p50 1 / p95 7 ms、stepIn p95 14、stepOut 2。scopes 1 ms (`Locals` のみ)、variables 1 ms (型付き)、evaluate 初回 336 ms。エラーは `success:false, message:'error: The name … does not exist'` | ✓ |
+| D7 | `disconnect{terminateDebuggee}` → `exited` / `terminated` → debuggee **0.5 s で消え、アダプターも exit 0 で自然終了**。`kill()` 単独でも debuggee は 0.46 s で消える | 手順は js-debug と同じで足りる |
+| D8 | RSS: adapter 52 MB、debuggee 24 MB。`output` は stdout / stderr のみ。**`module` イベントが十数件** → 捨てる | ✓ |
+| env | 最小 env (PATH に dotnet 無し) → `configurationDone` が `Failed command 'configurationDone' : 0x80070002`。**`DOTNET_ROOT` だけでも同じ**。PATH に dotnet のディレクトリーがあれば動く (`DOTNET_ROOT` 無しで可) | `lsp.csharp.dotnetRoot` を `launchEnv()` で PATH に重ねる (LSP と同じ knob) |
+
+帰結: アダプター表を `{node: tcp, csharp: stdio}` にし、host は 2 つの transport を持つ。C# の env は `terminalEnv()` +
+`launchEnv(lsp.csharp)`。既定起動は「最寄りの .csproj の `bin/Debug/*/<proj>.dll`」(無ければ `dotnet build` を促す)。
+`type:"coreclr"` はそのまま渡す。
+
+### 実装後の隔離 E2E (C#、2026-09-29)
+
+- **ハンドシェイクの順序**: `configurationDone` を `launch` より先に送ると netcoredbg は launch に応答しない
+  (`Command execution timed out`)。js-debug はどちらの順でも通っていたので MVP では気づかなかった。クライアントを
+  **VS Code と同じ順序** (initialize → launch を送って応答は待たない → `initialized` → setBreakpoints → configurationDone →
+  launch 応答) に直し、両アダプターで確認した
+- `source.path` の相対化で **root 相対部分の大小文字を落としていた** (`program.cs`)。js-debug は元から全部小文字なので
+  E2E をすり抜けていた。win32 の `path.relative` は比較は大小文字無視・戻り値は `to` 側の表記なので、それをそのまま使う
+- 隔離 home の config.json に `lsp.csharp.dotnetRoot` を書けば、`terminalEnv()` に dotnet が無い環境でも `launchEnv()` で
+  PATH に重なり netcoredbg が動く (実測: 隔離 E2E 23 項目 ×2 周 PASS、UI で BP → 停止 → ステップ → 続行)
+- netcoredbg は `evaluate` で `System.Diagnostics.Process.GetCurrentProcess().Id` を評価できない (`0x80004005`)。
+  debuggee の pid は `process` イベントの `systemProcessId` から取る

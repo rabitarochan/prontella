@@ -27,6 +27,8 @@ DAP ブリッジ固有で、**コードを読んでも分からない**こと (�
 - クライアント `client/src/debug/`: `session.ts` (`DebugRun`、再接続しない) / `store.ts` (ハンドシェイク・reducer・BP 永続化) /
   `glyphs.ts` (装飾の純関数) / `decorations.ts` (モデルに張る)。UI は `components/DebugTab.tsx` (ロジック禁止)
 - **1 実行 = 1 WS = アダプタープロセス 1 本**。LSP と違い共有・アイドル管理・サーキットブレーカーは無い
+- アダプター表 (`registry.ts` の `ADAPTERS`): `node` = vscode-js-debug (TCP)、`csharp` = netcoredbg (stdio)。WS の `adapter=` で選び、
+  クライアントは launch.json の `type` (`coreclr` → csharp) か拡張子 (`.cs`) で決める。host は `transport` で 2 経路を持つ
 
 ## 1. アダプターを足す手順
 
@@ -38,6 +40,10 @@ DAP ブリッジ固有で、**コードを読んでも分からない**こと (�
    はサーバーが埋める** — 素の DAP サーバーは何も補わない
 4. `session.ts`: 逆要求の応答と `DROP_EVENTS`。クライアント側は `INITIALIZE_ARGS` の `adapterID`
 5. 単体 (`session.test.ts` の FakeAdapter) → 隔離 E2E (§5)
+
+**ハンドシェイクの順序は VS Code と同じにする** (`store.ts` の `startSession`): initialize → launch を送って**応答は待たない** →
+`initialized` イベント → setBreakpoints → configurationDone → launch 応答。netcoredbg は configurationDone を launch より先に
+受けると launch に応答しない (`Command execution timed out`)。js-debug はどちらでも通るので、1 つ目のアダプターでは気づかない
 
 ## 2. vscode-js-debug の罠 (すべて実測、RESULTS.md)
 
@@ -60,6 +66,21 @@ DAP ブリッジ固有で、**コードを読んでも分からない**こと (�
   root への disconnect は**応答が返らない** (子は 500 ms で `terminated`)。kill 単独でも debuggee は 0.4 s で消える
 - `loadedSource` は 1 実行で 100 件超、`output` の `telemetry` は 3〜5 件 → サーバーで捨てる
 
+## 2b. netcoredbg (C#) の罠 (すべて実測、RESULTS.md C#)
+
+- `netcoredbg --interpreter=vscode` は **stdio の DAP**。初回起動 ≈ 3 s、以後 20 ms。逆要求は来ない (接続 1 本)
+- **PATH に `dotnet` が無いと `configurationDone` が `0x80070002` で失敗する。`DOTNET_ROOT` だけでは足りない**。
+  `terminalEnv()` には mise の dotnet が無いので、LSP と同じ knob `lsp.csharp.dotnetRoot` を `launchEnv()` で PATH に重ねる
+- launch 前の setBreakpoints は `verified:false, line:1` (**応答の line は当てにならない**)。configurationDone 後の
+  `breakpoint{changed}` が要求行で verified になる。`source.path` は正しい大小文字の絶対パス
+- `capabilities` イベント + `initialized` が initialize 応答の直後に来る。`process` イベント (`systemProcessId`) は
+  configurationDone の後。`module` イベントが十数件 → `DROP_EVENTS`
+- `disconnect{terminateDebuggee}` → debuggee 0.5 s で消え、アダプターも exit 0 で自然終了 (kill 単独でも可)
+- 内蔵既定 (`.cs`) は最寄りの `.csproj` の `bin/Debug/<tfm 名前順末尾>/<proj>.dll`。無ければ「dotnet build してください」。
+  `dotnet build` は自分では走らせない
+- 配布物は zip (win/osx) と tar.gz (linux)。**`Expand-Archive` はモジュールが読めない機体がある** → bsdtar
+  (`System32\tar.exe -xf`) が zip も読む。tarball のレイアウトは `netcoredbg/netcoredbg.exe`
+
 ## 3. 入手と env の罠
 
 - **tarball (`js-debug-dap-v<ver>.tar.gz`) に `package.json` が無い**。`dapDebugServer.js` は CJS なので、上位に `"type":"module"` の
@@ -77,7 +98,9 @@ DAP ブリッジ固有で、**コードを読んでも分からない**こと (�
 - **クライアントは launch/attach の本体を送らない** (root は `{name}`|`{file}`、子は空)。本体はサーバーが組む / 注入する。
   クライアント由来のパスは `setBreakpoints.source.path` と `{file}` だけで、必ず `safeResolve`
 - アダプター→クライアントの `source.path` は root 相対 (root 外は path を消し name だけ)、絶対パスの `name` は basename、
-  output はホームと node のディレクトリーを潰す。**E2E は「ワイヤーに `C:\Users` が出ない」で判定する**
+  output はホームと node のディレクトリーを潰す。**E2E は「ワイヤーに `C:\Users` が出ない」で判定する**。
+  相対化は `path.relative(rootAbs, abs)` をそのまま使う (win32 は比較だけ大小文字無視) — 小文字化した文字列から組むと
+  `Program.cs` が `program.cs` になる (js-debug は元から全小文字なので E2E で見えなかった)
 - 装飾は Monaco の**モデル**に張る (editor に張るとグループ分割で重なる)。root は model URI の leafId → `getLspWorkspace(leafId).root`
 - BP の表示行はユーザーの要求行で固定。実行していないときは塗る、実行中に未検証なら hollow
 - `DebugRun` は再接続しない: `reconnecting` / `gone` はどちらも終了。pending は全部 `success:false` で解決 (宙吊り禁止)

@@ -6,28 +6,72 @@ import { Readable } from 'node:stream';
 
 /**
  * デバッグアダプターの表・設定検証・起動コマンド解決・自動ダウンロード。server/lsp/registry.ts と同型
- * (一般化はしない)。MVP は `node` (vscode-js-debug) だけ。C# (netcoredbg) を足すときは ADAPTER_IDS と resolve に増やす。
+ * (一般化はしない)。`node` = vscode-js-debug (TCP)、`csharp` = netcoredbg (stdio)。
  */
 
-export const ADAPTER_IDS = ['node'] as const;
+export const ADAPTER_IDS = ['node', 'csharp'] as const;
 export type AdapterId = (typeof ADAPTER_IDS)[number];
 
 export function isAdapterId(v: unknown): v is AdapterId {
   return typeof v === 'string' && (ADAPTER_IDS as readonly string[]).includes(v);
 }
 
-/** 自動ダウンロードする vscode-js-debug の版 (RESULTS.md の実測はこの版)。上げるときは D1〜D9 を再測定する */
+/** 自動ダウンロードする版 (RESULTS.md の実測はこの版)。上げるときはスパイクを再測定する */
 export const JS_DEBUG_VERSION = '1.140.0';
-const JS_DEBUG_URL = (ver: string) => `https://github.com/microsoft/vscode-js-debug/releases/download/v${ver}/js-debug-dap-v${ver}.tar.gz`;
-/** 展開後の相対位置 (tarball のレイアウト。RESULTS.md D10) */
-const JS_DEBUG_ENTRY = path.join('js-debug', 'src', 'dapDebugServer.js');
+export const NETCOREDBG_VERSION = '3.2.0-1092';
+
+export type Transport = 'tcp' | 'stdio';
+
+interface AdapterSpec {
+  /** `<toolsDir>/<dir>/<version>/` に展開する */
+  dir: string;
+  version: string;
+  /** 展開先からの実体の相対パス */
+  entry: string;
+  transport: Transport;
+  /** 配布物の URL (platform / arch で変わる。無い組み合わせは null = ダウンロード不可) */
+  url: (platform: NodeJS.Platform, arch: string) => string | null;
+  /** 展開後の後始末 (js-debug の package.json) */
+  postExtract?: (dir: string) => void;
+}
+
+const EXE = process.platform === 'win32' ? '.exe' : '';
+
+const ADAPTERS: Record<AdapterId, AdapterSpec> = {
+  node: {
+    dir: 'js-debug',
+    version: JS_DEBUG_VERSION,
+    entry: path.join('js-debug', 'src', 'dapDebugServer.js'),
+    transport: 'tcp',
+    url: () => `https://github.com/microsoft/vscode-js-debug/releases/download/v${JS_DEBUG_VERSION}/js-debug-dap-v${JS_DEBUG_VERSION}.tar.gz`,
+    // tarball に package.json が無い。上位に "type":"module" の package.json があると ESM 扱いで即死する (RESULTS.md 前提)
+    postExtract: (dir) => fs.writeFileSync(path.join(dir, 'js-debug', 'package.json'), '{"type":"commonjs"}\n'),
+  },
+  csharp: {
+    dir: 'netcoredbg',
+    version: NETCOREDBG_VERSION,
+    entry: path.join('netcoredbg', 'netcoredbg' + EXE),
+    transport: 'stdio',
+    url: (platform, arch) => {
+      const asset =
+        platform === 'win32' && arch === 'x64' ? 'netcoredbg-win64.zip'
+        : platform === 'linux' && arch === 'x64' ? 'netcoredbg-linux-amd64.tar.gz'
+        : platform === 'linux' && arch === 'arm64' ? 'netcoredbg-linux-arm64.tar.gz'
+        : platform === 'darwin' && arch === 'arm64' ? 'netcoredbg-osx-arm64.zip'
+        : null;
+      return asset && `https://github.com/Samsung/netcoredbg/releases/download/${NETCOREDBG_VERSION}/${asset}`;
+    },
+  },
+};
 
 export interface DebugAdapterConfig {
-  /** 明示指定の `dapDebugServer.js` の絶対パス (node で起動する)。無ければ tools / VS Code 拡張 / ダウンロード */
+  /** node: 明示指定の `dapDebugServer.js` の絶対パス (node で起動する) */
   dapDebugServer?: string;
+  /** csharp: 明示指定の `netcoredbg(.exe)` の絶対パス */
+  netcoredbg?: string;
 }
 export type DebugConfig = Record<AdapterId, DebugAdapterConfig>;
-export const DEFAULT_CONFIG: DebugConfig = { node: {} };
+export const DEFAULT_CONFIG: DebugConfig = { node: {}, csharp: {} };
 
 function hasControlChar(value: string): boolean {
   for (let i = 0; i < value.length; i++) {
@@ -36,6 +80,8 @@ function hasControlChar(value: string): boolean {
   }
   return false;
 }
+
+const CONFIG_KEYS: Record<AdapterId, keyof DebugAdapterConfig> = { node: 'dapDebugServer', csharp: 'netcoredbg' };
 
 /** config.json トップレベル "debug" キーの検証 (checkLspConfig と同じ作法)。 */
 export function checkDebugConfig(value: unknown): { ok: true; config: DebugConfig } | { ok: false; error: string } {
@@ -46,12 +92,11 @@ export function checkDebugConfig(value: unknown): { ok: true; config: DebugConfi
     const v = (value as Record<string, unknown>)[id];
     if (v === undefined || v === null) continue;
     if (typeof v !== 'object' || Array.isArray(v)) return { ok: false, error: `debug.${id} はオブジェクトが必要です` };
-    const obj = v as Record<string, unknown>;
-    if (obj.dapDebugServer !== undefined) {
-      if (typeof obj.dapDebugServer !== 'string' || obj.dapDebugServer.length === 0 || hasControlChar(obj.dapDebugServer)) {
-        return { ok: false, error: `debug.${id}.dapDebugServer は空でも制御文字を含んでもいけません` };
-      }
-      config[id].dapDebugServer = obj.dapDebugServer;
+    const key = CONFIG_KEYS[id];
+    const p = (v as Record<string, unknown>)[key];
+    if (p !== undefined) {
+      if (typeof p !== 'string' || p.length === 0 || hasControlChar(p)) return { ok: false, error: `debug.${id}.${key} は空でも制御文字を含んでもいけません` };
+      config[id][key] = p;
     }
   }
   return { ok: true, config };
@@ -59,9 +104,9 @@ export function checkDebugConfig(value: unknown): { ok: true; config: DebugConfi
 
 export interface Launch {
   command: string;
-  /** 末尾に `<port> <host>` を足して起動する */
   args: string[];
-  source: 'config' | 'tools' | 'vscode-ext';
+  source: 'config' | 'tools' | 'vscode-ext' | 'path';
+  transport: Transport;
 }
 
 export interface ResolveEnv {
@@ -70,80 +115,98 @@ export interface ResolveEnv {
   home: string;
   /** `~/.prontella/tools` */
   toolsDir: string;
+  /** terminalEnv() の PATH (csharp の `netcoredbg` を探す) */
+  envPath?: string;
+  platform?: NodeJS.Platform;
   exists: (abs: string) => boolean;
   listDir: (abs: string) => string[];
 }
 
-/** ダウンロード先の `dapDebugServer.js` */
-export function toolsEntry(toolsDir: string, version = JS_DEBUG_VERSION): string {
-  return path.join(toolsDir, 'js-debug', version, JS_DEBUG_ENTRY);
+/** ダウンロード先の実体パス */
+export function toolsEntry(toolsDir: string, id: AdapterId): string {
+  const spec = ADAPTERS[id];
+  return path.join(toolsDir, spec.dir, spec.version, spec.entry);
 }
 
 /**
- * 解決順: 1. config の明示指定 2. `~/.prontella/tools/js-debug/<ver>/` 3. VS Code 拡張 `ms-vscode.js-debug-*`
- * (新しい版から。ponytail: 文字列降順) 4. null (= 呼び出し側がダウンロードして 2 を作る)。
+ * 解決順: 1. config の明示指定 2. `~/.prontella/tools/<dir>/<ver>/` 3. node は VS Code 拡張 `ms-vscode.js-debug-*`
+ * (新しい版から。ponytail: 文字列降順)、csharp は PATH の `netcoredbg` 4. null (= 呼び出し側がダウンロードして 2 を作る)。
  * `.js` は必ず prontella と同じ node (execPath) で起動する — `.cmd` シム問題も PATH 依存も無い
  */
-export function resolveAdapter(r: ResolveEnv): Launch | null {
-  if (r.config.dapDebugServer) return { command: r.execPath, args: [r.config.dapDebugServer], source: 'config' };
-  const tools = toolsEntry(r.toolsDir);
-  if (r.exists(tools)) return { command: r.execPath, args: [tools], source: 'tools' };
+export function resolveAdapter(r: ResolveEnv, id: AdapterId): Launch | null {
+  if (id === 'csharp') {
+    const args = ['--interpreter=vscode'];
+    if (r.config.netcoredbg) return { command: r.config.netcoredbg, args, source: 'config', transport: 'stdio' };
+    const tools = toolsEntry(r.toolsDir, 'csharp');
+    if (r.exists(tools)) return { command: tools, args, source: 'tools', transport: 'stdio' };
+    const sep = (r.platform ?? process.platform) === 'win32' ? ';' : ':';
+    for (const dir of (r.envPath ?? '').split(sep).map((d) => d.trim().replace(/^"(.*)"$/, '$1')).filter(Boolean)) {
+      const candidate = path.join(dir, 'netcoredbg' + EXE);
+      if (r.exists(candidate)) return { command: candidate, args, source: 'path', transport: 'stdio' };
+    }
+    return null;
+  }
+  if (r.config.dapDebugServer) return { command: r.execPath, args: [r.config.dapDebugServer], source: 'config', transport: 'tcp' };
+  const tools = toolsEntry(r.toolsDir, 'node');
+  if (r.exists(tools)) return { command: r.execPath, args: [tools], source: 'tools', transport: 'tcp' };
   const extDir = path.join(r.home, '.vscode', 'extensions');
   for (const name of r.listDir(extDir).filter((n) => n.startsWith('ms-vscode.js-debug-')).sort().reverse()) {
     const candidate = path.join(extDir, name, 'src', 'dapDebugServer.js');
-    if (r.exists(candidate)) return { command: r.execPath, args: [candidate], source: 'vscode-ext' };
+    if (r.exists(candidate)) return { command: r.execPath, args: [candidate], source: 'vscode-ext', transport: 'tcp' };
   }
   return null;
 }
 
 export interface DownloadDeps {
   toolsDir: string;
-  version?: string;
   fetch?: typeof fetch;
-  /** tar.gz を dir に展開する。既定は OS の `tar -xzf` (Windows 10+ / macOS / Linux に同梱) */
+  /** アーカイブを dir に展開する。既定は bsdtar (`-xf` が tar.gz も zip も読む) */
   extract?: (archive: string, dir: string) => Promise<void>;
-  onStatus?: (text: string) => void;
+  platform?: NodeJS.Platform;
+  arch?: string;
 }
 
-let inflight: Promise<string> | null = null;
+const inflight = new Map<AdapterId, Promise<string>>();
 
 /**
- * vscode-js-debug の DAP tarball を `<toolsDir>/js-debug/<ver>/` に置く。戻り値は dapDebugServer.js の絶対パス。
+ * アダプターの配布物を `<toolsDir>/<dir>/<ver>/` に置く。戻り値は実体の絶対パス。
  * 途中失敗の残骸 (`.part` / `.tmp`) を「完成」と誤認しないよう、完成形は最後の rename でだけ現れる。
- * 同時に 2 セッションが始まっても 1 回しか落とさない (single-flight)。
- * ponytail: チェックサム検証は無し (版を固定 + HTTPS)。必要なら release の SHA を JS_DEBUG_VERSION の隣に置く。
+ * 同時に 2 セッションが始まっても 1 回しか落とさない (single-flight、アダプターごと)。
+ * ponytail: チェックサム検証は無し (版を固定 + HTTPS)。必要なら release の SHA を版の隣に置く。
  */
-export function downloadJsDebug(deps: DownloadDeps): Promise<string> {
-  if (inflight) return inflight;
-  inflight = doDownload(deps).finally(() => {
-    inflight = null;
-  });
-  return inflight;
+export function downloadAdapter(id: AdapterId, deps: DownloadDeps): Promise<string> {
+  const cur = inflight.get(id);
+  if (cur) return cur;
+  const p = doDownload(id, deps).finally(() => inflight.delete(id));
+  inflight.set(id, p);
+  return p;
 }
 
-async function doDownload(deps: DownloadDeps): Promise<string> {
-  const version = deps.version ?? JS_DEBUG_VERSION;
-  const base = path.join(deps.toolsDir, 'js-debug');
-  const dest = path.join(base, version);
-  const entry = path.join(dest, JS_DEBUG_ENTRY);
+async function doDownload(id: AdapterId, deps: DownloadDeps): Promise<string> {
+  const spec = ADAPTERS[id];
+  const platform = deps.platform ?? process.platform;
+  const arch = deps.arch ?? process.arch;
+  const url = spec.url(platform, arch);
+  if (!url) throw new Error(`${spec.dir} は ${platform}/${arch} 向けの配布物がありません。手動で配置して config.json に指定してください`);
+  const base = path.join(deps.toolsDir, spec.dir);
+  const dest = path.join(base, spec.version);
+  const entry = path.join(dest, spec.entry);
   if (fs.existsSync(entry)) return entry;
   fs.mkdirSync(base, { recursive: true });
-  const archive = path.join(base, `${version}.tar.gz`);
+  const archive = path.join(base, `${spec.version}${url.endsWith('.zip') ? '.zip' : '.tar.gz'}`);
   const part = `${archive}.part`;
   const tmp = `${dest}.tmp`;
   const f = deps.fetch ?? fetch;
-  deps.onStatus?.(`vscode-js-debug ${version} をダウンロードしています`);
   try {
-    const res = await f(JS_DEBUG_URL(version));
+    const res = await f(url);
     if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
     await pipeline(Readable.fromWeb(res.body as import('node:stream/web').ReadableStream), fs.createWriteStream(part));
     fs.renameSync(part, archive);
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.mkdirSync(tmp, { recursive: true });
-    await (deps.extract ?? extractTarGz)(archive, tmp);
-    if (!fs.existsSync(path.join(tmp, JS_DEBUG_ENTRY))) throw new Error('展開後に dapDebugServer.js が見つかりません');
-    // tarball に package.json が無い。上位に "type":"module" の package.json があると ESM 扱いで即死する (RESULTS.md 前提)
-    fs.writeFileSync(path.join(tmp, 'js-debug', 'package.json'), '{"type":"commonjs"}\n');
+    await (deps.extract ?? extractArchive)(archive, tmp);
+    if (!fs.existsSync(path.join(tmp, spec.entry))) throw new Error(`展開後に ${spec.entry} が見つかりません`);
+    spec.postExtract?.(tmp);
     fs.renameSync(tmp, dest);
     return entry;
   } finally {
@@ -153,14 +216,17 @@ async function doDownload(deps: DownloadDeps): Promise<string> {
 }
 
 /**
- * `tar -xzf`。PATH の tar が GNU tar (Git for Windows) だと `C:\...` の絶対パスを「ホスト C のリモート」と
- * 解釈して落ちる (実測: `Cannot connect to C: resolve failed`) ので、cwd を揃えて**相対パス**で渡す。
+ * bsdtar の `-xf` (tar.gz も zip も自動判別)。Windows は `System32\tar.exe` を明示する — PATH の tar が GNU tar
+ * (Git for Windows) だと zip を読めず、`C:\...` の絶対パスを「ホスト C のリモート」と解釈して落ちる
+ * (実測: `Cannot connect to C: resolve failed`)。念のため cwd を揃えて**相対パス**で渡す。`Expand-Archive` は
+ * モジュールが読めない機体があるので使わない (RESULTS.md C#)。
  */
-function extractTarGz(archive: string, dir: string): Promise<void> {
+function extractArchive(archive: string, dir: string): Promise<void> {
   const cwd = path.dirname(archive);
+  const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
   return new Promise((resolve, reject) => {
-    execFile('tar', ['-xzf', path.basename(archive), '-C', path.relative(cwd, dir)], { cwd, windowsHide: true }, (err, _stdout, stderr) => {
-      if (err) reject(new Error(`tar の展開に失敗しました: ${stderr || err.message}`));
+    execFile(tar, ['-xf', path.basename(archive), '-C', path.relative(cwd, dir)], { cwd, windowsHide: true }, (err, _stdout, stderr) => {
+      if (err) reject(new Error(`アーカイブの展開に失敗しました: ${stderr || err.message}`));
       else resolve();
     });
   });

@@ -20,3 +20,23 @@
 - result: 単体 66 files / 1098 tests green。隔離 E2E: `/ws/debug` 直叩き 31 項目 ×2 周 全 PASS、headless Chrome (CDP) で
   ガタークリック → 停止 → ステップ → 別ファイルへ着地 → REPL → 終了 → 再開始 → リロード後の BP 復元まで確認。
   実 home 無傷、残骸プロセス無し。(未記入 — 次にアダプターを足す (netcoredbg) ときに、この順序で迷わず済んだかを記録する)
+
+## 002: 2 つ目のアダプター (netcoredbg) で「1 つ目では見えない」前提が 3 つ割れた — 順序・大小文字・env
+
+- date: 2026-09-29
+- context: C# (netcoredbg、stdio) を js-debug の枠組みに足した。スパイク (d3-netcoredbg.mjs) で env 4 分岐・BP 行・
+  後始末を測り、隔離 E2E と headless Chrome で確認した。割れた前提: (1) クライアントのハンドシェイク順序
+  「setBreakpoints → configurationDone → launch」は js-debug では通るが netcoredbg では launch が永久に無応答
+  (`Command execution timed out`)。VS Code の実際の順序 (launch を先に送り応答を待たない) だけが両方で通る。
+  (2) `source.path` の相対化が小文字化した文字列から組んでいて `program.cs` になっていた — js-debug の応答は元から
+  全小文字なので MVP の E2E では検出不能だった。(3) `DOTNET_ROOT` だけでは netcoredbg が動かず PATH の `dotnet` が要る
+  (LSP の Roslyn は「両方要る」だったが、こちらは PATH だけが要る)。加えて `Expand-Archive` が読めない機体があり、
+  bsdtar (`System32\tar.exe`) が zip も読むことで入手経路を 1 本にできた。
+- change: §0 にアダプター表と transport、§1 に VS Code 順序のハンドシェイク、§2b に netcoredbg の罠、§4 に相対化の規則を追加。
+  Why = 2 つ目のアダプターは「1 つ目で偶然通っていた前提」を炙り出す装置になる。順序・パス表記・env のような
+  アダプター非依存に見える層ほど、実装は 1 つ目の癖に合わせて書かれている。判定は「両アダプターの E2E で同じ手順が通る」。
+- supersedes: 001 の「配信バンドル確認」等は据え置き。001 の `result` 未記入欄はこの entry が埋める:
+  「この順序で迷わず済んだか」→ スパイク → registry → launchConfig → session → E2E の順で迷わなかったが、
+  ハンドシェイク順序はスパイクに項目が無く E2E で初めて出た (D2 に「configurationDone 前の launch」を必ず両順序で測る、を追加)
+- result: 単体 41 件 green。隔離 E2E (C#) 23 項目 ×2 周 PASS。UI: ガター BP → `Program.Leaf()` で停止 → Locals に型付きの値 →
+  ステップ → 続行で 2 回目の BP → 停止ボタン。実 home 無傷。

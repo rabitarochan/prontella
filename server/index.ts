@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer } from 'ws';
-import { childEnv, warmTerminalEnv } from './childEnv.js';
+import { childEnv, terminalEnv, warmTerminalEnv } from './childEnv.js';
 import * as config from './config.js';
 import * as git from './git.js';
 import * as files from './files.js';
@@ -30,9 +30,9 @@ import { launchEditor, resolveEditor } from './editorLaunch.js';
 import { keepAlive } from './wsKeepAlive.js';
 import { LspHost } from './lsp/host.js';
 import { attachLsp } from './lsp/session.js';
-import { DEFAULT_CONFIG as LSP_DEFAULT_CONFIG, MODES_BY_SERVER, checkLspConfig, isServerId, type LspConfig } from './lsp/registry.js';
+import { DEFAULT_CONFIG as LSP_DEFAULT_CONFIG, MODES_BY_SERVER, checkLspConfig, fsListDir, isServerId, launchEnv, type LspConfig } from './lsp/registry.js';
 import { attachDebug, readLaunchJson } from './debug/session.js';
-import { DEFAULT_CONFIG as DEBUG_DEFAULT_CONFIG, checkDebugConfig, type DebugConfig } from './debug/registry.js';
+import { DEFAULT_CONFIG as DEBUG_DEFAULT_CONFIG, checkDebugConfig, isAdapterId, type DebugConfig } from './debug/registry.js';
 import { defaultAvailable, parseLaunchConfigs } from './debug/launchConfig.js';
 
 const PORT = Number(process.env.PORT) || 3711;
@@ -1691,7 +1691,7 @@ app.get('/api/debug/configs', (req, res) => {
   res.json({
     configs: parsed.configs.map((c) => ({ name: c.name, type: c.type, request: c.request })),
     warnings: parsed.warnings,
-    default: { available: file !== '' && defaultAvailable(root, file, (abs) => fs.existsSync(abs)) },
+    default: { available: file !== '' && defaultAvailable(root, file, { exists: (abs) => fs.existsSync(abs), listDir: fsListDir }) },
   });
 });
 
@@ -1857,14 +1857,21 @@ server.on('upgrade', (req, socket, head) => {
   } else if (url.pathname === '/ws/debug') {
     // 素の DAP + sessionId。1 接続 = 1 デバッグ実行 = アダプタープロセス 1 本 (server/debug/session.ts)
     const root = url.searchParams.get('root') ?? '';
+    const adapter = url.searchParams.get('adapter') ?? 'node';
     wss.handleUpgrade(req, socket, head, (ws) => {
       instrumentSocket(metrics, ws, '/ws/debug');
-      if (!root || !isKnownRoot(root) || !fs.existsSync(root)) {
+      if (!root || !isKnownRoot(root) || !fs.existsSync(root) || !isAdapterId(adapter)) {
         ws.send(JSON.stringify({ type: 'event', event: 'prontella/status', body: { state: 'failed', error: '登録済みリポジトリーの配下ではありません', refused: true } }));
         ws.close(4003, 'debug unavailable for this root');
         return;
       }
-      attachDebug(ws, root, { config: debugConfig().node, toolsDir: TOOLS_DIR });
+      // C# は netcoredbg が PATH の dotnet を要る (DOTNET_ROOT だけでは configurationDone が 0x80070002)。LSP と同じ knob で PATH に重ねる
+      attachDebug(ws, root, {
+        adapter,
+        config: debugConfig()[adapter],
+        toolsDir: TOOLS_DIR,
+        env: adapter === 'csharp' ? () => launchEnv(lspConfig().csharp, terminalEnv(), process.platform) : undefined,
+      });
       keepAlive(ws);
     });
   } else if (url.pathname === '/ws/vnc') {

@@ -8,7 +8,7 @@ import { metrics } from '../metrics/index.js';
 import { fsExists, fsListDir } from '../lsp/registry.js';
 import { startAdapter, type Adapter, type AdapterConn, type DapMessage } from './host.js';
 import { resolveLaunchRequest } from './launchConfig.js';
-import { downloadJsDebug, resolveAdapter, type DebugAdapterConfig, type DownloadDeps, type Launch, type ResolveEnv } from './registry.js';
+import { downloadAdapter, resolveAdapter, type AdapterId, type DebugAdapterConfig, type DownloadDeps, type Launch, type ResolveEnv } from './registry.js';
 
 /**
  * 1 WebSocket = 1 デバッグ実行 = アダプタープロセス 1 本。ワイヤーは素の DAP に `sessionId` を 1 つ足したもの。
@@ -28,23 +28,25 @@ const ALLOWED_COMMANDS = new Set([
   'threads', 'stackTrace', 'scopes', 'variables', 'evaluate', 'continue', 'next', 'stepIn', 'stepOut', 'pause',
   'disconnect', 'terminate', 'source',
 ]);
-/** クライアントに流さないイベント。loadedSource は 1 実行で 100 件超、telemetry は使わない */
-const DROP_EVENTS = new Set(['loadedSource']);
+/** クライアントに流さないイベント。loadedSource (js-debug) は 1 実行で 100 件超、module (netcoredbg) も十数件。telemetry は使わない */
+const DROP_EVENTS = new Set(['loadedSource', 'module']);
 const KILL_GRACE_MS = 1_000;
 const TRACE = process.env.PRONTELLA_DAP_TRACE === '1';
 
 export type DebugState = 'resolving' | 'downloading' | 'starting' | 'ready' | 'failed' | 'exited';
 
 export interface DebugDeps {
+  adapter: AdapterId;
   config: DebugAdapterConfig;
   toolsDir: string;
   /** テスト用の差し替え点 */
   env?: () => Record<string, string>;
-  resolve?: (r: ResolveEnv) => Launch | null;
-  download?: (deps: DownloadDeps) => Promise<string>;
+  resolve?: (r: ResolveEnv, id: AdapterId) => Launch | null;
+  download?: (id: AdapterId, deps: DownloadDeps) => Promise<string>;
   start?: typeof startAdapter;
   readLaunchJson?: (root: string) => string | null;
   exists?: (abs: string) => boolean;
+  listDir?: (abs: string) => string[];
 }
 
 interface Session {
@@ -69,6 +71,7 @@ export function attachDebug(ws: WebSocket, root: string, deps: DebugDeps): void 
   metrics.count('debug.session');
   const rootAbs = path.resolve(root);
   const exists = deps.exists ?? fsExists;
+  const listDir = deps.listDir ?? fsListDir;
   const sessions = new Map<string, Session>();
   let adapter: Adapter | null = null;
   let closed = false;
@@ -87,14 +90,15 @@ export function attachDebug(ws: WebSocket, root: string, deps: DebugDeps): void 
   };
 
   // ---- パス書き換え -----------------------------------------------------------
-  const norm = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p);
-  /** root 内なら root 相対 (`/` 区切り)、外なら null */
+  /**
+   * root 内なら root 相対 (`/` 区切り)、外なら null。win32 の path.relative は大小文字を無視して比較し、
+   * 戻り値の各セグメントは `abs` 側の表記を保つ (js-debug の小文字ドライブも netcoredbg の正しい大小文字もそのまま通る)
+   */
   const toRelative = (abs: string): string | null => {
     if (!path.isAbsolute(abs)) return null;
-    const rel = path.relative(norm(rootAbs), norm(abs));
+    const rel = path.relative(rootAbs, abs);
     if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return null;
-    // 大小文字は元のパスから取る (norm は比較用)
-    return path.relative(rootAbs, path.resolve(rootAbs, rel)).split(path.sep).join('/');
+    return rel.split(path.sep).join('/');
   };
   const escapeRe = (s: string) => s.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
   const reFlags = process.platform === 'win32' ? 'gi' : 'g';
@@ -176,7 +180,7 @@ export function attachDebug(ws: WebSocket, root: string, deps: DebugDeps): void 
         if (s.pending.request !== command) return reject(`このセッションは ${s.pending.request} で開始します`);
         args = s.pending.configuration;
       } else {
-        const r = resolveLaunchRequest(rootAbs, (args ?? {}) as Record<string, unknown>, { readLaunchJson: () => (deps.readLaunchJson ?? readLaunchJson)(rootAbs), exists });
+        const r = resolveLaunchRequest(rootAbs, (args ?? {}) as Record<string, unknown>, { readLaunchJson: () => (deps.readLaunchJson ?? readLaunchJson)(rootAbs), exists, listDir }, deps.adapter);
         if (!r.ok) return reject(r.error);
         if (r.config.request !== command) return reject(`この設定は ${r.config.request} で開始します`);
         args = r.config;
@@ -199,13 +203,15 @@ export function attachDebug(ws: WebSocket, root: string, deps: DebugDeps): void 
   void (async () => {
     try {
       status('resolving');
-      const resolveEnv: ResolveEnv = { config: deps.config, execPath: process.execPath, home: os.homedir(), toolsDir: deps.toolsDir, exists, listDir: fsListDir };
+      const env = withNodeFallback((deps.env ?? terminalEnv)());
+      const envPath = env[Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'];
+      const resolveEnv: ResolveEnv = { config: deps.config, execPath: process.execPath, home: os.homedir(), toolsDir: deps.toolsDir, envPath, exists, listDir };
       const resolve = deps.resolve ?? resolveAdapter;
-      let launch = resolve(resolveEnv);
+      let launch = resolve(resolveEnv, deps.adapter);
       if (!launch) {
         status('downloading');
-        await (deps.download ?? downloadJsDebug)({ toolsDir: deps.toolsDir });
-        launch = resolve(resolveEnv);
+        await (deps.download ?? downloadAdapter)(deps.adapter, { toolsDir: deps.toolsDir });
+        launch = resolve(resolveEnv, deps.adapter);
         if (!launch) throw new Error('ダウンロード後もアダプターが見つかりません');
       }
       if (closed) return;
@@ -214,7 +220,7 @@ export function attachDebug(ws: WebSocket, root: string, deps: DebugDeps): void 
       const a = await (deps.start ?? startAdapter)({
         launch,
         cwd: rootAbs,
-        env: withNodeFallback((deps.env ?? terminalEnv)()),
+        env,
         onExit: () => {
           // 起動前 (listen 前) の終了は startAdapter の reject → failed で伝える。ready 後の終了だけがここ
           if (closed || !adapter) return;

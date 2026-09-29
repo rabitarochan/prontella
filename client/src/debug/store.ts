@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { getFilesTabs } from '../search/registry';
-import { DebugRun } from './session';
+import { DebugRun, type AdapterId } from './session';
 
 /**
  * デバッグ実行の状態 (root ごと) とブレークポイント (root ごと、localStorage に永続化)。
@@ -199,6 +199,7 @@ export interface StartChoice {
   /** root 相対の対象ファイル (内蔵既定 / `${file}`) */
   file?: string;
   request: 'launch' | 'attach';
+  adapter: AdapterId;
 }
 
 interface DebugStoreState {
@@ -220,11 +221,14 @@ interface Live {
   choice: StartChoice;
 }
 const runs = new Map<string, Live>();
+/** `${root}\0${sessionId}` → initialized イベント待ち。来ない (来る前に切断) ときは INITIALIZED_TIMEOUT_MS で進める */
+const initializedWaiters = new Map<string, () => void>();
+const INITIALIZED_TIMEOUT_MS = 10_000;
 
-const INITIALIZE_ARGS = {
-  clientID: 'prontella', clientName: 'prontella', adapterID: 'node', linesStartAt1: true, columnsStartAt1: true, pathFormat: 'path',
+const initializeArgs = (adapter: AdapterId) => ({
+  clientID: 'prontella', clientName: 'prontella', adapterID: adapter === 'csharp' ? 'coreclr' : 'node', linesStartAt1: true, columnsStartAt1: true, pathFormat: 'path',
   supportsRunInTerminalRequest: false, supportsStartDebuggingRequest: true, supportsVariableType: true,
-};
+});
 
 function storageKey(root: string): string {
   return STORAGE_PREFIX + root;
@@ -292,10 +296,18 @@ export const useDebugStore = create<DebugStoreState>((set, get) => {
   async function startSession(root: string, sessionId: string, request: 'launch' | 'attach', args: unknown): Promise<void> {
     const l = live(root);
     if (!l) return;
-    await l.run.request(sessionId, 'initialize', INITIALIZE_ARGS);
+    await l.run.request(sessionId, 'initialize', initializeArgs(l.choice.adapter));
+    // VS Code と同じ順序: launch は先に送って応答を待たず、`initialized` → setBreakpoints → configurationDone の後に応答が来る。
+    // netcoredbg は configurationDone を launch より先に受けると launch に応答しない (隔離 E2E で実測)。js-debug はどちらでも通る
+    const launched = l.run.request(sessionId, request, args);
+    await new Promise<void>((resolve) => {
+      const key = `${root}\0${sessionId}`;
+      const timer = setTimeout(() => (initializedWaiters.delete(key), resolve()), INITIALIZED_TIMEOUT_MS);
+      initializedWaiters.set(key, () => (clearTimeout(timer), resolve()));
+    });
     for (const [path, lines] of Object.entries(get().ensureBreakpoints(root))) await sendBreakpoints(root, sessionId, path, lines);
     await l.run.request(sessionId, 'configurationDone', {});
-    const r = await l.run.request(sessionId, request, args);
+    const r = await launched;
     if (!r.success && live(root) === l) update(root, (run) => ({ ...run, error: r.message ?? `${request} に失敗しました` }));
   }
 
@@ -316,6 +328,11 @@ export const useDebugStore = create<DebugStoreState>((set, get) => {
 
   function onEvent(root: string, sessionId: string | null, event: string, body: unknown): void {
     update(root, (run) => reduceEvent(run, sessionId, event, body));
+    if (event === 'initialized' && sessionId) {
+      const key = `${root}\0${sessionId}`;
+      initializedWaiters.get(key)?.();
+      initializedWaiters.delete(key);
+    }
     const l = live(root);
     if (!l) return;
     const b = (body ?? {}) as Record<string, unknown>;
@@ -364,7 +381,7 @@ export const useDebugStore = create<DebugStoreState>((set, get) => {
 
     start(root, choice) {
       if (runs.has(root)) return;
-      const run = new DebugRun(root, {
+      const run = new DebugRun(root, choice.adapter, {
         onEvent: (sid, event, body) => onEvent(root, sid, event, body),
         onEnd: () => {
           runs.delete(root);

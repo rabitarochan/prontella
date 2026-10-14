@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { FileText, GitBranch, GripVertical, MessageSquare, Terminal } from 'lucide-react';
+import { Bug, FileText, GitBranch, GripVertical, MessageSquare, Terminal } from 'lucide-react';
 import { useT, type StringKey } from '../../i18n';
 import type { AgentStatus, TerminalSession } from '../../types';
 import { sessionKind } from '../../layout/sessionKinds';
@@ -16,6 +16,7 @@ const VIEWS: { view: TileView; labelKey: StringKey; Icon: typeof FileText }[] = 
   { view: 'git', labelKey: 'tile.viewGit', Icon: GitBranch },
   { view: 'term', labelKey: 'tile.viewTerm', Icon: Terminal },
   { view: 'chat', labelKey: 'tile.viewChat', Icon: MessageSquare },
+  { view: 'debug', labelKey: 'tile.viewDebug', Icon: Bug },
 ];
 
 /** タイル内セッションの「最も注意が必要な」ステータス (デッキのカードと同じ優先順)。 */

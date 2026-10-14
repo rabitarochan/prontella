@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer } from 'ws';
-import { childEnv, warmTerminalEnv } from './childEnv.js';
+import { childEnv, terminalEnv, warmTerminalEnv } from './childEnv.js';
 import * as config from './config.js';
 import * as git from './git.js';
 import * as files from './files.js';
@@ -30,7 +30,10 @@ import { launchEditor, resolveEditor } from './editorLaunch.js';
 import { keepAlive } from './wsKeepAlive.js';
 import { LspHost } from './lsp/host.js';
 import { attachLsp } from './lsp/session.js';
-import { DEFAULT_CONFIG as LSP_DEFAULT_CONFIG, MODES_BY_SERVER, checkLspConfig, isServerId, type LspConfig } from './lsp/registry.js';
+import { DEFAULT_CONFIG as LSP_DEFAULT_CONFIG, MODES_BY_SERVER, checkLspConfig, fsListDir, isServerId, launchEnv, type LspConfig } from './lsp/registry.js';
+import { attachDebug, readLaunchJson } from './debug/session.js';
+import { DEFAULT_CONFIG as DEBUG_DEFAULT_CONFIG, checkDebugConfig, isAdapterId, type DebugConfig } from './debug/registry.js';
+import { defaultAvailable, parseLaunchConfigs } from './debug/launchConfig.js';
 
 const PORT = Number(process.env.PORT) || 3711;
 // 既定はループバックのみ。deck は認証を持たないため、LAN へ公開するときは
@@ -135,6 +138,25 @@ function lspConfig(): LspConfig {
   return structuredClone(LSP_DEFAULT_CONFIG);
 }
 const lspHost = new LspHost({ configFor: (id) => lspConfig()[id] });
+
+let warnedDebugConfig = false;
+function debugConfig(): DebugConfig {
+  let value: unknown;
+  try {
+    value = config.loadConfig().debug;
+  } catch {
+    value = undefined;
+  }
+  const check = checkDebugConfig(value);
+  if (check.ok) return check.config;
+  if (!warnedDebugConfig) {
+    warnedDebugConfig = true;
+    console.warn(`[prontella] config.json の debug を無視します: ${check.error}`);
+  }
+  return structuredClone(DEBUG_DEFAULT_CONFIG);
+}
+/** 自動ダウンロードしたデバッグアダプターの置き場 */
+const TOOLS_DIR = path.join(config.CONFIG_DIR, 'tools');
 
 // メトリクス収集 (既定 off)。PRONTELLA_METRICS=dev|anon か config.json の metrics.tier で有効化。
 // off のときはタイマーもファイルも作らない。
@@ -1653,6 +1675,26 @@ app.put('/api/lsp/mode', (req, res) => {
   res.json({ server, mode });
 });
 
+// ---- debug -------------------------------------------------------------------
+
+// デバッグビューの起動設定ピッカー: root の .vscode/launch.json (node 系のみ) と内蔵既定の可否。
+// root は /ws/debug と同じ防壁 (isKnownRoot)。file は内蔵既定の対象 (root 相対)
+app.get('/api/debug/configs', (req, res) => {
+  const root = typeof req.query.root === 'string' ? req.query.root : '';
+  if (!root || !isKnownRoot(root) || !fs.existsSync(root)) {
+    res.status(400).json({ error: '登録済みリポジトリーの配下ではありません' });
+    return;
+  }
+  const text = readLaunchJson(root);
+  const parsed = text === null ? { configs: [], warnings: [] } : parseLaunchConfigs(text);
+  const file = typeof req.query.file === 'string' ? req.query.file : '';
+  res.json({
+    configs: parsed.configs.map((c) => ({ name: c.name, type: c.type, request: c.request })),
+    warnings: parsed.warnings,
+    default: { available: file !== '' && defaultAvailable(root, file, { exists: (abs) => fs.existsSync(abs), listDir: fsListDir }) },
+  });
+});
+
 /**
  * `/ws/lsp?root=` は任意ディレクトリーでのプロセス起動になるので、`/api/fs/*` (読み書きのみ) より
  * 重い防壁を置く: 登録済み repo か、その走査で見つかった worktree の配下だけを受ける。
@@ -1810,6 +1852,26 @@ server.on('upgrade', (req, socket, head) => {
         return;
       }
       attachLsp(ws, root, lspHost, server);
+      keepAlive(ws);
+    });
+  } else if (url.pathname === '/ws/debug') {
+    // 素の DAP + sessionId。1 接続 = 1 デバッグ実行 = アダプタープロセス 1 本 (server/debug/session.ts)
+    const root = url.searchParams.get('root') ?? '';
+    const adapter = url.searchParams.get('adapter') ?? 'node';
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      instrumentSocket(metrics, ws, '/ws/debug');
+      if (!root || !isKnownRoot(root) || !fs.existsSync(root) || !isAdapterId(adapter)) {
+        ws.send(JSON.stringify({ type: 'event', event: 'prontella/status', body: { state: 'failed', error: '登録済みリポジトリーの配下ではありません', refused: true } }));
+        ws.close(4003, 'debug unavailable for this root');
+        return;
+      }
+      // C# は netcoredbg が PATH の dotnet を要る (DOTNET_ROOT だけでは configurationDone が 0x80070002)。LSP と同じ knob で PATH に重ねる
+      attachDebug(ws, root, {
+        adapter,
+        config: debugConfig()[adapter],
+        toolsDir: TOOLS_DIR,
+        env: adapter === 'csharp' ? () => launchEnv(lspConfig().csharp, terminalEnv(), process.platform) : undefined,
+      });
       keepAlive(ws);
     });
   } else if (url.pathname === '/ws/vnc') {

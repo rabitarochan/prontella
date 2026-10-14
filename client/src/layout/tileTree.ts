@@ -23,7 +23,7 @@ import {
 
 export { newId } from './splitTree';
 
-export type TileView = 'files' | 'git' | 'term' | 'chat';
+export type TileView = 'files' | 'git' | 'term' | 'chat' | 'debug';
 
 export interface LeafNode {
   type: 'leaf';
@@ -283,7 +283,7 @@ export function sanitize(value: unknown): WorktreeLayout | null {
     };
     if (node.type === 'leaf') {
       const view: TileView =
-        node.view === 'files' || node.view === 'git' || node.view === 'term' || node.view === 'chat'
+        node.view === 'files' || node.view === 'git' || node.view === 'term' || node.view === 'chat' || node.view === 'debug'
           ? node.view
           : 'term';
       const sessions = (Array.isArray(node.sessions) ? node.sessions : []).filter(

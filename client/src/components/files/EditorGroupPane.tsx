@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import type { MutableRefObject } from 'react';
+import { toggleBreakpointAt } from '../../debug/decorations';
 import { tabKey } from '../../editorState';
 import { useT } from '../../i18n';
 import { zoneFromPoint, type DropZone } from '../../layout/dropZones';
@@ -253,6 +254,12 @@ export default function EditorGroupPane({
       sharedRef.current.saveGroup(groupRef.current.id),
     );
     editorRef.current = editor;
+    // グリフ余白のクリックでブレークポイントを切り替える (行番号のクリックは奪わない)
+    editor.onMouseDown((e) => {
+      if (e.target.type !== monacoNS.editor.MouseTargetType.GUTTER_GLYPH_MARGIN || !e.target.position) return;
+      const model = editor.getModel();
+      if (model) toggleBreakpointAt(model, e.target.position.lineNumber);
+    });
     editor.onDidChangeModel(() => {
       // タブ切替(モデル切替)を捕まえる。indent 適用 → 保存済みカーソル/スクロール
       // 復元 → (あれば)検索ジャンプの順: 検索ジャンプは復元されたカーソル位置を

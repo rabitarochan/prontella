@@ -761,6 +761,12 @@ export default function FilesTab({
         }
         return out;
       },
+      getActivePath: () => {
+        const st = groupsApi.stateRef.current;
+        const g = findGroup(st.root, st.activeGroupId);
+        const ref = g?.tabs.find((r) => refKey(r) === g.activeKey);
+        return ref?.kind === 'editor' ? ref.path : null;
+      },
       showSearchPanel: () => showSearchPanelRef.current(),
     });
     // 定義ジャンプの着地と通知 (client/src/lsp)。leafId 単位 — モデル URI の第 1 セグメントで引かれる

@@ -11,6 +11,8 @@ export const EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOptions 
   scrollBeyondLastLine: false,
   automaticLayout: true,
   renderWhitespace: 'selection',
+  // ブレークポイントのグリフ (client/src/debug/decorations.ts)。行番号の左に 1 列増える
+  glyphMargin: true,
   // インデントは applyModelOptions がモデル単位で制御する(editorconfig 指定が
   // なければ手動で detectIndentation を呼ぶ)ので、attach 時の自動検出は切る。
   detectIndentation: false,

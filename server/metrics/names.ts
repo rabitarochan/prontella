@@ -63,6 +63,9 @@ export const METRIC_NAMES = [
   'lsp.crash',
   'lsp.request',
   'lsp.session',
+  // ---- server: debug (DAP)
+  'debug.session',
+  'debug.spawn',
   // ---- server: polling waste
   'repos.poll.changed',
   'repos.poll.unchanged',
@@ -120,12 +123,12 @@ export const GIT_SUBCOMMANDS = [
   'rm', 'restore', 'cat-file', 'ls-tree', 'symbolic-ref', 'config', 'describe', 'update-ref',
   'other',
 ] as const;
-export const WS_PATHS = ['/ws/term', '/ws/agent', '/ws/events', '/ws/vnc', '/ws/lsp'] as const;
+export const WS_PATHS = ['/ws/term', '/ws/agent', '/ws/events', '/ws/vnc', '/ws/lsp', '/ws/debug'] as const;
 export const LSP_METHODS = [
   'textDocument/completion', 'textDocument/hover', 'textDocument/definition', 'completionItem/resolve', 'other',
 ] as const;
 export const LINK_PHASES = ['connecting', 'open', 'reconnecting', 'gone'] as const;
-export const VIEWS = ['files', 'git', 'term', 'chat'] as const;
+export const VIEWS = ['files', 'git', 'term', 'chat', 'debug'] as const;
 export const AGENT_STATUSES = ['busy', 'waiting', 'idle', 'shell'] as const;
 export const SESSION_KINDS = ['pty', 'sdk'] as const;
 export const ATTRIBUTIONS = ['window', 'iframe', 'unknown', 'xterm', 'monaco-editor', 'tile-pane', 'tree', 'other'] as const;
@@ -161,6 +164,7 @@ export const ROUTES = [
   '/api/agents',
   '/api/agents/resumable',
   '/api/agents/resumable/:id/discard',
+  '/api/debug/configs',
   '/api/editor/open',
   '/api/editor/status',
   '/api/fs/copy',

@@ -85,3 +85,10 @@
   PATH に重なり netcoredbg が動く (実測: 隔離 E2E 23 項目 ×2 周 PASS、UI で BP → 停止 → ステップ → 続行)
 - netcoredbg は `evaluate` で `System.Diagnostics.Process.GetCurrentProcess().Id` を評価できない (`0x80004005`)。
   debuggee の pid は `process` イベントの `systemProcessId` から取る
+- **`cwd` は netcoredbg が尊重する** (2026-10-14、`SPIKE_CWD`): launch の `cwd` に dll のディレクトリーを渡すと
+  `Directory.GetCurrentDirectory()` はそこになり相対パスの `appsettings.json` は見えない (`False`)、プロジェクトディレクトリーを渡すと
+  `True`。内蔵既定 (`.cs`) は `.csproj` のディレクトリーを cwd にしている (`dotnet run` と同じ)。launch.json で `cwd` を省くと
+  VS Code と同じく `${workspaceFolder}` (= root) になるので、サブディレクトリーのプロジェクトは `"cwd": "${workspaceFolder}/src/App"` を書く
+- **launch.json の `env` / `args` は netcoredbg がそのまま被デバッグに渡す** (2026-10-14、`SPIKE_LAUNCH_EXTRA`):
+  `env.ASPNETCORE_URLS` が `Environment.GetEnvironmentVariable` で見え、`args` が `Main(string[] args)` に届く。
+  `Properties/launchSettings.json` (`applicationUrl`) は `dotnet run` 専用で、デバッガー起動では読まれない (VS Code の coreclr も同じ)

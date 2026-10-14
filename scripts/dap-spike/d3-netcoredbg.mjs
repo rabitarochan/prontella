@@ -118,7 +118,9 @@ let t = ms();
 const init = await request('initialize', { clientID: 'prontella-spike', adapterID: 'coreclr', linesStartAt1: true, columnsStartAt1: true, pathFormat: 'path', supportsRunInTerminalRequest: process.env.SPIKE_CONSOLE === 'integratedTerminal', supportsVariableType: true });
 log(`initialize ${ms() - t}ms success=${init.success} initialized-seen=${events.some((e) => e.event === 'initialized')}`);
 log('D2 capabilities:', JSON.stringify(Object.fromEntries(Object.entries(init.body ?? {}).filter(([k, v]) => v === true || k === 'exceptionBreakpointFilters').map(([k, v]) => [k, Array.isArray(v) ? v.map((f) => f.filter) : v]))));
-const launchArgs = { type: 'coreclr', request: 'launch', name: 'spike', program, cwd: root, console: process.env.SPIKE_CONSOLE ?? 'internalConsole', stopAtEntry: false };
+//   SPIKE_CWD=<dir>                   launch の cwd を差し替える (netcoredbg が cwd を尊重するかの確認)
+//   SPIKE_LAUNCH_EXTRA='{"env":{...},"args":[...]}'  launch 引数に混ぜる (env / args の通過確認)
+const launchArgs = { type: 'coreclr', request: 'launch', name: 'spike', program, cwd: process.env.SPIKE_CWD ?? root, console: process.env.SPIKE_CONSOLE ?? 'internalConsole', stopAtEntry: false, ...JSON.parse(process.env.SPIKE_LAUNCH_EXTRA ?? '{}') };
 // netcoredbg は launch → initialized → setBreakpoints → configurationDone の順を要求するか、先に BP を置けるかを両方試す
 const bp0 = await request('setBreakpoints', { source: { path: srcFile }, breakpoints: [{ line: bpLine }] });
 log(`setBreakpoints(before launch) success=${bp0.success}`, JSON.stringify(bp0.body?.breakpoints ?? bp0.message));

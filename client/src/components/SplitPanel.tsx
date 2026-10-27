@@ -25,6 +25,17 @@ import { Panel } from 'react-resizable-panels';
  * While the Group lives, the library's own layout state is the source of truth
  * for the rendered sizes.
  */
+/**
+ * ライブラリーへ渡す Panel id。アプリ側の id (`newId()` の 8 桁 hex 等) に接頭辞を
+ * 付けて **数値文字列になり得ない** 形にする。react-resizable-panels は layout を
+ * `{ [panelId]: pct }` で持ち、ドラッグ計算で `Object.values(layout)` を panels 配列の
+ * 添字と突き合わせる。JS のオブジェクトは `"57412659"` のような正準整数キーを
+ * 挿入順に関係なく先頭へ並べるため、そういう id が 1 枚でも混じると値と添字が
+ * ずれ、ハンドルがポインターと逆方向に動く (2026-10-20 実機で確認)。
+ * `onLayoutChanged` の layout を引くときも必ずこれを通すこと。
+ */
+export const panelId = (id: string): string => `p-${id}`;
+
 export default function SplitPanel({
   id,
   initialSize,
@@ -51,7 +62,7 @@ export default function SplitPanel({
   const fixed = frozen.fixedPx !== undefined ? `${frozen.fixedPx}px` : null;
   return (
     <Panel
-      id={id}
+      id={panelId(id)}
       defaultSize={fixed ?? frozen.initialSize}
       minSize={fixed ?? '120px'}
       maxSize={fixed ?? undefined}

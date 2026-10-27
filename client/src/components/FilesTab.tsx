@@ -41,7 +41,7 @@ import { basename, toPosixPath } from './editorTabs';
 import FileHistoryModal from './FileHistoryModal';
 import FileTree, { type FileTreeHandle } from './FileTree';
 import SearchPanel from './SearchPanel';
-import SplitPanel from './SplitPanel';
+import SplitPanel, { panelId } from './SplitPanel';
 import { useAutoReveal } from '../layout/autoRevealStore';
 import { PANE_DEFAULT_PCT, paneSplitSizes } from '../layout/paneWidths';
 import { usePaneWidths } from '../layout/paneWidthStore';
@@ -1146,7 +1146,7 @@ export default function FilesTab({
         className="files-split"
         onLayoutChanged={(layout, meta) => {
           if (!meta.isUserInteraction) return;
-          const pct = layout[treePanelId];
+          const pct = layout[panelId(treePanelId)];
           if (pct !== undefined) setPaneWidth('filesTree', pct);
         }}
       >

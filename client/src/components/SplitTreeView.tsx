@@ -14,7 +14,7 @@
 import { Fragment, type JSX } from 'react';
 import { Group, Separator } from 'react-resizable-panels';
 import type { LeafBase, NodeOf } from '../layout/splitTree';
-import SplitPanel from './SplitPanel';
+import SplitPanel, { panelId } from './SplitPanel';
 
 export default function SplitTreeView<L extends LeafBase>({
   node,
@@ -46,7 +46,7 @@ export default function SplitTreeView<L extends LeafBase>({
           if (!meta.isUserInteraction) return;
           onSizes(
             n.id,
-            n.children.map((c) => layout[c.id] ?? 0),
+            n.children.map((c) => layout[panelId(c.id)] ?? 0),
           );
         }}
       >

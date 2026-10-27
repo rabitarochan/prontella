@@ -26,7 +26,7 @@ import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import DiffTabsPane, { conflictTabKey, diffTabKey, stashTabKey, type WorkTab } from './DiffTabsPane';
 import HistoryTab from './HistoryTab';
 import { usePrompt } from './PromptDialog';
-import SplitPanel from './SplitPanel';
+import SplitPanel, { panelId } from './SplitPanel';
 
 type GitView = 'status' | 'history';
 
@@ -841,7 +841,7 @@ export default function GitTab({
         className="git-split"
         onLayoutChanged={(layout, meta) => {
           if (!meta.isUserInteraction) return;
-          const pct = layout[sidePanelId];
+          const pct = layout[panelId(sidePanelId)];
           if (pct !== undefined) setPaneWidth('gitSide', pct);
         }}
       >
@@ -1072,7 +1072,7 @@ export default function GitTab({
                 className="changes-wrap"
                 onLayoutChanged={(layout, meta) => {
                   if (!meta.isUserInteraction) return;
-                  const pct = layout[changesPanelId];
+                  const pct = layout[panelId(changesPanelId)];
                   if (pct !== undefined) setPaneWidth('gitChanges', pct);
                 }}
               >

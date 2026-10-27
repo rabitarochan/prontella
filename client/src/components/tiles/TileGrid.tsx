@@ -5,7 +5,7 @@ import { useT } from '../../i18n';
 import type { ActiveRepo, TerminalSession, Worktree } from '../../types';
 import { collapsedExtent, isMaximized, leaves, type TileNode } from '../../layout/tileTree';
 import type { TileActions } from '../../layout/useTileLayout';
-import SplitPanel from '../SplitPanel';
+import SplitPanel, { panelId } from '../SplitPanel';
 import TilePane from './TilePane';
 import TileWorkspace from './TileWorkspace';
 
@@ -99,7 +99,7 @@ export default function TileGrid({
           if (anyCollapsed) return;
           actions.applySizes(
             node.id,
-            node.children.map((c) => layout[c.id] ?? 0),
+            node.children.map((c) => layout[panelId(c.id)] ?? 0),
           );
         }}
       >

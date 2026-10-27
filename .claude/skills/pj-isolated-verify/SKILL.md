@@ -122,10 +122,15 @@ description: prontella の動作検証を、原則としてユーザーの実設
    全 fiber の hooks (`memoizedState` チェーン) を走査し、`getModel` と `executeEdits` を
    持つ値(`.current` の中も見る)を editor として拾う →
    `editor.trigger('src', 'type', { text })` で onChange → dirty の実経路が通る
-4. **選択中 worktree の削除**は 4 秒ポーリングのファイルロックで `git worktree remove` が失敗する
-   (既知の既存問題)。削除系の検証は別 worktree へ切替えてから行う。
-   **⚠ 2026-07-21 以降、再現を確認していない**(2026-07-28 時点)。次に worktree 周りを触るときに
-   まだ再現するかを確かめ、直っていればこの項目を削除すること
+4. **worktree の削除失敗の正体は「その worktree を cwd にする子プロセス」**(2026-10-27 実測。
+   以前「4 秒ポーリングのファイルロック」と記していたのは誤り)。Windows は cwd にされている
+   ディレクトリーを rmdir できず、`git worktree remove` は中身と `.git/worktrees/<id>` を消した後に
+   ルートで `failed to delete ... Permission denied` (exit 255) で止まり、**空ディレクトリーだけが残って
+   登録は消える**。掴んでいたのは worktree root を cwd に spawn した言語サーバー (tsgo) と PTY。
+   サーバー側は `DELETE /api/repos/:id/worktrees` が `lspHost.stopUnder` / PTY / agent の kill を
+   先に行うようになった。**どのプロセスが cwd を掴んでいるかは PEB を読めば分かる**
+   (`NtQueryInformationProcess` → `PEB+0x20` の ProcessParameters → `+0x38` の CurrentDirectory。
+   `handle.exe` 不要)。検証で `vt/` の後片付けに失敗したときも同じ手で特定できる
 5. **パス長に注意。ただしドライブ直下には作らない**: 深いパス(~180 字)だと Windows の MAX_PATH で
    `git rebase` が `Filename too long` で失敗し `rebase-merge` が中途半端に残る(5.V で実測・切り分け済み)。
    以前はこれを避けてドライブ直下の短パス(`C:\vt5`)に作っていたが、**ドライブ直下はツールの削除保護に

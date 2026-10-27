@@ -12,7 +12,7 @@ import * as files from './files.js';
 import * as diffEncoding from './diffEncoding.js';
 import * as search from './search.js';
 import { buildPartialPatchLines, checkApplyHunksRequest, hashHunk, splitDiffHunks, type ApplyDirection } from './diffPatch.js';
-import { PtyManager, aggregateStatus, conptyMode, homeDir } from './pty.js';
+import { PtyManager, aggregateStatus, conptyMode, homeDir, normalizePath } from './pty.js';
 import { ensureHookAssets, warnIfHooksBlocked } from './hooks.js';
 import { AgentSessionManager } from './agentSession.js';
 import { attachEvents, eventsSocketCount } from './sessionEvents.js';
@@ -453,9 +453,33 @@ app.post('/api/repos/:id/worktrees', asyncHandler(async (req, res) => {
 app.delete('/api/repos/:id/worktrees', asyncHandler(async (req, res) => {
   const repo = requireRepo(req);
   const worktreePath = queryStr(req, 'path');
+  // 任意パスのセッションを殺せないよう、登録済み worktree に限る
+  const known = (await git.listWorktrees(repo.path)).some((wt) => normalizePath(wt.path) === normalizePath(worktreePath));
+  if (!known) throw new Error(`登録されていない worktree です: ${worktreePath}`);
+  // Windows は cwd にしているプロセスがいる間そのディレクトリーを rmdir できない。git は中身と
+  // .git/worktrees/<id> を消した後にルートで失敗し、空ディレクトリーだけ残る (登録は消える)。
+  // 先に、この worktree を cwd にする LS / 端末 / agent を落とす
+  await releaseCwd(worktreePath);
   await git.removeWorktree(repo.path, worktreePath, req.query.force === '1');
   res.json({ ok: true });
 }));
+
+async function releaseCwd(dir: string): Promise<void> {
+  // ponytail: PTY の kill は ConPTY を閉じるのでシェル配下も落ちるが、detached な孫プロセスや
+  // 外部ターミナルの cwd までは追わない。残っていれば従来どおり git のエラーが出る
+  for (const s of [...ptyManager.list(dir), ...agentManager.list(dir)]) ptyManager.kill(s.id) || agentManager.kill(s.id);
+  const gone = () => ptyManager.list(dir).length === 0 && agentManager.list(dir).length === 0;
+  await Promise.all([lspHost.stopUnder(dir), waitFor(gone, 5_000)]);
+}
+
+/** 50ms 間隔で cond を待つ。timeoutMs を超えたら諦めて返る */
+function waitFor(cond: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    const tick = () => (cond() || Date.now() >= deadline ? resolve() : setTimeout(tick, 50));
+    tick();
+  });
+}
 
 // ---- git inspection (dir = any worktree path) -------------------------------
 

@@ -104,6 +104,11 @@ export function attachLsp(ws: WebSocket, root: string, host: LspHost, serverId: 
         if (!slot.handle) return; // acquire の最中 (handle 未代入) の分は直後の hello が運ぶ
         send({ method: '$/prontella/status', params: { rootToken, ...status, state: status.state !== 'ready' && anyReady() ? 'ready' : status.state } });
       },
+      onClose() {
+        // upgrade 時の拒否 (index.ts /ws/lsp) と同じ合図。クライアントは refused で再接続を止める
+        send({ method: '$/prontella/status', params: { rootToken, state: 'disabled', refused: true } });
+        ws.close(4003, 'root removed');
+      },
     };
     slot.listener = listener;
     slot.handle = host.acquire(root, serverId, listener, solution !== undefined || key !== '' ? { key, solution } : undefined);

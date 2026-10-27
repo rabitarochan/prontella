@@ -20,6 +20,8 @@ import { bundledTsgoPath, fsExists, fsListDir, launchEnv, resolveLaunch, type La
  * - サーバー→クライアント要求には**ここで**答える。ブラウザーには答えようが無く、誰も答えないと
  *   言語サーバーがハングする。未知メソッドは黙殺せず -32601
  * - クラッシュは即再起動しない (次の要求で起動)。60 秒に 3 回で unavailable に固定
+ * - worktree 削除は stopUnder(dir) で配下のプロセスを即 kill する (Windows は cwd にされている
+ *   ディレクトリーを rmdir できず、git が空ディレクトリーを残す)
  */
 
 export type HostState = 'starting' | 'ready' | 'disabled' | 'unavailable' | 'stopped';
@@ -61,6 +63,8 @@ export interface ProcListener {
   /** プロセスが死んだ/再起動した。doc は全部忘れられたので開き直す。 */
   onReset(): void;
   onStatus(status: HostStatus): void;
+  /** root ごと消える (worktree 削除)。セッションは refused を告げて WS を閉じる */
+  onClose?(): void;
 }
 
 /** 言語サーバーが知っている 1 ドキュメント。holders はこの doc を開いているセッション、owner は
@@ -329,6 +333,29 @@ export class LspHost {
         host.warm(p, uri);
       },
     };
+  }
+
+  /**
+   * worktree 削除前に呼ぶ: dir 配下を root にするプロセスを即 kill し、そのセッションを閉じる。
+   * shutdown の猶予は踏まない (ディレクトリーごと消える)。exit を待って返る (上限 5 秒)。
+   */
+  async stopUnder(dir: string): Promise<void> {
+    const prefix = normalizeRoot(dir);
+    const waits: Promise<void>[] = [];
+    for (const proc of [...this.procs.values()]) {
+      const root = normalizeRoot(proc.root);
+      if (root !== prefix && !root.startsWith(prefix + path.sep)) continue;
+      // 先に閉じる: 閉じないと削除後の didClose が wake() で消えた cwd へ再 spawn する
+      for (const l of [...proc.listeners]) l.onClose?.();
+      const child = proc.child;
+      if (child && !proc.exited) {
+        waits.push(new Promise((r) => child.once('exit', () => r())));
+        this.setStatus(proc, { state: 'stopped' }); // 意図した停止 (onExit がクラッシュに数えない)
+        child.kill();
+      }
+      this.procs.delete(proc.key);
+    }
+    await Promise.race([Promise.all(waits), new Promise<void>((r) => setTimeout(r, 5_000).unref())]);
   }
 
   private setStatus(proc: Proc, status: HostStatus): void {

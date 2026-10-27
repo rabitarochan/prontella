@@ -362,6 +362,32 @@ describe('attachLsp', () => {
     expect(children).toHaveLength(4); // 明示の再起動で解除
   });
 
+  it('stopUnder: 配下の root のプロセスを kill し、セッションに refused を送って閉じる。兄弟ディレクトリーは残る', async () => {
+    const { host, connect, children } = setup();
+    const ws = connect();
+    sockets.push(ws);
+    // `${root}-other` は文字列としては root を前置に持つが配下ではない
+    const sibling = new FakeWs();
+    attachLsp(sibling as unknown as WebSocket, `${root}-other`, host, 'typescript');
+    sockets.push(sibling);
+    await settle();
+    expect(children).toHaveLength(2);
+    const exits: number[] = [];
+    children.forEach((c, i) => c.once('exit', () => exits.push(i)));
+    await host.stopUnder(root);
+    expect(exits).toEqual([0]);
+    expect(ws.find((m) => (m.params as { refused?: boolean } | undefined)?.refused === true)).toMatchObject({ params: { state: 'disabled' } });
+    expect(ws.readyState).toBe(3);
+    expect(sibling.readyState).toBe(1);
+    const token = (sibling.sent[0]!.params as { rootToken: string }).rootToken;
+    const uri = `file:///${token}/a.ts`;
+    sibling.push({ method: 'textDocument/didOpen', params: { textDocument: { uri, languageId: 'typescript', version: 1, text: '' } } });
+    sibling.push({ id: 1, method: 'textDocument/hover', params: { textDocument: { uri }, position: { line: 0, character: 0 } } });
+    await settle();
+    expect(sibling.last()).toMatchObject({ id: 1, result: { echo: 'textDocument/hover' } });
+    expect(children).toHaveLength(2); // 再 spawn しない
+  });
+
   it('unavailable の間に届いた didOpen は、再起動時の reset で開き直される (LS に届かないまま残らない)', async () => {
     const { connect, child, children } = setup();
     const ws = connect();
